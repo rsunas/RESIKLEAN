@@ -1,5 +1,10 @@
-const express = require('express');
-const router  = express.Router();
+const express   = require('express');
+const router    = express.Router();
+const { protect }   = require('../middlewares/auth');
+const { authorize } = require('../middlewares/authorize');
+
+// All collector routes require a valid JWT + collector role
+router.use(protect, authorize('collector'));
 
 // GET   /api/collector/route
 router.get('/route', (req, res) => res.json({ message: 'getAssignedRoute — TODO' }));

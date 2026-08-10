@@ -1,5 +1,10 @@
-const express = require('express');
-const router  = express.Router();
+const express   = require('express');
+const router    = express.Router();
+const { protect }   = require('../middlewares/auth');
+const { authorize } = require('../middlewares/authorize');
+
+// All admin routes require a valid JWT + admin role
+router.use(protect, authorize('admin'));
 
 // GET /api/admin/compliance
 router.get('/compliance', (req, res) => res.json({ message: 'getComplianceReport — TODO' }));

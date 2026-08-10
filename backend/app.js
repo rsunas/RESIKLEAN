@@ -1,13 +1,13 @@
 require('dotenv').config();
 const express = require('express');
-const cors    = require('cors');
+const cors = require('cors');
 const { errorHandler } = require('./middlewares/errorHandler');
 
-const authRoutes      = require('./routes/auth.routes');
-const residentRoutes  = require('./routes/resident.routes');
+const authRoutes = require('./routes/auth.routes');
+const residentRoutes = require('./routes/resident.routes');
 const collectorRoutes = require('./routes/collector.routes');
-const staffRoutes     = require('./routes/staff.routes');
-const adminRoutes     = require('./routes/admin.routes');
+const staffRoutes = require('./routes/staff.routes');
+const adminRoutes = require('./routes/admin.routes');
 
 const app = express();
 
@@ -25,11 +25,11 @@ app.get('/api/health', (req, res) =>
 );
 
 // ── API Routes ────────────────────────────────────────────────────────────────
-app.use('/api/auth',      authRoutes);
-app.use('/api/resident',  residentRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/resident', residentRoutes);
 app.use('/api/collector', collectorRoutes);
-app.use('/api/staff',     staffRoutes);
-app.use('/api/admin',     adminRoutes);
+app.use('/api/staff', staffRoutes);
+app.use('/api/admin', adminRoutes);
 
 // ── Global Error Handler (must be last) ───────────────────────────────────────
 app.use(errorHandler);

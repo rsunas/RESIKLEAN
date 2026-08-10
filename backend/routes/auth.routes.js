@@ -1,13 +1,16 @@
-const express = require('express');
-const router  = express.Router();
+const express  = require('express');
+const router   = express.Router();
+const { register, login, getMe } = require('../controllers/auth.controller');
+const { protect }                 = require('../middlewares/auth');
+const { registerRules, loginRules, validate } = require('../validators/auth.validator');
 
 // POST /api/auth/register
-router.post('/register', (req, res) => res.json({ message: 'register — TODO' }));
+router.post('/register', registerRules, validate, register);
 
 // POST /api/auth/login
-router.post('/login', (req, res) => res.json({ message: 'login — TODO' }));
+router.post('/login', loginRules, validate, login);
 
-// GET /api/auth/me
-router.get('/me', (req, res) => res.json({ message: 'me — TODO' }));
+// GET  /api/auth/me  (protected — must send Bearer token)
+router.get('/me', protect, getMe);
 
 module.exports = router;

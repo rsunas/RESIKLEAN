@@ -1,5 +1,10 @@
-const express = require('express');
-const router  = express.Router();
+const express    = require('express');
+const router     = express.Router();
+const { protect }    = require('../middlewares/auth');
+const { authorize }  = require('../middlewares/authorize');
+
+// All resident routes require a valid JWT + resident role
+router.use(protect, authorize('resident'));
 
 // GET  /api/resident/schedule
 router.get('/schedule', (req, res) => res.json({ message: 'getSchedule — TODO' }));
