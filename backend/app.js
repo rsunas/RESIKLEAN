@@ -1,13 +1,13 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { errorHandler } = require('./middlewares/errorHandler');
+const { errorHandler } = require('./src/middlewares/errorHandler');
 
-const authRoutes = require('./routes/auth.routes');
-const residentRoutes = require('./routes/resident.routes');
-const collectorRoutes = require('./routes/collector.routes');
-const staffRoutes = require('./routes/staff.routes');
-const adminRoutes = require('./routes/admin.routes');
+const authRoutes      = require('./src/routes/auth.routes');
+const residentRoutes  = require('./src/routes/resident.routes');
+const collectorRoutes = require('./src/routes/collector.routes');
+const staffRoutes     = require('./src/routes/staff.routes');
+const adminRoutes     = require('./src/routes/admin.routes');
 
 const app = express();
 

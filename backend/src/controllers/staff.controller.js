@@ -1,0 +1,67 @@
+const TruckLoad = require('../models/TruckLoad');
+const { sendSuccess, sendError } = require('../utils/response');
+
+// ── POST /api/staff/truckloads ────────────────────────────────────────────────
+// Staff submits a truckload entry at the sanitary landfill.
+// Volume (m³) and tonnage estimate are auto-calculated by the model's pre-save hook.
+// Body: { truckPlate, routeId?, length, width, height, notes? }
+// Measurements are in centimetres.
+const submitTruckLoad = async (req, res) => {
+  try {
+    const { truckPlate, routeId, length, width, height, notes } = req.body;
+
+    if (!truckPlate || !length || !width || !height) {
+      return sendError(res, 'truckPlate, length, width, and height are required', 400);
+    }
+
+    const load = await TruckLoad.create({
+      staffId: req.user._id,
+      truckPlate: truckPlate.toUpperCase(),
+      routeId: routeId || null,
+      length: Number(length),
+      width:  Number(width),
+      height: Number(height),
+      notes:  notes || '',
+    });
+
+    sendSuccess(res, load, 201);
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
+// ── GET /api/staff/truckloads ─────────────────────────────────────────────────
+// Returns truckloads submitted by the logged-in staff member.
+// Supports ?from=YYYY-MM-DD&to=YYYY-MM-DD date range filter.
+const getMyTruckLoads = async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const filter = { staffId: req.user._id };
+
+    if (from || to) {
+      filter.arrivedAt = {};
+      if (from) filter.arrivedAt.$gte = new Date(from);
+      if (to)   filter.arrivedAt.$lte = new Date(to);
+    }
+
+    const loads = await TruckLoad.find(filter)
+      .populate('routeId', 'name barangay')
+      .sort({ arrivedAt: -1 })
+      .lean();
+
+    // Summary totals
+    const totalVolume  = loads.reduce((sum, l) => sum + (l.volumeCubicM  || 0), 0);
+    const totalTonnes  = loads.reduce((sum, l) => sum + (l.tonnesEstimate || 0), 0);
+
+    sendSuccess(res, {
+      count: loads.length,
+      totalVolumeCubicM:   +totalVolume.toFixed(3),
+      totalTonnesEstimate: +totalTonnes.toFixed(3),
+      loads,
+    });
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
+module.exports = { submitTruckLoad, getMyTruckLoads };
