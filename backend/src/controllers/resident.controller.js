@@ -1,5 +1,6 @@
 const MissedReport = require('../models/MissedReport');
 const Route        = require('../models/Route');
+const { uploadPhoto } = require('../services/cloudinary.service');
 const { sendSuccess, sendError } = require('../utils/response');
 
 // ── GET /api/resident/schedule ────────────────────────────────────────────────
@@ -27,21 +28,27 @@ const getSchedule = async (req, res) => {
 };
 
 // ── POST /api/resident/reports ────────────────────────────────────────────────
-// Resident submits a missed collection report.
-// Photo upload (Cloudinary) and AI verification (Roboflow) are handled
-// by their respective services — wired in the media & CV sprints.
+// Resident submits a missed collection report with an optional photo.
+// If a photo is attached (via multer), it is uploaded to Cloudinary.
 const submitReport = async (req, res) => {
   try {
-    const { description, photoUrl } = req.body;
+    const { description } = req.body;
     const { _id: residentId, barangay } = req.user;
 
     if (!barangay) return sendError(res, 'Your profile has no barangay set', 400);
+
+    // Upload photo to Cloudinary if one was attached
+    let photoUrl = null;
+    if (req.file) {
+      const result = await uploadPhoto(req.file.buffer);
+      photoUrl = result.url;
+    }
 
     const report = await MissedReport.create({
       residentId,
       barangay,
       description: description || '',
-      photoUrl: photoUrl || null,
+      photoUrl,
       // aiVerified & aiConfidence will be updated by the Roboflow sprint
     });
 
