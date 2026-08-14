@@ -1,3 +1,7 @@
+// Required for MongoDB Atlas SRV resolution on our deployment/network.
+const dns = require('dns');
+dns.setServers(['8.8.8.8', '1.1.1.1']);
+
 require('dotenv').config();
 const http = require('http');
 const app = require('./app');
