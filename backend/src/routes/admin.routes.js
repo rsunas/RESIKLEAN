@@ -4,6 +4,7 @@ const { protect } = require('../middlewares/auth');
 const { authorize } = require('../middlewares/authorize');
 const {
   getAllUsers,
+  createUser,
   getAllRoutes,
   createRoute,
   assignCollector,
@@ -17,6 +18,7 @@ router.use(protect, authorize('admin'));
 
 // Users
 router.get('/users', getAllUsers);
+router.post('/users', createUser);
 
 // Routes
 router.get('/routes', getAllRoutes);

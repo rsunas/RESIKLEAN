@@ -23,6 +23,36 @@ const getAllUsers = async (req, res) => {
   }
 };
 
+// ── POST /api/admin/users ─────────────────────────────────────────────────────
+// Creates a new collector or staff user.
+// Body: { name, email, password, role }
+const createUser = async (req, res) => {
+  try {
+    const { name, email, password, role } = req.body;
+
+    if (!name || !email || !password || !role) {
+      return sendError(res, 'name, email, password, and role are required', 400);
+    }
+
+    if (!['collector', 'staff'].includes(role)) {
+      return sendError(res, 'Admin can only create collector or staff accounts', 400);
+    }
+
+    const existingUser = await User.findOne({ email });
+    if (existingUser) return sendError(res, 'Email is already taken', 400);
+
+    const user = await User.create({ name, email, password, role });
+    
+    // Convert to object and remove password for response
+    const userResponse = user.toObject();
+    delete userResponse.password;
+
+    sendSuccess(res, userResponse, 201);
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
 // ── GET /api/admin/routes ─────────────────────────────────────────────────────
 // Returns all routes with their assigned collector info.
 const getAllRoutes = async (req, res) => {
@@ -209,6 +239,7 @@ const getTonnageSummary = async (req, res) => {
 
 module.exports = {
   getAllUsers,
+  createUser,
   getAllRoutes,
   createRoute,
   assignCollector,
