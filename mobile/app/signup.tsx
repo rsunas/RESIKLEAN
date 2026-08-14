@@ -15,30 +15,41 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 
-type Role = 'resident' | 'collector' | 'staff';
-
-type LoginResponse = {
+type RegisterResponse = {
   success: boolean;
   data?: {
     token?: string;
-    user?: {
-      role?: string;
-    };
+    user?: { role?: string };
   };
   error?: string;
+  errors?: Array<{ msg?: string }>;
 };
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
-export default function LoginScreen() {
+export default function SignupScreen() {
   const router = useRouter();
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+  const [isConfirmPasswordVisible, setIsConfirmPasswordVisible] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleLogin = async () => {
+  const handleSignup = async () => {
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters.');
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
+
     if (!API_URL) {
       setError('EXPO_PUBLIC_API_URL is not configured.');
       return;
@@ -48,25 +59,32 @@ export default function LoginScreen() {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(`${API_URL.replace(/\/$/, '')}/auth/login`, {
+      const response = await fetch(`${API_URL.replace(/\/$/, '')}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({
+          name,
+          email,
+          password,
+          phone,
+          // Required by the current backend validator; resident is the only role this screen creates.
+          role: 'resident',
+        }),
       });
-      const result = (await response.json()) as LoginResponse;
-      const role = result.data?.user?.role as Role | undefined;
+      const result = (await response.json()) as RegisterResponse;
 
       if (!response.ok || !result.success) {
-        throw new Error(result.error || 'Unable to sign in.');
+        throw new Error(result.error || result.errors?.[0]?.msg || 'Unable to create your account.');
       }
 
-      if (!role || !['resident', 'collector', 'staff'].includes(role)) {
-        throw new Error('This account does not have mobile access.');
+      if (result.data?.token && result.data.user?.role === 'resident') {
+        router.replace('/resident');
+        return;
       }
 
-      router.replace(`/${role}`);
+      router.replace('/login');
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : 'Unable to sign in.');
+      setError(caughtError instanceof Error ? caughtError.message : 'Unable to create your account.');
     } finally {
       setIsSubmitting(false);
     }
@@ -76,7 +94,7 @@ export default function LoginScreen() {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="light-content" />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.keyboardView}>
-        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           <View style={styles.phoneFrame}>
             <View style={styles.innerCanvas}>
               <View style={styles.brandArea}>
@@ -90,8 +108,24 @@ export default function LoginScreen() {
               </View>
 
               <View style={styles.formCard}>
-                <Text style={styles.headline}>Welcome back</Text>
-                <Text style={styles.subtext}>Sign in to your ResiKlean account</Text>
+                <Text style={styles.headline}>Create your account</Text>
+                <Text style={styles.subtext}>Join ResiKlean and track your collection schedule</Text>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.label}>Full Name</Text>
+                  <View style={styles.inputRow}>
+                    <Feather color="#83938a" name="user" size={19} />
+                    <TextInput
+                      accessibilityLabel="Full Name"
+                      autoComplete="name"
+                      onChangeText={setName}
+                      placeholder="Maria Santos"
+                      placeholderTextColor="#8c9b93"
+                      style={styles.input}
+                      value={name}
+                    />
+                  </View>
+                </View>
 
                 <View style={styles.fieldGroup}>
                   <Text style={styles.label}>Email Address</Text>
@@ -112,14 +146,37 @@ export default function LoginScreen() {
                 </View>
 
                 <View style={styles.fieldGroup}>
+                  <Text style={styles.label}>Phone Number</Text>
+                  <View style={styles.inputRow}>
+                    <Feather color="#83938a" name="phone" size={19} />
+                    <TextInput
+                      accessibilityLabel="Phone Number"
+                      autoComplete="tel"
+                      keyboardType="phone-pad"
+                      onChangeText={setPhone}
+                      placeholder="+63 9XX XXX XXXX"
+                      placeholderTextColor="#8c9b93"
+                      style={styles.input}
+                      value={phone}
+                    />
+                  </View>
+                </View>
+
+                <View style={styles.passwordDivider}>
+                  <View style={styles.dividerLine} />
+                  <Text style={styles.dividerText}>Password</Text>
+                  <View style={styles.dividerLine} />
+                </View>
+
+                <View style={styles.fieldGroup}>
                   <Text style={styles.label}>Password</Text>
                   <View style={styles.inputRow}>
                     <Feather color="#83938a" name="lock" size={19} />
                     <TextInput
                       accessibilityLabel="Password"
-                      autoComplete="current-password"
+                      autoComplete="new-password"
                       onChangeText={setPassword}
-                      placeholder="Enter your password"
+                      placeholder="At least 6 characters"
                       placeholderTextColor="#8c9b93"
                       secureTextEntry={!isPasswordVisible}
                       style={styles.input}
@@ -133,21 +190,45 @@ export default function LoginScreen() {
                       <Feather color="#8ca197" name={isPasswordVisible ? 'eye-off' : 'eye'} size={19} />
                     </Pressable>
                   </View>
+                  <Text style={styles.helperText}>At least 6 characters</Text>
                 </View>
 
-                <Text style={styles.forgotPassword}>Forgot password?</Text>
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.label}>Confirm Password</Text>
+                  <View style={styles.inputRow}>
+                    <Feather color="#83938a" name="lock" size={19} />
+                    <TextInput
+                      accessibilityLabel="Confirm Password"
+                      autoComplete="new-password"
+                      onChangeText={setConfirmPassword}
+                      placeholder="Repeat your password"
+                      placeholderTextColor="#8c9b93"
+                      secureTextEntry={!isConfirmPasswordVisible}
+                      style={styles.input}
+                      value={confirmPassword}
+                    />
+                    <Pressable
+                      accessibilityLabel={isConfirmPasswordVisible ? 'Hide confirm password' : 'Show confirm password'}
+                      accessibilityRole="button"
+                      hitSlop={10}
+                      onPress={() => setIsConfirmPasswordVisible((visible) => !visible)}>
+                      <Feather color="#8ca197" name={isConfirmPasswordVisible ? 'eye-off' : 'eye'} size={19} />
+                    </Pressable>
+                  </View>
+                </View>
+
                 {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
 
                 <Pressable
                   accessibilityRole="button"
                   disabled={isSubmitting}
-                  onPress={handleLogin}
+                  onPress={handleSignup}
                   style={[styles.button, isSubmitting && styles.buttonDisabled]}>
                   {isSubmitting ? (
                     <ActivityIndicator color="#ffffff" />
                   ) : (
                     <View style={styles.buttonContent}>
-                      <Text style={styles.buttonText}>Sign In</Text>
+                      <Text style={styles.buttonText}>Sign Up</Text>
                       <Feather color="#ffffff" name="arrow-right" size={20} />
                     </View>
                   )}
@@ -155,9 +236,9 @@ export default function LoginScreen() {
               </View>
 
               <View style={styles.footer}>
-                <Text style={styles.footerText}>Don't have an account? </Text>
-                <Pressable accessibilityRole="link" onPress={() => router.push('/signup')}>
-                  <Text style={styles.footerLink}>Sign Up</Text>
+                <Text style={styles.footerText}>Already have an account? </Text>
+                <Pressable accessibilityRole="link" onPress={() => router.replace('/login')}>
+                  <Text style={styles.footerLink}>Sign In</Text>
                 </Pressable>
               </View>
             </View>
@@ -177,8 +258,8 @@ const styles = StyleSheet.create({
     maxWidth: 420,
     width: '100%',
   },
-  innerCanvas: { minHeight: 640 },
-  brandArea: { paddingHorizontal: 24, paddingTop: 28 },
+  innerCanvas: {},
+  brandArea: { paddingHorizontal: 24, paddingTop: 26 },
   eyebrow: {
     alignSelf: 'stretch',
     backgroundColor: '#dcece1',
@@ -204,9 +285,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.09,
     shadowRadius: 18,
   },
-  headline: { color: '#11271a', fontSize: 25, fontWeight: '800', letterSpacing: -0.5 },
+  headline: { color: '#11271a', fontSize: 24, fontWeight: '800', letterSpacing: -0.5 },
   subtext: { color: '#5c7566', fontSize: 14, lineHeight: 20, marginTop: 6 },
-  fieldGroup: { marginTop: 20 },
+  fieldGroup: { marginTop: 18 },
   label: { color: '#203c2a', fontSize: 13, fontWeight: '700', marginBottom: 8 },
   inputRow: {
     alignItems: 'center',
@@ -219,13 +300,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
   },
   input: { color: '#173322', flex: 1, fontSize: 15, height: '100%', marginLeft: 11, paddingVertical: 0 },
-  forgotPassword: { alignSelf: 'flex-end', color: '#176b3a', fontSize: 12, fontWeight: '700', marginTop: 14 },
-  error: { color: '#b42318', fontSize: 13, lineHeight: 18, marginTop: 12 },
-  button: { alignItems: 'center', backgroundColor: '#176b3a', borderRadius: 14, height: 52, justifyContent: 'center', marginTop: 18 },
+  passwordDivider: { alignItems: 'center', flexDirection: 'row', gap: 10, marginTop: 23 },
+  dividerLine: { backgroundColor: '#d7e2da', flex: 1, height: 1 },
+  dividerText: { color: '#8a9d90', fontSize: 12, fontWeight: '700' },
+  helperText: { color: '#7b8d82', fontSize: 12, marginTop: 6 },
+  error: { color: '#b42318', fontSize: 13, lineHeight: 18, marginTop: 14 },
+  button: { alignItems: 'center', backgroundColor: '#176b3a', borderRadius: 14, height: 52, justifyContent: 'center', marginTop: 20 },
   buttonDisabled: { opacity: 0.65 },
   buttonContent: { alignItems: 'center', flexDirection: 'row', gap: 9 },
   buttonText: { color: '#ffffff', fontSize: 16, fontWeight: '800' },
-  footer: { alignItems: 'center', flexDirection: 'row', justifyContent: 'center', marginBottom: 27, marginTop: 26 },
+  footer: { alignItems: 'center', flexDirection: 'row', justifyContent: 'center', marginBottom: 27, marginTop: 23 },
   footerText: { color: '#597062', fontSize: 13 },
   footerLink: { color: '#176b3a', fontSize: 13, fontWeight: '800' },
 });
