@@ -31,6 +31,13 @@ export default function Login() {
         throw new Error(result.error || 'Unable to sign in.');
       }
 
+      if (result.data?.user?.role !== 'admin' || !result.data?.token) {
+        throw new Error('This account does not have administrator access.');
+      }
+
+      sessionStorage.setItem('resiklean_admin_token', result.data.token);
+      sessionStorage.setItem('resiklean_admin_user', JSON.stringify(result.data.user));
+
       navigate('/dashboard', { replace: true });
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to sign in.');
