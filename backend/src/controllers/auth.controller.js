@@ -15,13 +15,14 @@ const tokenResponse = (user, statusCode, res) => {
 // ── POST /api/auth/register ───────────────────────────────────────────────────
 const register = async (req, res) => {
   try {
-    const { name, email, password, role, barangay } = req.body;
+    const { name, email, password, barangay } = req.body;
 
     // Prevent duplicate emails
     const existing = await User.findOne({ email });
     if (existing) return sendError(res, 'Email is already registered', 409);
 
-    const user = await User.create({ name, email, password, role, barangay });
+    // Force role to 'resident' for all public signups
+    const user = await User.create({ name, email, password, role: 'resident', barangay });
     tokenResponse(user, 201, res);
   } catch (err) {
     sendError(res, err.message, 500);

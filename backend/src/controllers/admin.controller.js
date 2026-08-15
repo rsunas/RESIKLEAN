@@ -1,8 +1,8 @@
-const User         = require('../models/User');
-const Route        = require('../models/Route');
-const RouteLog     = require('../models/RouteLog');
+const User = require('../models/User');
+const Route = require('../models/Route');
+const RouteLog = require('../models/RouteLog');
 const MissedReport = require('../models/MissedReport');
-const TruckLoad    = require('../models/TruckLoad');
+const TruckLoad = require('../models/TruckLoad');
 const { sendSuccess, sendError } = require('../utils/response');
 
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
@@ -42,7 +42,7 @@ const createUser = async (req, res) => {
     if (existingUser) return sendError(res, 'Email is already taken', 400);
 
     const user = await User.create({ name, email, password, role });
-    
+
     // Convert to object and remove password for response
     const userResponse = user.toObject();
     delete userResponse.password;
@@ -116,10 +116,10 @@ const assignCollector = async (req, res) => {
 // Query: ?date=YYYY-MM-DD (defaults to today)
 const getComplianceReport = async (req, res) => {
   try {
-    const dateParam  = req.query.date ? new Date(req.query.date) : new Date();
+    const dateParam = req.query.date ? new Date(req.query.date) : new Date();
     const startOfDay = new Date(dateParam.setHours(0, 0, 0, 0));
-    const endOfDay   = new Date(dateParam.setHours(23, 59, 59, 999));
-    const dayOfWeek  = startOfDay.getDay();
+    const endOfDay = new Date(dateParam.setHours(23, 59, 59, 999));
+    const dayOfWeek = startOfDay.getDay();
 
     // Only routes scheduled to run on this day
     const routes = await Route.find({ schedule: dayOfWeek, isActive: true })
@@ -134,18 +134,18 @@ const getComplianceReport = async (req, res) => {
         }).lean();
 
         const totalStops = route.stops.length;
-        const collected  = logs.filter((l) => l.status === 'collected').length;
-        const skipped    = logs.filter((l) => l.status === 'skipped').length;
+        const collected = logs.filter((l) => l.status === 'collected').length;
+        const skipped = logs.filter((l) => l.status === 'skipped').length;
 
         return {
-          routeId:        route._id,
-          routeName:      route.name,
-          barangay:       route.barangay,
-          collector:      route.collectorId?.name || 'Unassigned',
+          routeId: route._id,
+          routeName: route.name,
+          barangay: route.barangay,
+          collector: route.collectorId?.name || 'Unassigned',
           totalStops,
           collected,
           skipped,
-          remaining:      totalStops - logs.length,
+          remaining: totalStops - logs.length,
           complianceRate: totalStops
             ? `${((collected / totalStops) * 100).toFixed(1)}%`
             : '0%',
@@ -214,21 +214,21 @@ const getTonnageSummary = async (req, res) => {
     if (from || to) {
       filter.arrivedAt = {};
       if (from) filter.arrivedAt.$gte = new Date(from);
-      if (to)   filter.arrivedAt.$lte = new Date(to);
+      if (to) filter.arrivedAt.$lte = new Date(to);
     }
 
     const loads = await TruckLoad.find(filter)
-      .populate('staffId',  'name')
-      .populate('routeId',  'name barangay')
+      .populate('staffId', 'name')
+      .populate('routeId', 'name barangay')
       .sort({ arrivedAt: -1 })
       .lean();
 
-    const totalVolume = loads.reduce((s, l) => s + (l.volumeCubicM    || 0), 0);
-    const totalTonnes = loads.reduce((s, l) => s + (l.tonnesEstimate  || 0), 0);
+    const totalVolume = loads.reduce((s, l) => s + (l.volumeCubicM || 0), 0);
+    const totalTonnes = loads.reduce((s, l) => s + (l.tonnesEstimate || 0), 0);
 
     sendSuccess(res, {
       count: loads.length,
-      totalVolumeCubicM:   +totalVolume.toFixed(3),
+      totalVolumeCubicM: +totalVolume.toFixed(3),
       totalTonnesEstimate: +totalTonnes.toFixed(3),
       loads,
     });
