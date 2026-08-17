@@ -3,6 +3,7 @@ const Route = require('../models/Route');
 const RouteLog = require('../models/RouteLog');
 const MissedReport = require('../models/MissedReport');
 const TruckLoad = require('../models/TruckLoad');
+const Truck = require('../models/Truck');
 const { sendSuccess, sendError } = require('../utils/response');
 
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
@@ -237,6 +238,34 @@ const getTonnageSummary = async (req, res) => {
   }
 };
 
+// ── POST /api/admin/trucks ────────────────────────────────────────────────────
+// Registers a new truck in the fleet.
+// Body: { plateNumber, length, width, height }
+const createTruck = async (req, res) => {
+  try {
+    const { plateNumber, length, width, height } = req.body;
+
+    if (!plateNumber || length == null || width == null || height == null) {
+      return sendError(res, 'plateNumber, length, width, and height are required', 400);
+    }
+
+    const existing = await Truck.findOne({ plateNumber: plateNumber.toUpperCase() });
+    if (existing) return sendError(res, 'A truck with this plate number already exists', 409);
+
+    const truck = await Truck.create({
+      plateNumber,
+      length,
+      width,
+      height,
+      registeredBy: req.user._id,
+    });
+
+    sendSuccess(res, truck, 201);
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
 module.exports = {
   getAllUsers,
   createUser,
@@ -247,4 +276,5 @@ module.exports = {
   getAllReports,
   updateReportStatus,
   getTonnageSummary,
+  createTruck,
 };

@@ -12,6 +12,7 @@ const {
   getAllReports,
   updateReportStatus,
   getTonnageSummary,
+  createTruck,
 } = require('../controllers/admin.controller');
 
 router.use(protect, authorize('admin'));
@@ -34,5 +35,8 @@ router.patch('/reports/:reportId', updateReportStatus);
 
 // Tonnage
 router.get('/tonnage', getTonnageSummary);
+
+// Trucks
+router.post('/trucks', createTruck);
 
 module.exports = router;

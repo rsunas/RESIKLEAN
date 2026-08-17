@@ -1,4 +1,4 @@
-const User          = require('../models/User');
+const User = require('../models/User');
 const { signToken } = require('../utils/jwt');
 const { sendSuccess, sendError } = require('../utils/response');
 

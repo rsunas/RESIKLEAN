@@ -8,6 +8,7 @@ const residentRoutes  = require('./src/routes/resident.routes');
 const collectorRoutes = require('./src/routes/collector.routes');
 const staffRoutes     = require('./src/routes/staff.routes');
 const adminRoutes     = require('./src/routes/admin.routes');
+const truckRoutes     = require('./src/routes/truck.routes');
 
 const app = express();
 
@@ -30,6 +31,7 @@ app.use('/api/resident', residentRoutes);
 app.use('/api/collector', collectorRoutes);
 app.use('/api/staff', staffRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/trucks', truckRoutes);
 
 // ── Global Error Handler (must be last) ───────────────────────────────────────
 app.use(errorHandler);
