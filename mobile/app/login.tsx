@@ -14,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { saveSession, type AccountUser } from '@/lib/session';
 
 type Role = 'resident' | 'collector' | 'staff';
 
@@ -21,9 +22,7 @@ type LoginResponse = {
   success: boolean;
   data?: {
     token?: string;
-    user?: {
-      role?: string;
-    };
+    user?: AccountUser;
   };
   error?: string;
 };
@@ -63,6 +62,12 @@ export default function LoginScreen() {
       if (!role || !['resident', 'collector', 'staff'].includes(role)) {
         throw new Error('This account does not have mobile access.');
       }
+
+      if (!result.data?.token || !result.data.user) {
+        throw new Error('Your sign-in session could not be created.');
+      }
+
+      await saveSession({ token: result.data.token, user: result.data.user });
 
       router.replace(`/${role}`);
     } catch (caughtError) {

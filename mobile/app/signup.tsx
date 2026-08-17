@@ -14,12 +14,13 @@ import {
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { saveSession, type AccountUser } from '@/lib/session';
 
 type RegisterResponse = {
   success: boolean;
   data?: {
     token?: string;
-    user?: { role?: string };
+    user?: AccountUser;
   };
   error?: string;
   errors?: Array<{ msg?: string }>;
@@ -78,6 +79,7 @@ export default function SignupScreen() {
       }
 
       if (result.data?.token && result.data.user?.role === 'resident') {
+        await saveSession({ token: result.data.token, user: result.data.user });
         router.replace('/resident');
         return;
       }
