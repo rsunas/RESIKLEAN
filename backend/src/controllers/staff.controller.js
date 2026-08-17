@@ -1,4 +1,5 @@
 const TruckLoad = require('../models/TruckLoad');
+const Route     = require('../models/Route');
 const { sendSuccess, sendError } = require('../utils/response');
 
 // ── POST /api/staff/truckloads ────────────────────────────────────────────────
@@ -64,4 +65,18 @@ const getMyTruckLoads = async (req, res) => {
   }
 };
 
-module.exports = { submitTruckLoad, getMyTruckLoads };
+// ── GET /api/staff/areas ──────────────────────────────────────────────────────
+// Returns a sorted list of unique barangay/area names from the routes collection.
+// Used to populate the Area dropdown in the Staff mobile app.
+const getAreas = async (req, res) => {
+  try {
+    const areas = await Route.distinct('barangay', { isActive: true });
+    areas.sort((a, b) => a.localeCompare(b));
+
+    sendSuccess(res, { count: areas.length, areas });
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
+module.exports = { submitTruckLoad, getMyTruckLoads, getAreas };
