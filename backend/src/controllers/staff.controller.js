@@ -1,6 +1,7 @@
 const TruckLoad = require('../models/TruckLoad');
 const Route     = require('../models/Route');
 const User      = require('../models/User');
+const { uploadPhoto } = require('../services/cloudinary.service');
 const { sendSuccess, sendError } = require('../utils/response');
 
 // ── POST /api/staff/truckloads ────────────────────────────────────────────────
@@ -16,6 +17,14 @@ const submitTruckLoad = async (req, res) => {
       return sendError(res, 'truckPlate, length, width, and height are required', 400);
     }
 
+    if (!req.file) {
+      return sendError(res, 'Audit photo is required', 400);
+    }
+
+    // Upload audit photo to Cloudinary
+    const result = await uploadPhoto(req.file.buffer, 'resiklean/truckloads');
+    const photoUrl = result.url;
+
     const load = await TruckLoad.create({
       staffId: req.user._id,
       truckPlate: truckPlate.toUpperCase(),
@@ -24,6 +33,7 @@ const submitTruckLoad = async (req, res) => {
       width:  Number(width),
       height: Number(height),
       notes:  notes || '',
+      photoUrl,
     });
 
     sendSuccess(res, load, 201);

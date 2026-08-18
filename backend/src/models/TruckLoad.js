@@ -18,6 +18,7 @@ const truckLoadSchema = new mongoose.Schema(
     tonnesEstimate:{ type: Number },
     arrivedAt:   { type: Date, default: Date.now },
     notes:       { type: String, default: '' },
+    photoUrl:    { type: String, required: true },         // Cloudinary URL for audit photo
   },
   { timestamps: true }
 );
