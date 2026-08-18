@@ -1,5 +1,6 @@
 const TruckLoad = require('../models/TruckLoad');
 const Route     = require('../models/Route');
+const User      = require('../models/User');
 const { sendSuccess, sendError } = require('../utils/response');
 
 // ── POST /api/staff/truckloads ────────────────────────────────────────────────
@@ -79,4 +80,19 @@ const getAreas = async (req, res) => {
   }
 };
 
-module.exports = { submitTruckLoad, getMyTruckLoads, getAreas };
+// ── GET /api/staff/drivers ────────────────────────────────────────────────────
+// Returns a list of Collector users (name + id) for the Driver dropdown.
+const getDrivers = async (req, res) => {
+  try {
+    const drivers = await User.find({ role: 'collector' })
+      .select('name _id')
+      .sort({ name: 1 })
+      .lean();
+
+    sendSuccess(res, { count: drivers.length, drivers });
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
+module.exports = { submitTruckLoad, getMyTruckLoads, getAreas, getDrivers };
