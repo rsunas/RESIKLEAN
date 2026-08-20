@@ -1,5 +1,5 @@
 import { Button, Card, Chip, Input } from '@heroui/react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
 
 const API_URL = import.meta.env.VITE_API_URL;
@@ -10,7 +10,7 @@ const NAV_ITEMS = [
   { id: 'complaints', label: 'Complaints', icon: '!' },
   { id: 'activity', label: 'Staff Activity', icon: '⌁' },
   { id: 'assignments', label: 'Collector Assignments', icon: '⌖' },
-  { id: 'accounts', label: 'Accounts', icon: '♧' },
+  { id: 'accounts', label: 'Manage Accounts', icon: '♧' },
 ];
 
 const PLACEHOLDER_ACCOUNTS = [
@@ -356,7 +356,7 @@ export default function Dashboard() {
     <main className="admin-shell">
       <aside className="admin-sidebar">
         <div className="brand"><strong>SWMO</strong><span>Administrator</span></div>
-        <nav>{NAV_ITEMS.map((item) => <button className={activePage === item.id ? 'nav-link active' : 'nav-link'} key={item.id} onClick={() => setActivePage(item.id)}><span>{item.icon}</span>{item.label}</button>)}</nav>
+        <nav>{NAV_ITEMS.map((item) => <button className={activePage === item.id ? 'nav-link active' : 'nav-link'} key={item.id} onClick={() => setActivePage(item.id)}><span>{item.icon}</span>{item.label}</button>)}<Link className="nav-link manage-trucks-link" to="/manage-trucks"><span>▣</span>Manage Trucks</Link></nav>
         <button className="signout-button" onClick={signOut}>⇥&nbsp; Sign Out</button>
       </aside>
       <section className="admin-workspace">
