@@ -6,19 +6,19 @@ const mongoose = require('mongoose');
  */
 const truckLoadSchema = new mongoose.Schema(
   {
-    staffId:     { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    truckPlate:  { type: String, required: true },
-    routeId:     { type: mongoose.Schema.Types.ObjectId, ref: 'Route' },
+    staffId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    truckPlate: { type: String, required: true },
+    routeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Route' },
     // Triangulation measurements (cm or m — agree on unit per sprint)
-    length:      { type: Number, required: true },
-    width:       { type: Number, required: true },
-    height:      { type: Number, required: true },
+    length: { type: Number, required: true },
+    width: { type: Number, required: true },
+    height: { type: Number, required: true },
     // Calculated tonnage (stored for reporting)
-    volumeCubicM:{ type: Number },
-    tonnesEstimate:{ type: Number },
-    arrivedAt:   { type: Date, default: Date.now },
-    notes:       { type: String, default: '' },
-    photoUrl:    { type: String, required: true },         // Cloudinary URL for audit photo
+    volumeCubicM: { type: Number },
+    tonnesEstimate: { type: Number },
+    arrivedAt: { type: Date, default: Date.now },
+    notes: { type: String, default: '' },
+    photoUrl: { type: String, required: true },         // Cloudinary URL for audit photo
   },
   { timestamps: true }
 );

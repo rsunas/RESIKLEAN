@@ -26,10 +26,10 @@ const getAllUsers = async (req, res) => {
 
 // ── POST /api/admin/users ─────────────────────────────────────────────────────
 // Creates a new collector or staff user.
-// Body: { name, email, password, role }
+// Body: { name, email, password, role, employeeId?, contact?, shift? }
 const createUser = async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, employeeId, contact, shift } = req.body;
 
     if (!name || !email || !password || !role) {
       return sendError(res, 'name, email, password, and role are required', 400);
@@ -42,7 +42,12 @@ const createUser = async (req, res) => {
     const existingUser = await User.findOne({ email });
     if (existingUser) return sendError(res, 'Email is already taken', 400);
 
-    const user = await User.create({ name, email, password, role });
+    const user = await User.create({
+      name, email, password, role,
+      employeeId: employeeId || undefined,
+      contact:    contact    || undefined,
+      shift:      shift      || undefined,
+    });
 
     // Convert to object and remove password for response
     const userResponse = user.toObject();

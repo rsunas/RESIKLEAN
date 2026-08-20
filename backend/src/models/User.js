@@ -13,6 +13,10 @@ const userSchema = new mongoose.Schema(
     barangay: { type: String },
     // Collector-specific
     assignedRouteId: { type: mongoose.Schema.Types.ObjectId, ref: 'Route' },
+    // Staff / Collector profile fields
+    employeeId: { type: String, trim: true },
+    contact:    { type: String, trim: true },
+    shift:      { type: String, enum: ['day', 'night'], default: 'day' },
   },
   { timestamps: true }
 );
