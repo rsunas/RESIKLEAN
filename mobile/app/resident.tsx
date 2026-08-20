@@ -6,7 +6,6 @@ import {
   Alert,
   Image,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -15,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Card } from 'heroui-native';
 import { clearSession, getSession, type AuthSession } from '@/lib/session';
 
@@ -85,6 +85,7 @@ function StatusPill({ status }: { status: string }) {
 }
 
 function BottomNavigation({ activeTab, onChange }: { activeTab: ResidentTab; onChange: (tab: ResidentTab) => void }) {
+  const insets = useSafeAreaInsets();
   const tabs: Array<{ key: ResidentTab; label: string; icon: 'home' | 'calendar' | 'camera' | 'user' }> = [
     { key: 'home', label: 'Home', icon: 'home' },
     { key: 'schedule', label: 'Schedule', icon: 'calendar' },
@@ -93,7 +94,7 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: ResidentTab; onC
   ];
 
   return (
-    <View style={styles.bottomNav}>
+    <View style={[styles.bottomNav, { height: 70 + insets.bottom, paddingBottom: insets.bottom }]}>
       {tabs.map((tab) => {
         const active = activeTab === tab.key;
         return (
@@ -349,7 +350,7 @@ export default function ResidentScreen() {
   const tabScreen = useMemo(() => ({ home: homeScreen, schedule: scheduleScreen, report: reportScreen, profile: profileScreen })[activeTab], [activeTab, homeScreen, profileScreen, reportScreen, scheduleScreen]);
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
       <StatusBar barStyle="light-content" />
       {showBanner ? <View style={styles.bannerWrap}><CollectionBanner onDismiss={() => setShowBanner(false)} /></View> : null}
       <View style={styles.content}>{tabScreen}</View>

@@ -5,7 +5,6 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -14,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { saveSession, type AccountUser } from '@/lib/session';
 
 type Role = 'resident' | 'collector' | 'staff';
@@ -85,7 +85,6 @@ export default function LoginScreen() {
           <View style={styles.phoneFrame}>
             <View style={styles.innerCanvas}>
               <View style={styles.brandArea}>
-                <Text style={styles.eyebrow}>NAGA CITY · WASTE COLLECTION</Text>
                 <View style={styles.logoRow}>
                   <View style={styles.logoIcon}>
                     <MaterialCommunityIcons color="#ffffff" name="recycle" size={22} />
@@ -184,18 +183,7 @@ const styles = StyleSheet.create({
   },
   innerCanvas: { minHeight: 640 },
   brandArea: { paddingHorizontal: 24, paddingTop: 28 },
-  eyebrow: {
-    alignSelf: 'stretch',
-    backgroundColor: '#dcece1',
-    borderRadius: 999,
-    color: '#176b3a',
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-  },
-  logoRow: { alignItems: 'center', flexDirection: 'row', gap: 9, marginTop: 12 },
+  logoRow: { alignItems: 'center', flexDirection: 'row', gap: 9 },
   logoIcon: { alignItems: 'center', backgroundColor: '#176b3a', borderRadius: 20, height: 39, justifyContent: 'center', width: 39 },
   wordmark: { color: '#0f5f32', fontSize: 23, fontWeight: '800', letterSpacing: -0.5 },
   formCard: {

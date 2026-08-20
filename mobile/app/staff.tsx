@@ -4,7 +4,6 @@ import { useMemo, useState } from 'react';
 import {
   Modal,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -12,6 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 type Tab = 'input' | 'history' | 'profile';
 type PickerKind = 'truck' | 'area' | 'driver' | 'slope' | null;
@@ -88,6 +88,7 @@ function MeasurementField({ label, value, onChangeText }: { label: string; value
 }
 
 function BottomNavigation({ activeTab, onChange }: { activeTab: Tab; onChange: (tab: Tab) => void }) {
+  const insets = useSafeAreaInsets();
   const items: { key: Tab; label: string; icon: 'clipboard' | 'activity' | 'user' }[] = [
     { key: 'input', label: 'Input', icon: 'clipboard' },
     { key: 'history', label: 'History', icon: 'activity' },
@@ -95,7 +96,7 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: Tab; onChange: (
   ];
 
   return (
-    <View style={styles.bottomNav}>
+    <View style={[styles.bottomNav, { height: 72 + insets.bottom, paddingBottom: insets.bottom }]}>
       {items.map((item) => {
         const active = activeTab === item.key;
         return (
@@ -351,7 +352,7 @@ export default function StaffScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
       <StatusBar barStyle="light-content" />
       <View style={styles.header}>
         <View>

@@ -1,9 +1,10 @@
 import { Feather, MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-icons';
 import { useEffect, useState } from 'react';
-import { Pressable, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { useRouter } from 'expo-router';
 import { Card } from 'heroui-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getSession, type AuthSession } from '@/lib/session';
 
 type CollectorTab = 'map' | 'history' | 'profile';
@@ -80,6 +81,7 @@ function HistoryHeader() {
 }
 
 function BottomNavigation({ activeTab, onChange }: { activeTab: CollectorTab; onChange: (tab: CollectorTab) => void }) {
+  const insets = useSafeAreaInsets();
   const tabs: Array<{ key: CollectorTab; label: string; icon: 'map-pin' | 'clock' | 'user' }> = [
     { key: 'map', label: 'Map', icon: 'map-pin' },
     { key: 'history', label: 'Route history', icon: 'clock' },
@@ -87,7 +89,7 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: CollectorTab; on
   ];
 
   return (
-    <View style={styles.bottomNav}>
+    <View style={[styles.bottomNav, { height: 70 + insets.bottom, paddingBottom: insets.bottom }]}>
       {tabs.map((tab) => {
         const active = activeTab === tab.key;
         return <Pressable accessibilityRole="tab" accessibilityState={{ selected: active }} key={tab.key} onPress={() => onChange(tab.key)} style={styles.navItem}><Feather color={active ? '#07815f' : '#a0aaa5'} name={tab.icon} size={18} /><Text style={[styles.navText, active && styles.navTextActive]}>{tab.label}</Text>{active ? <View style={styles.navIndicator} /> : <View style={styles.navIndicatorPlaceholder} />}</Pressable>;
@@ -211,7 +213,7 @@ export default function CollectorScreen() {
   );
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
       <StatusBar barStyle="light-content" />
       <View style={styles.content}>{activeTab === 'map' ? mapScreen : activeTab === 'history' ? historyScreen : profileScreen}</View>
       <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
