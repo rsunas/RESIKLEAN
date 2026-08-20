@@ -3,6 +3,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { Button, Card } from 'heroui-native';
 import { useEffect, useMemo, useState } from 'react';
 import {
+  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -36,6 +37,14 @@ type TruckResponse = {
   height: number;
 };
 
+type AreasResponse = {
+  areas?: string[];
+};
+
+type DriversResponse = {
+  drivers?: { _id: string; name: string }[];
+};
+
 type StaffProfile = {
   _id?: string;
   name?: string;
@@ -56,6 +65,8 @@ type TruckLoadResponse = {
   height?: number;
   tonnesEstimate?: number;
   arrivedAt?: string;
+  notes?: string;
+  photoUrl?: string;
 };
 
 type AuditPhoto = {
@@ -78,10 +89,10 @@ type Submission = {
   slope: string;
   tonnes: number;
   status: 'Synced' | 'Pending';
+  notes: string;
+  photoUrl?: string;
 };
 
-const AREAS = ['Barangay Triangulo', 'Barangay Dayangdang', 'Barangay Concepcion Grande', 'Barangay Calaauag'];
-const DRIVERS = ['Jose Pantua', 'Roel Macaraeg', 'Jun Bustillo', 'Eddie Villanueva'];
 const SLOPES = ['0.5 - Moderate Slope', '0.0 - Level Surface', '1.0 - Steep Slope'];
 
 const formatTonnage = (tonnes: number) => `${tonnes.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} t`;
@@ -109,6 +120,8 @@ function mapTruckLoad(load: TruckLoadResponse, staffName = 'You'): Submission {
     slope: '—',
     tonnes: Number(load.tonnesEstimate || 0),
     status: 'Synced',
+    notes: load.notes || '',
+    photoUrl: load.photoUrl,
   };
 }
 
@@ -194,14 +207,21 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: Tab; onChange: (
 }
 
 export default function StaffScreen() {
+  const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<Tab>('input');
   const [pickerKind, setPickerKind] = useState<PickerKind>(null);
   const [trucks, setTrucks] = useState<Truck[]>([]);
   const [isLoadingTrucks, setIsLoadingTrucks] = useState(true);
   const [truckLoadError, setTruckLoadError] = useState('');
   const [truckPlate, setTruckPlate] = useState('');
-  const [area, setArea] = useState(AREAS[0]);
-  const [driver, setDriver] = useState(DRIVERS[0]);
+  const [areas, setAreas] = useState<string[]>([]);
+  const [isLoadingAreas, setIsLoadingAreas] = useState(true);
+  const [areaLoadError, setAreaLoadError] = useState('');
+  const [area, setArea] = useState('');
+  const [drivers, setDrivers] = useState<string[]>([]);
+  const [isLoadingDrivers, setIsLoadingDrivers] = useState(true);
+  const [driverLoadError, setDriverLoadError] = useState('');
+  const [driver, setDriver] = useState('');
   const [slope, setSlope] = useState(SLOPES[0]);
   const [length, setLength] = useState('');
   const [width, setWidth] = useState('');
@@ -211,6 +231,7 @@ export default function StaffScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState('');
   const [history, setHistory] = useState<Submission[]>([]);
+  const [selectedSubmission, setSelectedSubmission] = useState<Submission | null>(null);
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState('');
   const [profile, setProfile] = useState<StaffProfile | null>(null);
@@ -263,6 +284,86 @@ export default function StaffScreen() {
     };
 
     loadRegisteredTrucks();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadAreas = async () => {
+      if (!API_URL) {
+        if (!cancelled) {
+          setAreaLoadError('Area list is unavailable until EXPO_PUBLIC_API_URL is configured.');
+          setIsLoadingAreas(false);
+        }
+        return;
+      }
+
+      try {
+        const session = await getSession();
+        if (!session?.token) throw new Error('Sign in again to load the available areas.');
+
+        const response = await fetch(`${API_URL}/staff/areas`, {
+          headers: { Authorization: `Bearer ${session.token}` },
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.error || 'Unable to load available areas.');
+
+        const availableAreas = [...(((result.data || {}) as AreasResponse).areas || [])]
+          .sort((first, second) => first.localeCompare(second, undefined, { numeric: true, sensitivity: 'base' }));
+        if (!cancelled) {
+          setAreas(availableAreas);
+          setArea((current) => current || availableAreas[0] || '');
+        }
+      } catch (error) {
+        if (!cancelled) setAreaLoadError(error instanceof Error ? error.message : 'Unable to load available areas.');
+      } finally {
+        if (!cancelled) setIsLoadingAreas(false);
+      }
+    };
+
+    loadAreas();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadDrivers = async () => {
+      if (!API_URL) {
+        if (!cancelled) {
+          setDriverLoadError('Driver list is unavailable until EXPO_PUBLIC_API_URL is configured.');
+          setIsLoadingDrivers(false);
+        }
+        return;
+      }
+
+      try {
+        const session = await getSession();
+        if (!session?.token) throw new Error('Sign in again to load the available drivers.');
+
+        const response = await fetch(`${API_URL}/staff/drivers`, {
+          headers: { Authorization: `Bearer ${session.token}` },
+        });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.error || 'Unable to load available drivers.');
+
+        const availableDrivers = [...(((result.data || {}) as DriversResponse).drivers || [])]
+          .map((item) => item.name)
+          .filter(Boolean)
+          .sort((first, second) => first.localeCompare(second, undefined, { sensitivity: 'base' }));
+        if (!cancelled) {
+          setDrivers(availableDrivers);
+          setDriver((current) => current || availableDrivers[0] || '');
+        }
+      } catch (error) {
+        if (!cancelled) setDriverLoadError(error instanceof Error ? error.message : 'Unable to load available drivers.');
+      } finally {
+        if (!cancelled) setIsLoadingDrivers(false);
+      }
+    };
+
+    loadDrivers();
     return () => { cancelled = true; };
   }, []);
 
@@ -357,9 +458,9 @@ export default function StaffScreen() {
   const pickerOptions = pickerKind === 'truck'
     ? trucks.map((truck) => truck.plate)
     : pickerKind === 'area'
-      ? AREAS
+      ? areas
       : pickerKind === 'driver'
-        ? DRIVERS
+        ? drivers
         : pickerKind === 'slope'
           ? SLOPES
           : [];
@@ -451,7 +552,7 @@ export default function StaffScreen() {
       formData.append('length', length);
       formData.append('width', width);
       formData.append('height', height);
-      formData.append('notes', notes);
+      formData.append('notes', notes.trim());
 
       if (auditPhoto.webFile) {
         formData.append('photo', auditPhoto.webFile as Blob);
@@ -496,8 +597,10 @@ export default function StaffScreen() {
           value={selectedTruck ? `${truckPlate} · ${selectedTruck.length}×${selectedTruck.width}×${selectedTruck.height} cm` : isLoadingTrucks ? 'Loading registered trucks…' : 'No registered trucks available'}
         />
         {truckLoadError ? <Text style={styles.truckLoadError}>{truckLoadError}</Text> : null}
-        <SelectField label="Area" onPress={() => setPickerKind('area')} value={area} />
-        <SelectField label="Driver" onPress={() => setPickerKind('driver')} value={driver} />
+        <SelectField label="Area" onPress={() => setPickerKind('area')} value={area || (isLoadingAreas ? 'Loading areas…' : 'No areas available')} />
+        {areaLoadError ? <Text style={styles.truckLoadError}>{areaLoadError}</Text> : null}
+        <SelectField label="Driver" onPress={() => setPickerKind('driver')} value={driver || (isLoadingDrivers ? 'Loading drivers…' : 'No drivers available')} />
+        {driverLoadError ? <Text style={styles.truckLoadError}>{driverLoadError}</Text> : null}
 
         <View style={styles.measurementRow}>
           <MeasurementField label="Length (cm)" value={length} />
@@ -515,11 +618,14 @@ export default function StaffScreen() {
             disabled={isSubmitting}
             onPress={captureAuditPhoto}
             style={[styles.photoField, auditPhoto && styles.photoFieldAttached, isSubmitting && styles.photoFieldDisabled]}>
-            <View style={[styles.cameraBadge, auditPhoto && styles.cameraBadgeAttached]}>
-              <Feather color={auditPhoto ? '#ffffff' : '#07815f'} name={auditPhoto ? 'check' : 'camera'} size={21} />
+            {auditPhoto ? <Image accessibilityLabel="Captured audit photo" resizeMode="cover" source={{ uri: auditPhoto.uri }} style={styles.photoPreview} /> : null}
+            <View style={[styles.photoOverlay, auditPhoto && styles.photoOverlayAttached]}>
+              <View style={[styles.cameraBadge, auditPhoto && styles.cameraBadgeAttached]}>
+                <Feather color={auditPhoto ? '#ffffff' : '#07815f'} name={auditPhoto ? 'check' : 'camera'} size={21} />
+              </View>
+              <Text style={[styles.photoTitle, auditPhoto && styles.photoOverlayTitle]}>{auditPhoto ? 'Audit photo attached' : 'Capture Audit Photo'}</Text>
+              <Text style={[styles.photoCaption, auditPhoto && styles.photoCaptionAttached]}>{auditPhoto ? `${formatFileSize(auditPhoto.size)} · Ready to upload` : 'JPEG, PNG, or WebP · 5 MB maximum'}</Text>
             </View>
-            <Text style={styles.photoTitle}>{auditPhoto ? 'Audit photo attached' : 'Capture Audit Photo'}</Text>
-            <Text style={[styles.photoCaption, auditPhoto && styles.photoCaptionAttached]}>{auditPhoto ? `${formatFileSize(auditPhoto.size)} · Ready to upload` : 'JPEG, PNG, or WebP · 5 MB maximum'}</Text>
           </Pressable>
         </View>
 
@@ -576,7 +682,13 @@ export default function StaffScreen() {
         </Card>
       ) : null}
       {!historyLoading && !historyError ? history.map((submission) => (
-        <Card key={submission.id} style={styles.historyCard}>
+        <Pressable
+          accessibilityHint="Opens the submission details and audit photo"
+          accessibilityRole="button"
+          key={submission.id}
+          onPress={() => setSelectedSubmission(submission)}
+          style={styles.historyCardPressable}>
+          <Card style={styles.historyCard}>
           <View style={styles.historyTopRow}>
             <View style={styles.loadIcon}><MaterialCommunityIcons color="#07815f" name="truck-outline" size={20} /></View>
             <View style={styles.historyMain}>
@@ -587,6 +699,7 @@ export default function StaffScreen() {
               <Text style={styles.tonnage}>{formatTonnage(submission.tonnes)}</Text>
               <Text style={styles.historyDate}>{submission.submittedAt}</Text>
             </View>
+            <Feather color="#9aa9a1" name="chevron-right" size={18} />
           </View>
           <View style={styles.historyDetailRow}>
             <Text style={styles.historyDetail}>L {submission.length} cm</Text>
@@ -595,7 +708,8 @@ export default function StaffScreen() {
             <Text style={styles.historyDetail}>Slope {submission.slope}</Text>
             {submission.status === 'Pending' ? <Text style={styles.pendingPill}>Pending</Text> : null}
           </View>
-        </Card>
+          </Card>
+        </Pressable>
       )) : null}
     </ScrollView>
   );
@@ -648,6 +762,82 @@ export default function StaffScreen() {
     );
   };
 
+  const renderSubmissionDetails = () => {
+    if (!selectedSubmission) return null;
+
+    return (
+      <Modal animationType="slide" onRequestClose={() => setSelectedSubmission(null)} transparent visible>
+        <View style={styles.modalBackdrop}>
+          <Pressable accessibilityLabel="Close submission details" onPress={() => setSelectedSubmission(null)} style={styles.modalDismissArea} />
+          <View style={[styles.detailsSheet, { paddingBottom: insets.bottom + 18 }]}>
+            <View style={styles.detailsHeader}>
+              <View style={styles.detailsHeaderText}>
+                <Text style={styles.detailsEyebrow}>AUDIT SUBMISSION</Text>
+                <Text style={styles.detailsTitle}>Submission details</Text>
+              </View>
+              <Pressable accessibilityLabel="Close submission details" accessibilityRole="button" onPress={() => setSelectedSubmission(null)} style={styles.detailsClose}>
+                <Feather color="#314238" name="x" size={20} />
+              </Pressable>
+            </View>
+
+            <ScrollView
+              contentContainerStyle={[styles.detailsContent, { paddingBottom: insets.bottom + 28 }]}
+              nestedScrollEnabled
+              showsVerticalScrollIndicator
+              style={styles.detailsScroll}>
+              {selectedSubmission.photoUrl ? (
+                <Image accessibilityLabel="Audit submission photo" resizeMode="cover" source={{ uri: selectedSubmission.photoUrl }} style={styles.detailsPhoto} />
+              ) : (
+                <View style={styles.noPhotoCard}>
+                  <MaterialCommunityIcons color="#07815f" name="image-off-outline" size={28} />
+                  <Text style={styles.noPhotoText}>Audit photo unavailable</Text>
+                </View>
+              )}
+
+              <View style={styles.detailsStatusRow}>
+                <View style={styles.syncedPill}>
+                  <View style={styles.syncedDot} />
+                  <Text style={styles.syncedPillText}>{selectedSubmission.status}</Text>
+                </View>
+                <Text style={styles.detailsDate}>{selectedSubmission.submittedAt}</Text>
+              </View>
+
+              <Text style={styles.detailsSectionTitle}>Load information</Text>
+              <DetailRow label="Truck" value={selectedSubmission.truckPlate} />
+              <DetailRow label="Area" value={selectedSubmission.barangay} />
+              <DetailRow label="Driver" value={selectedSubmission.driver} />
+
+              <Text style={styles.detailsSectionTitle}>Measurements</Text>
+              <View style={styles.detailsMeasurementGrid}>
+                <View style={styles.detailsMeasurementItem}>
+                  <Text style={styles.detailsMeasurementLabel}>Length</Text>
+                  <Text style={styles.detailsMeasurementValue}>{selectedSubmission.length} cm</Text>
+                </View>
+                <View style={styles.detailsMeasurementItem}>
+                  <Text style={styles.detailsMeasurementLabel}>Width</Text>
+                  <Text style={styles.detailsMeasurementValue}>{selectedSubmission.width} cm</Text>
+                </View>
+                <View style={styles.detailsMeasurementItem}>
+                  <Text style={styles.detailsMeasurementLabel}>Height</Text>
+                  <Text style={styles.detailsMeasurementValue}>{selectedSubmission.height} cm</Text>
+                </View>
+              </View>
+              <DetailRow label="Slope" value={selectedSubmission.slope} />
+              <DetailRow label="Estimated tonnage" value={formatTonnage(selectedSubmission.tonnes)} />
+
+              {selectedSubmission.notes ? (
+                <View style={styles.notesPreview}>
+                  <Text style={styles.detailsMeasurementLabel}>Notes</Text>
+                  <Text style={styles.notesPreviewText}>{selectedSubmission.notes}</Text>
+                </View>
+              ) : null}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
   return (
     <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
       <StatusBar barStyle="light-content" />
@@ -674,18 +864,30 @@ export default function StaffScreen() {
           <Pressable onPress={(event) => event.stopPropagation()} style={styles.pickerSheet}>
             <View style={styles.sheetHandle} />
             <Text style={styles.pickerTitle}>{pickerTitle}</Text>
-            {pickerKind === 'truck' && isLoadingTrucks ? <Text style={styles.pickerStatus}>Loading registered trucks…</Text> : null}
-            {pickerKind === 'truck' && truckLoadError ? <Text style={styles.pickerStatus}>{truckLoadError}</Text> : null}
-            {pickerKind === 'truck' && !isLoadingTrucks && !truckLoadError && pickerOptions.length === 0 ? <Text style={styles.pickerStatus}>No trucks are registered yet.</Text> : null}
-            {pickerOptions.map((option) => (
-              <Pressable key={option} onPress={() => chooseOption(option)} style={styles.pickerOption}>
-                <Text style={styles.pickerOptionText}>{option}</Text>
-                <Feather color="#07815f" name="chevron-right" size={19} />
-              </Pressable>
-            ))}
+            <ScrollView
+              contentContainerStyle={styles.pickerOptionsContent}
+              showsVerticalScrollIndicator
+              style={styles.pickerOptionsScroll}>
+              {pickerKind === 'truck' && isLoadingTrucks ? <Text style={styles.pickerStatus}>Loading registered trucks…</Text> : null}
+              {pickerKind === 'truck' && truckLoadError ? <Text style={styles.pickerStatus}>{truckLoadError}</Text> : null}
+              {pickerKind === 'truck' && !isLoadingTrucks && !truckLoadError && pickerOptions.length === 0 ? <Text style={styles.pickerStatus}>No trucks are registered yet.</Text> : null}
+              {pickerKind === 'area' && isLoadingAreas ? <Text style={styles.pickerStatus}>Loading available areas…</Text> : null}
+              {pickerKind === 'area' && areaLoadError ? <Text style={styles.pickerStatus}>{areaLoadError}</Text> : null}
+              {pickerKind === 'area' && !isLoadingAreas && !areaLoadError && pickerOptions.length === 0 ? <Text style={styles.pickerStatus}>No active areas are available.</Text> : null}
+              {pickerKind === 'driver' && isLoadingDrivers ? <Text style={styles.pickerStatus}>Loading available drivers…</Text> : null}
+              {pickerKind === 'driver' && driverLoadError ? <Text style={styles.pickerStatus}>{driverLoadError}</Text> : null}
+              {pickerKind === 'driver' && !isLoadingDrivers && !driverLoadError && pickerOptions.length === 0 ? <Text style={styles.pickerStatus}>No drivers are available.</Text> : null}
+              {pickerOptions.map((option) => (
+                <Pressable key={option} onPress={() => chooseOption(option)} style={styles.pickerOption}>
+                  <Text style={styles.pickerOptionText}>{option}</Text>
+                  <Feather color="#07815f" name="chevron-right" size={19} />
+                </Pressable>
+              ))}
+            </ScrollView>
           </Pressable>
         </Pressable>
       </Modal>
+      {renderSubmissionDetails()}
     </SafeAreaView>
   );
 }
@@ -725,11 +927,15 @@ const styles = StyleSheet.create({
   photoField: { alignItems: 'center', backgroundColor: '#fbfdfc', borderColor: '#d7e3dc', borderRadius: 16, borderStyle: 'dashed', borderWidth: 1.5, paddingVertical: 20 },
   photoFieldAttached: { backgroundColor: '#f0faf5', borderColor: '#39a17e' },
   photoFieldDisabled: { opacity: 0.65 },
+  photoPreview: { borderRadius: 14, height: 180, width: '100%' },
+  photoOverlay: { alignItems: 'center' },
+  photoOverlayAttached: { backgroundColor: 'rgba(10, 28, 19, 0.52)', bottom: 0, justifyContent: 'center', left: 0, position: 'absolute', right: 0, top: 0 },
   cameraBadge: { alignItems: 'center', backgroundColor: '#e7f5ef', borderRadius: 18, height: 36, justifyContent: 'center', width: 36 },
   cameraBadgeAttached: { backgroundColor: '#07815f' },
   photoTitle: { color: '#33463b', fontSize: 13, fontWeight: '800', marginTop: 8 },
+  photoOverlayTitle: { color: '#ffffff' },
   photoCaption: { color: '#d95a65', fontSize: 11, fontWeight: '700', marginTop: 4 },
-  photoCaptionAttached: { color: '#14835f' },
+  photoCaptionAttached: { color: '#ffffff' },
   notesInput: { backgroundColor: '#f8faf9', borderColor: '#dce4df', borderRadius: 14, borderWidth: 1, color: '#20362a', fontSize: 14, minHeight: 75, padding: 12 },
   message: { color: '#0c7554', fontSize: 12, fontWeight: '600', lineHeight: 17, marginTop: 12 },
   submitButton: { alignItems: 'center', backgroundColor: '#07815f', borderRadius: 14, flexDirection: 'row', gap: 8, height: 50, justifyContent: 'center', marginTop: 17 },
@@ -754,6 +960,7 @@ const styles = StyleSheet.create({
   entriesLabel: { color: '#b8ded0', fontSize: 11, fontWeight: '700' },
   entriesValue: { color: '#ffffff', fontSize: 24, fontWeight: '800', marginTop: 5 },
   historyCard: { backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 16, borderWidth: 1, marginBottom: 9, padding: 13 },
+  historyCardPressable: { borderRadius: 16 },
   historyTopRow: { alignItems: 'center', flexDirection: 'row' },
   loadIcon: { alignItems: 'center', backgroundColor: '#e9f5ef', borderRadius: 13, height: 38, justifyContent: 'center', width: 38 },
   historyMain: { flex: 1, marginLeft: 10 },
@@ -787,9 +994,35 @@ const styles = StyleSheet.create({
   detailLabel: { color: '#9aa49f', fontSize: 12 },
   detailValue: { color: '#344239', fontSize: 12, fontWeight: '600', maxWidth: '58%', textAlign: 'right' },
   modalBackdrop: { backgroundColor: 'rgba(10, 28, 19, 0.42)', flex: 1, justifyContent: 'flex-end' },
-  pickerSheet: { backgroundColor: '#ffffff', borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 18, paddingBottom: 32 },
+  modalDismissArea: { bottom: 0, left: 0, position: 'absolute', right: 0, top: 0 },
+  pickerSheet: { backgroundColor: '#ffffff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '75%', padding: 18, paddingBottom: 32 },
+  detailsSheet: { backgroundColor: '#ffffff', borderTopLeftRadius: 24, borderTopRightRadius: 24, flexShrink: 1, maxHeight: '90%', paddingHorizontal: 18, paddingTop: 18, width: '100%' },
+  detailsHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  detailsHeaderText: { flex: 1 },
+  detailsEyebrow: { color: '#07815f', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
+  detailsTitle: { color: '#20362a', fontSize: 20, fontWeight: '800', marginTop: 4 },
+  detailsClose: { alignItems: 'center', backgroundColor: '#f1f5f2', borderRadius: 18, height: 36, justifyContent: 'center', width: 36 },
+  detailsScroll: { flexShrink: 1 },
+  detailsContent: { paddingBottom: 30, paddingTop: 16 },
+  detailsPhoto: { backgroundColor: '#edf3ef', borderRadius: 16, height: 220, width: '100%' },
+  noPhotoCard: { alignItems: 'center', backgroundColor: '#f1f5f2', borderRadius: 16, height: 150, justifyContent: 'center' },
+  noPhotoText: { color: '#718077', fontSize: 12, fontWeight: '700', marginTop: 8 },
+  detailsStatusRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 },
+  syncedPill: { alignItems: 'center', backgroundColor: '#e7f8ee', borderRadius: 12, flexDirection: 'row', paddingHorizontal: 9, paddingVertical: 5 },
+  syncedDot: { backgroundColor: '#0b8658', borderRadius: 4, height: 7, marginRight: 6, width: 7 },
+  syncedPillText: { color: '#0b8658', fontSize: 11, fontWeight: '800' },
+  detailsDate: { color: '#8b9991', fontSize: 11 },
+  detailsSectionTitle: { color: '#65756c', fontSize: 11, fontWeight: '800', letterSpacing: 0.5, marginTop: 20 },
+  detailsMeasurementGrid: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  detailsMeasurementItem: { backgroundColor: '#f4f8f5', borderRadius: 12, flex: 1, padding: 11 },
+  detailsMeasurementLabel: { color: '#8b9991', fontSize: 11, fontWeight: '700' },
+  detailsMeasurementValue: { color: '#26382e', fontSize: 14, fontWeight: '800', marginTop: 5 },
+  notesPreview: { backgroundColor: '#f8faf9', borderRadius: 12, marginTop: 18, padding: 12 },
+  notesPreviewText: { color: '#344239', fontSize: 13, lineHeight: 19, marginTop: 5 },
   sheetHandle: { alignSelf: 'center', backgroundColor: '#d6ded9', borderRadius: 3, height: 5, marginBottom: 16, width: 42 },
   pickerTitle: { color: '#20362a', fontSize: 17, fontWeight: '800', marginBottom: 8 },
+  pickerOptionsScroll: { flexGrow: 0 },
+  pickerOptionsContent: { paddingBottom: 4 },
   pickerStatus: { color: '#718077', fontSize: 13, lineHeight: 19, paddingVertical: 12 },
   pickerOption: { alignItems: 'center', borderBottomColor: '#edf1ee', borderBottomWidth: 1, flexDirection: 'row', justifyContent: 'space-between', minHeight: 53 },
   pickerOptionText: { color: '#314238', fontSize: 15, fontWeight: '600' },
