@@ -63,6 +63,7 @@ type TruckLoadResponse = {
   length?: number;
   width?: number;
   height?: number;
+  slope?: number;
   tonnesEstimate?: number;
   arrivedAt?: string;
   notes?: string;
@@ -97,6 +98,11 @@ const SLOPES = ['0.5 - Moderate Slope', '0.0 - Level Surface', '1.0 - Steep Slop
 
 const formatTonnage = (tonnes: number) => `${tonnes.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} t`;
 const formatFileSize = (size: number) => `${(size / (1024 * 1024)).toFixed(1)} MB`;
+const slopeValue = (selection: string) => {
+  const value = Number.parseFloat(selection);
+  return Number.isFinite(value) ? value : 0;
+};
+const formatSlope = (value?: number) => `${Number(value || 0).toFixed(1)} m³`;
 const formatSubmissionDate = (value?: string) => {
   if (!value) return 'Date unavailable';
   const date = new Date(value);
@@ -117,7 +123,7 @@ function mapTruckLoad(load: TruckLoadResponse, staffName = 'You'): Submission {
     length: Number(load.length || 0),
     width: Number(load.width || 0),
     height: Number(load.height || 0),
-    slope: '—',
+    slope: formatSlope(load.slope),
     tonnes: Number(load.tonnesEstimate || 0),
     status: 'Synced',
     notes: load.notes || '',
@@ -552,6 +558,7 @@ export default function StaffScreen() {
       formData.append('length', length);
       formData.append('width', width);
       formData.append('height', height);
+      formData.append('slope', String(slopeValue(slope)));
       formData.append('notes', notes.trim());
 
       if (auditPhoto.webFile) {
