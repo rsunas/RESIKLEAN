@@ -8,11 +8,11 @@ const { sendSuccess, sendError } = require('../utils/response');
 // ── POST /api/staff/truckloads ────────────────────────────────────────────────
 // Staff submits a truckload entry at the sanitary landfill.
 // Volume (m³) and tonnage estimate are auto-calculated by the model's pre-save hook.
-// Body: { truckPlate, routeId?, length, width, height, notes? }
+// Body: { truckPlate, routeId?, length, width, height, slope?, notes? }
 // Measurements are in centimetres.
 const submitTruckLoad = async (req, res) => {
   try {
-    const { truckPlate, routeId, length, width, height, notes } = req.body;
+    const { truckPlate, routeId, length, width, height, slope, notes } = req.body;
 
     if (!truckPlate || !length || !width || !height) {
       return sendError(res, 'truckPlate, length, width, and height are required', 400);
@@ -33,6 +33,7 @@ const submitTruckLoad = async (req, res) => {
       length: Number(length),
       width:  Number(width),
       height: Number(height),
+      slope:  slope ? Number(slope) : 0,
       notes:  notes || '',
       photoUrl,
     });
