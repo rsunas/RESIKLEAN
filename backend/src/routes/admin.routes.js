@@ -13,6 +13,8 @@ const {
   updateReportStatus,
   getTonnageSummary,
   createTruck,
+  createCycleLog,
+  getCycleLogs,
 } = require('../controllers/admin.controller');
 
 router.use(protect, authorize('admin'));
@@ -38,5 +40,9 @@ router.get('/tonnage', getTonnageSummary);
 
 // Trucks
 router.post('/trucks', createTruck);
+
+// Cycle Logs (driver-truck-shift mapping)
+router.post('/cycle-logs', createCycleLog);
+router.get('/cycle-logs', getCycleLogs);
 
 module.exports = router;

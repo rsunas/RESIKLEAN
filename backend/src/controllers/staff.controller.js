@@ -1,6 +1,7 @@
 const TruckLoad = require('../models/TruckLoad');
 const Route     = require('../models/Route');
 const User      = require('../models/User');
+const DailyCycleLog = require('../models/DailyCycleLog');
 const { uploadPhoto } = require('../services/cloudinary.service');
 const { sendSuccess, sendError } = require('../utils/response');
 
@@ -105,4 +106,30 @@ const getDrivers = async (req, res) => {
   }
 };
 
-module.exports = { submitTruckLoad, getMyTruckLoads, getAreas, getDrivers };
+// ── GET /api/staff/drivers/by-truck/:truckId ─────────────────────────────────
+// Returns the driver currently assigned to the given truck for the active shift.
+// Used to auto-fill the Driver dropdown when Staff selects a truck.
+const getDriverByTruck = async (req, res) => {
+  try {
+    const { truckId } = req.params;
+
+    // Find the most recent active cycle for this truck
+    const cycle = await DailyCycleLog.findOne({
+      truckId,
+      shiftStatus: 'active',
+    })
+      .populate('driverId', 'name _id employeeId')
+      .sort({ shiftStart: -1 })
+      .lean();
+
+    if (!cycle) {
+      return sendError(res, 'No active driver assigned to this truck', 404);
+    }
+
+    sendSuccess(res, { driver: cycle.driverId });
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
+module.exports = { submitTruckLoad, getMyTruckLoads, getAreas, getDrivers, getDriverByTruck };

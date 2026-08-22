@@ -4,6 +4,7 @@ const RouteLog = require('../models/RouteLog');
 const MissedReport = require('../models/MissedReport');
 const TruckLoad = require('../models/TruckLoad');
 const Truck = require('../models/Truck');
+const DailyCycleLog = require('../models/DailyCycleLog');
 const { sendSuccess, sendError } = require('../utils/response');
 
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
@@ -45,8 +46,8 @@ const createUser = async (req, res) => {
     const user = await User.create({
       name, email, password, role,
       employeeId: employeeId || undefined,
-      contact:    contact    || undefined,
-      shift:      shift      || undefined,
+      contact: contact || undefined,
+      shift: shift || undefined,
     });
 
     // Convert to object and remove password for response
@@ -271,6 +272,62 @@ const createTruck = async (req, res) => {
   }
 };
 
+// ── POST /api/admin/cycle-logs ────────────────────────────────────────────────
+// Admin assigns a driver (Collector) to a truck for a shift.
+// Body: { driverId, truckId, shiftStart? }
+const createCycleLog = async (req, res) => {
+  try {
+    const { driverId, truckId, shiftStart } = req.body;
+
+    if (!driverId || !truckId) {
+      return sendError(res, 'driverId and truckId are required', 400);
+    }
+
+    // Verify the driver is a collector
+    const driver = await User.findOne({ _id: driverId, role: 'collector' });
+    if (!driver) return sendError(res, 'Driver not found or is not a Collector', 404);
+
+    // Verify the truck exists
+    const truck = await Truck.findById(truckId);
+    if (!truck) return sendError(res, 'Truck not found', 404);
+
+    const cycle = await DailyCycleLog.create({
+      driverId,
+      truckId,
+      shiftStart: shiftStart || new Date(),
+    });
+
+    // Populate driver and truck info before responding
+    const populated = await DailyCycleLog.findById(cycle._id)
+      .populate('driverId', 'name employeeId')
+      .populate('truckId', 'plateNumber')
+      .lean();
+
+    sendSuccess(res, populated, 201);
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
+// ── GET /api/admin/cycle-logs ─────────────────────────────────────────────────
+// Returns all cycle logs. Supports ?status=active filter.
+const getCycleLogs = async (req, res) => {
+  try {
+    const { status } = req.query;
+    const filter = status ? { shiftStatus: status } : {};
+
+    const logs = await DailyCycleLog.find(filter)
+      .populate('driverId', 'name employeeId')
+      .populate('truckId', 'plateNumber')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    sendSuccess(res, { count: logs.length, logs });
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
 module.exports = {
   getAllUsers,
   createUser,
@@ -282,4 +339,6 @@ module.exports = {
   updateReportStatus,
   getTonnageSummary,
   createTruck,
+  createCycleLog,
+  getCycleLogs,
 };
