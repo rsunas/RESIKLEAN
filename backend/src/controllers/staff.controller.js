@@ -22,6 +22,19 @@ const submitTruckLoad = async (req, res) => {
       return sendError(res, 'Audit photo is required', 400);
     }
 
+    // Validate routeId if provided
+    let validatedRouteId = null;
+    if (routeId) {
+      const route = await Route.findById(routeId).lean();
+      if (!route) {
+        return sendError(res, 'Invalid route ID — route not found', 400);
+      }
+      if (!route.isActive) {
+        return sendError(res, 'This route is inactive and cannot be assigned to a truckload', 400);
+      }
+      validatedRouteId = route._id;
+    }
+
     // Upload audit photo to Cloudinary
     const result = await uploadPhoto(req.file.buffer, 'resiklean/truckloads');
     const photoUrl = result.url;
@@ -29,7 +42,7 @@ const submitTruckLoad = async (req, res) => {
     const load = await TruckLoad.create({
       staffId: req.user._id,
       truckPlate: truckPlate.toUpperCase(),
-      routeId: routeId || null,
+      routeId: validatedRouteId,
       length: Number(length),
       width:  Number(width),
       height: Number(height),
@@ -79,12 +92,14 @@ const getMyTruckLoads = async (req, res) => {
 };
 
 // ── GET /api/staff/areas ──────────────────────────────────────────────────────
-// Returns a sorted list of unique barangay/area names from the routes collection.
+// Returns active routes with _id, barangay, and name.
 // Used to populate the Area dropdown in the Staff mobile app.
 const getAreas = async (req, res) => {
   try {
-    const areas = await Route.distinct('barangay', { isActive: true });
-    areas.sort((a, b) => a.localeCompare(b));
+    const areas = await Route.find({ isActive: true })
+      .select('_id barangay name')
+      .sort({ barangay: 1, name: 1 })
+      .lean();
 
     sendSuccess(res, { count: areas.length, areas });
   } catch (err) {
