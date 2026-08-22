@@ -252,6 +252,11 @@ export default function ResidentScreen() {
 
   const signOut = async () => {
     await clearSession();
+    setSession(null);
+    setPastReports([]);
+    setSelectedPhoto(null);
+    setDescription('');
+    setReportMessage('');
     router.replace('/login');
   };
 
