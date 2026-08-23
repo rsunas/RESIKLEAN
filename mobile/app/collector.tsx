@@ -1,11 +1,12 @@
 import { Feather, MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-icons';
+import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import { useRouter } from 'expo-router';
 import { Card } from 'heroui-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getSession, type AuthSession } from '@/lib/session';
+import { clearSession, getSession, type AuthSession } from '@/lib/session';
 
 type CollectorTab = 'map' | 'history' | 'profile';
 
@@ -53,8 +54,10 @@ function PendingBadge() {
 }
 
 function StandardHeader() {
+  const insets = useSafeAreaInsets();
+
   return (
-    <View style={styles.standardHeader}>
+    <View style={[styles.standardHeader, { paddingTop: 11 + insets.top }]}>
       <View>
         <Text style={styles.barangayTitle}>{BARANGAY}</Text>
         <ShiftPills />
@@ -65,8 +68,10 @@ function StandardHeader() {
 }
 
 function HistoryHeader() {
+  const insets = useSafeAreaInsets();
+
   return (
-    <View style={styles.historyHeader}>
+    <View style={[styles.historyHeader, { paddingTop: 10 + insets.top }]}>
       <View style={styles.historyHeaderTop}>
         <View>
           <Text style={styles.assignedLabel}>ASSIGNED AREA</Text>
@@ -155,6 +160,12 @@ export default function CollectorScreen() {
   const collectorName = session?.user.name?.trim() || 'Roel Macaraeg';
   const initial = collectorName.charAt(0).toUpperCase();
 
+  const signOut = async () => {
+    await clearSession();
+    setSession(null);
+    router.replace('/login');
+  };
+
   const mapScreen = (
     <View style={styles.mapScreen}>
       <StandardHeader />
@@ -207,14 +218,19 @@ export default function CollectorScreen() {
           <AccountDetail label="Shift" value="Day Shift · Mon–Sat" />
           <AccountDetail label="Collection Type" value="Biodegradable" />
         </Card>
+
+        <Pressable accessibilityRole="button" onPress={signOut} style={styles.signOutButton}>
+          <Feather color="#e23d4f" name="log-out" size={17} />
+          <Text style={styles.signOutText}>Sign Out</Text>
+        </Pressable>
       </ScrollView>
       <View style={styles.syncBottomBar}><View style={styles.syncBottomTextWrap}><Feather color="#b97917" name="wifi-off" size={15} /><Text style={styles.syncBottomText}>{PENDING_SYNC} updates pending sync</Text></View><Pressable onPress={() => undefined} style={styles.syncButton}><Text style={styles.syncButtonText}>Sync Now</Text></Pressable></View>
     </View>
   );
 
   return (
-    <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
-      <StatusBar barStyle="light-content" />
+    <SafeAreaView edges={['left', 'right']} style={styles.safeArea}>
+      <StatusBar backgroundColor="transparent" style="light" translucent />
       <View style={styles.content}>{activeTab === 'map' ? mapScreen : activeTab === 'history' ? historyScreen : profileScreen}</View>
       <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
     </SafeAreaView>
@@ -299,6 +315,8 @@ const styles = StyleSheet.create({
   accountRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 },
   accountLabel: { color: '#9aa59f', fontSize: 10 },
   accountValue: { color: '#405147', fontSize: 10, fontWeight: '700', maxWidth: '60%', textAlign: 'right' },
+  signOutButton: { alignItems: 'center', borderColor: '#ffdadd', borderRadius: 13, borderWidth: 1, flexDirection: 'row', gap: 7, height: 45, justifyContent: 'center', marginTop: 13 },
+  signOutText: { color: '#e23d4f', fontSize: 12, fontWeight: '800' },
   syncBottomBar: { alignItems: 'center', backgroundColor: '#ffffff', borderTopColor: '#e0e8e3', borderTopWidth: 1, flexDirection: 'row', justifyContent: 'space-between', minHeight: 57, paddingHorizontal: 13 },
   syncBottomTextWrap: { alignItems: 'center', flexDirection: 'row', flex: 1, gap: 6 },
   syncBottomText: { color: '#7d6a42', fontSize: 10, fontWeight: '700' },

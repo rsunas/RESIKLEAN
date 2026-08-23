@@ -1,5 +1,6 @@
 import { Feather, MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -7,7 +8,6 @@ import {
   Image,
   Pressable,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TextInput,
@@ -132,6 +132,7 @@ function ReportList({ reports }: { reports: ApiReport[] }) {
 
 export default function ResidentScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<ResidentTab>('home');
   const [showBanner, setShowBanner] = useState(true);
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -355,9 +356,11 @@ export default function ResidentScreen() {
   const tabScreen = useMemo(() => ({ home: homeScreen, schedule: scheduleScreen, report: reportScreen, profile: profileScreen })[activeTab], [activeTab, homeScreen, profileScreen, reportScreen, scheduleScreen]);
 
   return (
-    <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
-      <StatusBar barStyle="light-content" />
-      {showBanner ? <View style={styles.bannerWrap}><CollectionBanner onDismiss={() => setShowBanner(false)} /></View> : null}
+    <SafeAreaView edges={['left', 'right']} style={styles.safeArea}>
+      <StatusBar backgroundColor="transparent" style="light" translucent />
+      <View style={[styles.residentHeader, { paddingTop: insets.top }]}>
+        {showBanner ? <View style={styles.bannerWrap}><CollectionBanner onDismiss={() => setShowBanner(false)} /></View> : null}
+      </View>
       <View style={styles.content}>{tabScreen}</View>
       <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
     </SafeAreaView>
@@ -366,7 +369,8 @@ export default function ResidentScreen() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#f4f7f5' },
-  bannerWrap: { paddingHorizontal: 12, paddingTop: 6 },
+  residentHeader: { backgroundColor: '#064b37' },
+  bannerWrap: { paddingHorizontal: 12, paddingVertical: 6 },
   collectionBanner: { alignItems: 'center', backgroundColor: '#06a86c', borderRadius: 13, flexDirection: 'row', minHeight: 53, paddingHorizontal: 13, shadowColor: '#075b3d', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.18, shadowRadius: 10 },
   bannerCheck: { alignItems: 'center', borderColor: '#c7ffe6', borderRadius: 10, borderWidth: 1, height: 18, justifyContent: 'center', width: 18 },
   bannerTextWrap: { flex: 1, marginLeft: 9 },

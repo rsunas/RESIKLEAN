@@ -1,5 +1,6 @@
 import { Feather, MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import { StatusBar } from 'expo-status-bar';
 import { Button, Card } from 'heroui-native';
 import { useEffect, useMemo, useState } from 'react';
 import {
@@ -7,18 +8,19 @@ import {
   Modal,
   Pressable,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getSession } from '@/lib/session';
+import { clearSession, getSession } from '@/lib/session';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 const MAX_AUDIT_PHOTO_SIZE = 5 * 1024 * 1024;
 const ALLOWED_AUDIT_PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const DENSITY_FACTOR = 0.294;
 
 type Tab = 'input' | 'history' | 'profile';
 type PickerKind = 'truck' | 'area' | 'driver' | 'slope' | null;
@@ -37,8 +39,14 @@ type TruckResponse = {
   height: number;
 };
 
+type AreaOption = {
+  _id: string;
+  barangay: string;
+  name?: string;
+};
+
 type AreasResponse = {
-  areas?: string[];
+  areas?: AreaOption[];
 };
 
 type DriversResponse = {
@@ -94,10 +102,17 @@ type Submission = {
   photoUrl?: string;
 };
 
+type TonnagePreview = {
+  volumeCubicM: number;
+  slopeCubicM: number;
+  tonnes: number;
+};
+
 const SLOPES = ['0.5 - Moderate Slope', '0.0 - Level Surface', '1.0 - Steep Slope'];
 
 const formatTonnage = (tonnes: number) => `${tonnes.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} t`;
 const formatFileSize = (size: number) => `${(size / (1024 * 1024)).toFixed(1)} MB`;
+const areaLabel = (area: AreaOption) => area.name ? `${area.barangay} · ${area.name}` : area.barangay;
 const slopeValue = (selection: string) => {
   const value = Number.parseFloat(selection);
   return Number.isFinite(value) ? value : 0;
@@ -113,10 +128,10 @@ const formatSubmissionDate = (value?: string) => {
 const formatRole = (value?: string) => value ? `${value.charAt(0).toUpperCase()}${value.slice(1)}` : 'Staff';
 const initials = (name?: string) => name?.split(' ').filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'S';
 
-function mapTruckLoad(load: TruckLoadResponse, staffName = 'You'): Submission {
+function mapTruckLoad(load: TruckLoadResponse, staffName = 'You', fallbackArea = ''): Submission {
   return {
     id: load._id || `${load.truckPlate || 'load'}-${load.arrivedAt || Date.now()}`,
-    barangay: load.routeId?.barangay || 'No area assigned',
+    barangay: load.routeId?.barangay || fallbackArea.split(' · ')[0] || 'No area assigned',
     truckPlate: load.truckPlate || 'Unknown truck',
     driver: staffName,
     submittedAt: formatSubmissionDate(load.arrivedAt),
@@ -213,6 +228,7 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: Tab; onChange: (
 }
 
 export default function StaffScreen() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<Tab>('input');
   const [pickerKind, setPickerKind] = useState<PickerKind>(null);
@@ -220,10 +236,11 @@ export default function StaffScreen() {
   const [isLoadingTrucks, setIsLoadingTrucks] = useState(true);
   const [truckLoadError, setTruckLoadError] = useState('');
   const [truckPlate, setTruckPlate] = useState('');
-  const [areas, setAreas] = useState<string[]>([]);
+  const [areas, setAreas] = useState<AreaOption[]>([]);
   const [isLoadingAreas, setIsLoadingAreas] = useState(true);
   const [areaLoadError, setAreaLoadError] = useState('');
   const [area, setArea] = useState('');
+  const [routeId, setRouteId] = useState('');
   const [drivers, setDrivers] = useState<string[]>([]);
   const [isLoadingDrivers, setIsLoadingDrivers] = useState(true);
   const [driverLoadError, setDriverLoadError] = useState('');
@@ -234,6 +251,7 @@ export default function StaffScreen() {
   const [height, setHeight] = useState('');
   const [notes, setNotes] = useState('');
   const [auditPhoto, setAuditPhoto] = useState<AuditPhoto | null>(null);
+  const [tonnagePreview, setTonnagePreview] = useState<TonnagePreview | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState('');
   const [history, setHistory] = useState<Submission[]>([]);
@@ -316,10 +334,12 @@ export default function StaffScreen() {
         if (!response.ok || !result.success) throw new Error(result.error || 'Unable to load available areas.');
 
         const availableAreas = [...(((result.data || {}) as AreasResponse).areas || [])]
-          .sort((first, second) => first.localeCompare(second, undefined, { numeric: true, sensitivity: 'base' }));
+          .filter((item) => item?._id && item.barangay)
+          .sort((first, second) => areaLabel(first).localeCompare(areaLabel(second), undefined, { numeric: true, sensitivity: 'base' }));
         if (!cancelled) {
           setAreas(availableAreas);
-          setArea((current) => current || availableAreas[0] || '');
+          setArea((current) => current || (availableAreas[0] ? areaLabel(availableAreas[0]) : ''));
+          setRouteId((current) => current || availableAreas[0]?._id || '');
         }
       } catch (error) {
         if (!cancelled) setAreaLoadError(error instanceof Error ? error.message : 'Unable to load available areas.');
@@ -464,7 +484,7 @@ export default function StaffScreen() {
   const pickerOptions = pickerKind === 'truck'
     ? trucks.map((truck) => truck.plate)
     : pickerKind === 'area'
-      ? areas
+      ? areas.map(areaLabel)
       : pickerKind === 'driver'
         ? drivers
         : pickerKind === 'slope'
@@ -487,12 +507,47 @@ export default function StaffScreen() {
         setLength(truck.length);
         setWidth(truck.width);
         setHeight(truck.height);
+        setTonnagePreview(null);
       }
     }
-    if (pickerKind === 'area') setArea(option);
+    if (pickerKind === 'area') {
+      const selectedArea = areas.find((item) => areaLabel(item) === option);
+      setArea(option);
+      setRouteId(selectedArea?._id || '');
+    }
     if (pickerKind === 'driver') setDriver(option);
-    if (pickerKind === 'slope') setSlope(option);
+    if (pickerKind === 'slope') {
+      setSlope(option);
+      setTonnagePreview(null);
+    }
     setPickerKind(null);
+  };
+
+  const previewTonnage = () => {
+    const numericLength = Number(length);
+    const numericWidth = Number(width);
+    const numericHeight = Number(height);
+    const slopeCubicM = slopeValue(slope);
+
+    if (!Number.isFinite(numericLength) || !Number.isFinite(numericWidth) || !Number.isFinite(numericHeight)
+      || numericLength <= 0 || numericWidth <= 0 || numericHeight <= 0) {
+      setTonnagePreview(null);
+      setMessage('Select a truck with complete registered dimensions before calculating tonnage.');
+      return;
+    }
+
+    const volumeCubicM = (numericLength * numericWidth * numericHeight) / 1_000_000;
+    setTonnagePreview({
+      volumeCubicM,
+      slopeCubicM,
+      tonnes: (volumeCubicM + slopeCubicM) * DENSITY_FACTOR,
+    });
+    setMessage('');
+  };
+
+  const signOut = async () => {
+    await clearSession();
+    router.replace('/login');
   };
 
   const captureAuditPhoto = async () => {
@@ -532,6 +587,11 @@ export default function StaffScreen() {
       return;
     }
 
+    if (!routeId) {
+      setMessage('Select an active area before submitting.');
+      return;
+    }
+
     if (!auditPhoto) {
       setMessage('Capture an audit photo before submitting.');
       return;
@@ -554,6 +614,7 @@ export default function StaffScreen() {
 
       const formData = new FormData();
       formData.append('truckPlate', truckPlate);
+      if (routeId) formData.append('routeId', routeId);
       // Keep the exact dimensions registered by the admin. The backend stores these values as cm.
       formData.append('length', length);
       formData.append('width', width);
@@ -580,7 +641,7 @@ export default function StaffScreen() {
       if (!response.ok || !result.success) throw new Error(result.error || 'Unable to submit the truckload.');
 
       const savedLoad = result.data as TruckLoadResponse;
-      setHistory((current) => [mapTruckLoad(savedLoad, profile?.name || 'You'), ...current]);
+      setHistory((current) => [mapTruckLoad(savedLoad, profile?.name || 'You', area), ...current]);
       setHistoryError('');
       setHistoryLoading(false);
       setAuditPhoto(null);
@@ -617,6 +678,28 @@ export default function StaffScreen() {
         <Text style={styles.helperText}>{selectedTruck ? `Dimensions are locked to the admin registration for ${truckPlate}.` : 'Register a truck in the dashboard, then reopen this screen to select it.'}</Text>
 
         <SelectField label="Slope (m³)" onPress={() => setPickerKind('slope')} value={slope} />
+
+        <Pressable
+          accessibilityLabel="Calculate estimated tonnage"
+          accessibilityRole="button"
+          disabled={!selectedTruck}
+          onPress={previewTonnage}
+          style={[styles.calculateButton, !selectedTruck && styles.calculateButtonDisabled]}>
+          <MaterialCommunityIcons color={selectedTruck ? '#07815f' : '#91a19a'} name="calculator-variant-outline" size={20} />
+          <Text style={[styles.calculateButtonLabel, !selectedTruck && styles.calculateButtonLabelDisabled]}>Calculate Tonnage</Text>
+        </Pressable>
+
+        {tonnagePreview ? (
+          <View accessibilityRole="summary" style={styles.tonnagePreview}>
+            <View style={styles.tonnagePreviewDetails}>
+              <Text style={styles.tonnagePreviewLabel}>ESTIMATED TONNAGE</Text>
+              <Text style={styles.tonnagePreviewFormula}>
+                {tonnagePreview.volumeCubicM.toFixed(2)} m³ + {tonnagePreview.slopeCubicM.toFixed(1)} m³ slope at {DENSITY_FACTOR} t/m³
+              </Text>
+            </View>
+            <Text style={styles.tonnagePreviewValue}>{formatTonnage(tonnagePreview.tonnes)}</Text>
+          </View>
+        ) : null}
 
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>Audit Photo <Text style={styles.required}>*</Text></Text>
@@ -765,6 +848,11 @@ export default function StaffScreen() {
             <DetailRow label="Shift" value={profileShift} />
           </> : null}
         </Card>
+
+        <Pressable accessibilityRole="button" onPress={signOut} style={styles.signOutButton}>
+          <Feather color="#e23d4f" name="log-out" size={17} />
+          <Text style={styles.signOutText}>Sign Out</Text>
+        </Pressable>
       </ScrollView>
     );
   };
@@ -846,9 +934,9 @@ export default function StaffScreen() {
   };
 
   return (
-    <SafeAreaView edges={['top', 'left', 'right']} style={styles.safeArea}>
-      <StatusBar barStyle="light-content" />
-      <View style={styles.header}>
+    <SafeAreaView edges={['left', 'right']} style={styles.safeArea}>
+      <StatusBar backgroundColor="transparent" style="light" translucent />
+      <View style={[styles.header, { paddingTop: 10 + insets.top }]}>
         <View>
           <Text style={styles.headerTitle}>Volumetric Input</Text>
           <Text style={styles.headerSubtitle}>Staff · Tonnage Audit</Text>
@@ -916,7 +1004,7 @@ const styles = StyleSheet.create({
   syncBadge: { alignItems: 'center', backgroundColor: '#4d4b18', borderColor: '#81742a', borderRadius: 18, borderWidth: 1, flexDirection: 'row', gap: 5, paddingHorizontal: 10, paddingVertical: 6 },
   syncText: { color: '#e7d768', fontSize: 11, fontWeight: '700' },
   content: { flex: 1 },
-  scrollContent: { padding: 14, paddingBottom: 102 },
+  scrollContent: { padding: 14, paddingBottom: 32 },
   sectionEyebrow: { color: '#617168', fontSize: 12, fontWeight: '800', letterSpacing: 0.35, marginBottom: 11 },
   formCard: { backgroundColor: '#ffffff', borderColor: '#e5ebe7', borderRadius: 18, borderWidth: 1, elevation: 1, padding: 14, shadowColor: '#153528', shadowOpacity: 0.06, shadowRadius: 10 },
   fieldGroup: { marginTop: 13 },
@@ -931,6 +1019,15 @@ const styles = StyleSheet.create({
   measurementValue: { color: '#526159', flex: 1, fontSize: 14, marginLeft: 8 },
   helperText: { color: '#96a29b', fontSize: 10, marginTop: 8 },
   truckLoadError: { color: '#b42318', fontSize: 11, lineHeight: 16, marginTop: 8 },
+  calculateButton: { alignItems: 'center', backgroundColor: '#eff8f4', borderColor: '#92cbb4', borderRadius: 14, borderWidth: 1, flexDirection: 'row', gap: 8, height: 48, justifyContent: 'center', marginTop: 13 },
+  calculateButtonDisabled: { backgroundColor: '#f2f5f3', borderColor: '#dce4df' },
+  calculateButtonLabel: { color: '#07815f', fontSize: 14, fontWeight: '800' },
+  calculateButtonLabelDisabled: { color: '#91a19a' },
+  tonnagePreview: { alignItems: 'center', backgroundColor: '#eaf8f1', borderColor: '#9ed4ba', borderRadius: 14, borderWidth: 1, flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, padding: 13 },
+  tonnagePreviewDetails: { flex: 1 },
+  tonnagePreviewLabel: { color: '#35745b', fontSize: 10, fontWeight: '800', letterSpacing: 0.4 },
+  tonnagePreviewFormula: { color: '#5d776a', fontSize: 10, marginTop: 5 },
+  tonnagePreviewValue: { color: '#067452', fontSize: 21, fontWeight: '800', marginLeft: 12 },
   photoField: { alignItems: 'center', backgroundColor: '#fbfdfc', borderColor: '#d7e3dc', borderRadius: 16, borderStyle: 'dashed', borderWidth: 1.5, paddingVertical: 20 },
   photoFieldAttached: { backgroundColor: '#f0faf5', borderColor: '#39a17e' },
   photoFieldDisabled: { opacity: 0.65 },
@@ -1000,6 +1097,8 @@ const styles = StyleSheet.create({
   detailRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 13 },
   detailLabel: { color: '#9aa49f', fontSize: 12 },
   detailValue: { color: '#344239', fontSize: 12, fontWeight: '600', maxWidth: '58%', textAlign: 'right' },
+  signOutButton: { alignItems: 'center', borderColor: '#ffdadd', borderRadius: 13, borderWidth: 1, flexDirection: 'row', gap: 7, height: 45, justifyContent: 'center', marginTop: 13 },
+  signOutText: { color: '#e23d4f', fontSize: 12, fontWeight: '800' },
   modalBackdrop: { backgroundColor: 'rgba(10, 28, 19, 0.42)', flex: 1, justifyContent: 'flex-end' },
   modalDismissArea: { bottom: 0, left: 0, position: 'absolute', right: 0, top: 0 },
   pickerSheet: { backgroundColor: '#ffffff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '75%', padding: 18, paddingBottom: 32 },
