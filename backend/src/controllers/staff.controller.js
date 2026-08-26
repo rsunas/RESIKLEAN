@@ -1,6 +1,6 @@
 const TruckLoad = require('../models/TruckLoad');
-const Route     = require('../models/Route');
-const User      = require('../models/User');
+const Route = require('../models/Route');
+const User = require('../models/User');
 const DailyCycleLog = require('../models/DailyCycleLog');
 const { uploadPhoto } = require('../services/cloudinary.service');
 const { sendSuccess, sendError } = require('../utils/response');
@@ -44,10 +44,10 @@ const submitTruckLoad = async (req, res) => {
       truckPlate: truckPlate.toUpperCase(),
       routeId: validatedRouteId,
       length: Number(length),
-      width:  Number(width),
+      width: Number(width),
       height: Number(height),
-      slope:  slope ? Number(slope) : 0,
-      notes:  notes || '',
+      slope: slope ? Number(slope) : 0,
+      notes: notes || '',
       photoUrl,
     });
 
@@ -68,7 +68,7 @@ const getMyTruckLoads = async (req, res) => {
     if (from || to) {
       filter.arrivedAt = {};
       if (from) filter.arrivedAt.$gte = new Date(from);
-      if (to)   filter.arrivedAt.$lte = new Date(to);
+      if (to) filter.arrivedAt.$lte = new Date(to);
     }
 
     const loads = await TruckLoad.find(filter)
@@ -77,12 +77,12 @@ const getMyTruckLoads = async (req, res) => {
       .lean();
 
     // Summary totals
-    const totalVolume  = loads.reduce((sum, l) => sum + (l.volumeCubicM  || 0), 0);
-    const totalTonnes  = loads.reduce((sum, l) => sum + (l.tonnesEstimate || 0), 0);
+    const totalVolume = loads.reduce((sum, l) => sum + (l.volumeCubicM || 0), 0);
+    const totalTonnes = loads.reduce((sum, l) => sum + (l.tonnesEstimate || 0), 0);
 
     sendSuccess(res, {
       count: loads.length,
-      totalVolumeCubicM:   +totalVolume.toFixed(3),
+      totalVolumeCubicM: +totalVolume.toFixed(3),
       totalTonnesEstimate: +totalTonnes.toFixed(3),
       loads,
     });
