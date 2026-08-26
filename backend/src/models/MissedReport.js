@@ -14,7 +14,7 @@ const missedReportSchema = new mongoose.Schema(
     aiConfidence: { type: Number },                        // 0–1
     status:       {
       type: String,
-      enum: ['pending', 'verified', 'rejected', 'resolved'],
+      enum: ['pending', 'verified', 'scheduled', 'rejected', 'resolved'],
       default: 'pending',
     },
     resolvedAt: { type: Date },
