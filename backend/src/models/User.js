@@ -11,6 +11,7 @@ const userSchema = new mongoose.Schema(
     role:     { type: String, enum: ROLES, required: true },
     // Resident-specific
     barangay: { type: String },
+    phone:    { type: String, trim: true },
     // Collector-specific
     assignedRouteId: { type: mongoose.Schema.Types.ObjectId, ref: 'Route' },
     // Staff / Collector profile fields
