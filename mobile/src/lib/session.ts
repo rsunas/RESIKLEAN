@@ -10,6 +10,7 @@ export type AccountUser = {
   phone?: string;
   role?: 'resident' | 'collector' | 'staff' | 'admin';
   barangay?: string;
+  location?: string;
 };
 
 export type AuthSession = {

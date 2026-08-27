@@ -1,15 +1,54 @@
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
-import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { RESIDENT_LOCATION_OPTIONS } from '@/constants/barangays';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import type { CollectionLocationOption } from '@/types/resident-schedule';
 
 type BarangayPickerProps = {
   value: string;
   onChange: (barangay: string) => void;
 };
 
+type LocationsResponse = {
+  success: boolean;
+  data?: CollectionLocationOption[];
+  error?: string;
+};
+
+const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
+
 export function BarangayPicker({ value, onChange }: BarangayPickerProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [locations, setLocations] = useState<CollectionLocationOption[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadLocations = async () => {
+      if (!API_URL) {
+        if (!cancelled) {
+          setError('Location service is not configured.');
+          setIsLoading(false);
+        }
+        return;
+      }
+
+      try {
+        const response = await fetch(`${API_URL}/collection-locations`);
+        const result = (await response.json()) as LocationsResponse;
+        if (!response.ok || !result.success) throw new Error(result.error || 'Unable to load collection locations.');
+        if (!cancelled) setLocations(result.data || []);
+      } catch (caughtError) {
+        if (!cancelled) setError(caughtError instanceof Error ? caughtError.message : 'Unable to load collection locations.');
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    };
+
+    void loadLocations();
+    return () => { cancelled = true; };
+  }, []);
 
   const selectBarangay = (barangay: string) => {
     onChange(barangay);
@@ -25,24 +64,29 @@ export function BarangayPicker({ value, onChange }: BarangayPickerProps) {
         style={styles.trigger}>
         <Feather color="#83938a" name="map-pin" size={18} />
         <Text numberOfLines={1} style={[styles.triggerText, !value && styles.placeholder]}>
-          {value || 'Select your barangay'}
+          {value || 'Select your collection location'}
         </Text>
-        <Feather color="#83938a" name={isOpen ? 'chevron-up' : 'chevron-down'} size={18} />
+        {isLoading ? <ActivityIndicator color="#07815f" size="small" /> : <Feather color="#83938a" name={isOpen ? 'chevron-up' : 'chevron-down'} size={18} />}
       </Pressable>
 
       {isOpen ? (
         <View style={styles.dropdown}>
+          {error ? <Text style={styles.errorText}>{error}</Text> : null}
+          {!isLoading && !error && !locations.length ? <Text style={styles.emptyText}>No collection locations found.</Text> : null}
           <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false}>
-            {RESIDENT_LOCATION_OPTIONS.map((barangay) => {
-              const selected = barangay === value;
+            {locations.map((location) => {
+              const selected = location.name === value;
               return (
                 <Pressable
                   accessibilityRole="button"
                   accessibilityState={{ selected }}
-                  key={barangay}
-                  onPress={() => selectBarangay(barangay)}
+                  key={location._id}
+                  onPress={() => selectBarangay(location.name)}
                   style={[styles.option, selected && styles.selectedOption]}>
-                  <Text style={[styles.optionText, selected && styles.selectedOptionText]}>{barangay}</Text>
+                  <View style={styles.optionTextWrap}>
+                    <Text style={[styles.optionText, selected && styles.selectedOptionText]}>{location.name}</Text>
+                    <Text style={styles.optionMeta}>{location.area} · {location.type}</Text>
+                  </View>
                   {selected ? <Feather color="#07815f" name="check" size={16} /> : null}
                 </Pressable>
               );
@@ -92,6 +136,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 13,
   },
   selectedOption: { backgroundColor: '#eaf8f0' },
-  optionText: { color: '#34483d', flex: 1, fontSize: 13 },
+  optionTextWrap: { flex: 1 },
+  optionText: { color: '#34483d', fontSize: 13 },
+  optionMeta: { color: '#8a9a91', fontSize: 10, marginTop: 2, textTransform: 'capitalize' },
   selectedOptionText: { color: '#07815f', fontWeight: '700' },
+  errorText: { color: '#cc4251', fontSize: 11, padding: 12 },
+  emptyText: { color: '#89978f', fontSize: 11, padding: 12 },
 });

@@ -6,6 +6,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -18,7 +19,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Card } from 'heroui-native';
 import { BarangayPicker } from '@/components/barangay-picker';
 import { clearSession, getSession, saveSession, type AuthSession } from '@/lib/session';
-import { getResidentScheduleFixture, type ApiWasteType, type ScheduleData, type UpcomingCollection } from '@/types/resident-schedule';
+import { type ApiWasteType, type LegacyScheduleData, type ScheduleData, type UpcomingCollection } from '@/types/resident-schedule';
 
 type ResidentTab = 'home' | 'schedule' | 'report' | 'profile';
 
@@ -45,7 +46,6 @@ type ApiResponse<T> = {
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 const CITY = 'Naga City';
-const USE_SCHEDULE_FIXTURE = process.env.NODE_ENV === 'development' && process.env.EXPO_PUBLIC_USE_SCHEDULE_FIXTURE === 'true';
 
 type WasteLabel = 'Biodegradable' | 'Non-Biodegradable';
 
@@ -58,13 +58,6 @@ function formatDate(value: string | Date | null | undefined, options: Intl.DateT
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return 'Date unavailable';
   return date.toLocaleDateString('en-PH', options);
-}
-
-function formatTime(value: string | Date | null | undefined) {
-  if (!value) return 'Time unavailable';
-  const date = value instanceof Date ? value : new Date(value);
-  if (Number.isNaN(date.getTime())) return 'Time unavailable';
-  return date.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' });
 }
 
 function dateKey(value: string | Date) {
@@ -92,6 +85,35 @@ function getDetectedBagCount(report: ApiReport) {
     ?? report.aiResult?.bagCount;
 
   return typeof count === 'number' ? `${count} bag${count === 1 ? '' : 's'}` : 'Not available';
+}
+
+function normalizeScheduleData(data: ScheduleData | LegacyScheduleData | null, fallbackLocation: string): ScheduleData | null {
+  if (!data) return null;
+  if ('schedules' in data) return data;
+
+  const route = data.routes[0];
+  const biodegradableDays = (route?.weeklyPattern || []).filter((day) => !['Thursday', 'Sunday'].includes(day));
+  const nonBiodegradableDays = (route?.weeklyPattern || []).filter((day) => ['Thursday', 'Sunday'].includes(day));
+  const schedules: ScheduleData['schedules'] = [];
+  if (biodegradableDays.length) schedules.push({ wasteType: 'biodegradable', days: biodegradableDays, timeWindows: [] });
+  if (nonBiodegradableDays.length) schedules.push({ wasteType: 'non-biodegradable', days: nonBiodegradableDays, timeWindows: [] });
+
+  return {
+    location: data.barangay || fallbackLocation,
+    area: 'Legacy route',
+    shift: 'day',
+    today: data.today,
+    todayWasteType: route?.todayWasteType || null,
+    nextCollection: route?.nextCollection || null,
+    nextWasteType: route?.nextWasteType || null,
+    schedules,
+    upcomingCollections: data.upcomingCollections.map((collection) => ({
+      date: collection.date,
+      dayName: collection.dayName,
+      wasteType: collection.wasteType,
+      timeWindows: [],
+    })),
+  };
 }
 
 function CollectionBanner({
@@ -142,6 +164,34 @@ function StatusPill({ status }: { status: string }) {
   return <View style={[styles.statusPill, style]}><View style={[styles.statusDot, dotStyle]} /><Text style={[styles.statusText, textStyle]}>{label}</Text></View>;
 }
 
+function ReportStatusTracker({ status }: { status: ApiReport['status'] }) {
+  const normalized = status.toLowerCase();
+  const currentStep = normalized === 'resolved' ? 2 : normalized === 'verified' || normalized === 'scheduled' ? 1 : 0;
+  const rejected = normalized === 'rejected';
+  const stages = ['Submitted', 'Acknowledged-Scheduled', 'Resolved'];
+
+  return (
+    <View style={styles.reportStatusTracker}>
+      <Text style={styles.reportDetailsSectionTitle}>STATUS TRACKER</Text>
+      {rejected ? (
+        <Text style={styles.rejectedTrackerText}>This report was rejected.</Text>
+      ) : (
+        <View style={styles.trackerStages}>
+          {stages.map((stage, index) => (
+            <View key={stage} style={styles.trackerStage}>
+              {index < stages.length - 1 ? <View style={[styles.trackerConnector, index < currentStep && styles.trackerConnectorActive]} /> : null}
+              <View style={[styles.trackerDot, index <= currentStep && styles.trackerDotActive]}>
+                {index < currentStep ? <Feather color="#ffffff" name="check" size={10} /> : null}
+              </View>
+              <Text style={[styles.trackerLabel, index <= currentStep && styles.trackerLabelActive]}>{stage}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  );
+}
+
 function BottomNavigation({ activeTab, onChange }: { activeTab: ResidentTab; onChange: (tab: ResidentTab) => void }) {
   const insets = useSafeAreaInsets();
   const tabs: Array<{ key: ResidentTab; label: string; icon: 'home' | 'calendar' | 'camera' | 'user' }> = [
@@ -167,7 +217,7 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: ResidentTab; onC
   );
 }
 
-function ReportList({ reports }: { reports: ApiReport[] }) {
+function ReportList({ reports, onSelect }: { reports: ApiReport[]; onSelect: (report: ApiReport) => void }) {
   if (!reports.length) {
     return <Text style={styles.emptyReportText}>No reports submitted yet.</Text>;
   }
@@ -175,17 +225,25 @@ function ReportList({ reports }: { reports: ApiReport[] }) {
   return (
     <>
       {reports.map((report) => (
-        <View key={report._id} style={styles.pastReportRow}>
-          <View style={styles.reportThumbnail}>
-            {report.photoUrl ? <Image source={{ uri: report.photoUrl }} style={styles.reportThumbnailImage} /> : <Feather color="#9aa69f" name="image" size={17} />}
+        <Pressable
+          accessibilityHint="Opens the report details"
+          accessibilityRole="button"
+          key={report._id}
+          onPress={() => onSelect(report)}
+          style={styles.reportRowPressable}>
+          <View style={styles.pastReportRow}>
+            <View style={styles.reportThumbnail}>
+              {report.photoUrl ? <Image source={{ uri: report.photoUrl }} style={styles.reportThumbnailImage} /> : <Feather color="#9aa69f" name="image" size={17} />}
+            </View>
+            <View style={styles.reportMain}>
+              <Text numberOfLines={1} style={styles.reportLocation}>{report.barangay || 'Location not recorded'}</Text>
+              <Text numberOfLines={1} style={styles.reportMeta}>{formatDate(report.createdAt, { month: 'short', day: 'numeric', year: 'numeric' })} · Detected bags: {getDetectedBagCount(report)}</Text>
+              {report.description ? <Text numberOfLines={1} style={styles.reportDescription}>{report.description}</Text> : null}
+            </View>
+            <StatusPill status={report.status} />
+            <Feather color="#9aa69f" name="chevron-right" size={16} />
           </View>
-          <View style={styles.reportMain}>
-            <Text numberOfLines={1} style={styles.reportLocation}>{report.barangay || 'Location not recorded'}</Text>
-            <Text numberOfLines={1} style={styles.reportMeta}>{formatDate(report.createdAt, { month: 'short', day: 'numeric', year: 'numeric' })} · Detected bags: {getDetectedBagCount(report)}</Text>
-            {report.description ? <Text numberOfLines={1} style={styles.reportDescription}>{report.description}</Text> : null}
-          </View>
-          <StatusPill status={report.status} />
-        </View>
+        </Pressable>
       ))}
     </>
   );
@@ -196,11 +254,13 @@ export default function ResidentScreen() {
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<ResidentTab>('home');
   const [showBanner, setShowBanner] = useState(true);
+  const [showAllUpcoming, setShowAllUpcoming] = useState(false);
   const [session, setSession] = useState<AuthSession | null>(null);
   const [schedule, setSchedule] = useState<ScheduleData | null>(null);
   const [isLoadingSchedule, setIsLoadingSchedule] = useState(false);
   const [scheduleError, setScheduleError] = useState('');
   const [pastReports, setPastReports] = useState<ApiReport[]>([]);
+  const [selectedReport, setSelectedReport] = useState<ApiReport | null>(null);
   const [isLoadingReports, setIsLoadingReports] = useState(false);
   const [reportError, setReportError] = useState('');
   const [selectedPhoto, setSelectedPhoto] = useState<ImagePicker.ImagePickerAsset | null>(null);
@@ -210,29 +270,21 @@ export default function ResidentScreen() {
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [profileName, setProfileName] = useState('');
   const [profilePhone, setProfilePhone] = useState('');
-  const [profileBarangay, setProfileBarangay] = useState('');
+  const [profileLocation, setProfileLocation] = useState('');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileMessage, setProfileMessage] = useState('');
 
-  const loadSchedule = useCallback(async (token: string, residentBarangay?: string) => {
-    if (!residentBarangay) {
+  const loadSchedule = useCallback(async (token: string, residentLocation?: string) => {
+    if (!residentLocation) {
       setSchedule(null);
-      setScheduleError('Add a barangay in your profile to load your schedule.');
+      setScheduleError('Add a collection location in your profile to load your schedule.');
       setIsLoadingSchedule(false);
       return;
     }
 
     setIsLoadingSchedule(true);
     setScheduleError('');
-
-    if (USE_SCHEDULE_FIXTURE) {
-      const fixture = getResidentScheduleFixture(residentBarangay);
-      if (fixture) {
-        setSchedule(fixture);
-        setIsLoadingSchedule(false);
-        return;
-      }
-    }
+    setShowAllUpcoming(false);
 
     if (!API_URL) {
       setSchedule(null);
@@ -242,15 +294,14 @@ export default function ResidentScreen() {
     }
 
     try {
-      const query = `?barangay=${encodeURIComponent(residentBarangay)}`;
-      const response = await fetch(`${API_URL}/resident/schedule${query}`, {
+      const response = await fetch(`${API_URL}/resident/schedule`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const result = (await response.json()) as ApiResponse<ScheduleData>;
+      const result = (await response.json()) as ApiResponse<ScheduleData | LegacyScheduleData>;
       if (!response.ok || !result.success) throw new Error(result.error || 'Unable to load your collection schedule.');
-      const scheduleData = result.data || null;
+      const scheduleData = normalizeScheduleData(result.data || null, residentLocation);
       setSchedule(scheduleData);
-      if (!scheduleData?.routes?.length) {
+      if (!scheduleData?.schedules.length) {
         setScheduleError('No collection schedule is available for this location yet.');
       }
     } catch (error) {
@@ -296,19 +347,83 @@ export default function ResidentScreen() {
 
   useEffect(() => {
     if (session?.token) void loadReports(session.token);
-    if (session?.token) void loadSchedule(session.token, session.user.barangay);
-  }, [loadReports, loadSchedule, session?.token, session?.user.barangay]);
+    if (session?.token) void loadSchedule(session.token, session.user.location || session.user.barangay);
+  }, [loadReports, loadSchedule, session?.token, session?.user.barangay, session?.user.location]);
 
   useEffect(() => {
     setProfileName(session?.user.name || '');
     setProfilePhone(session?.user.phone || '');
-    setProfileBarangay(session?.user.barangay || '');
-  }, [session?.user.barangay, session?.user.name, session?.user.phone]);
+    setProfileLocation(session?.user.location || session?.user.barangay || '');
+  }, [session?.user.barangay, session?.user.location, session?.user.name, session?.user.phone]);
 
   const displayName = session?.user.name?.trim() || 'Resident';
   const firstInitial = displayName.charAt(0).toUpperCase();
-  const barangay = session?.user.barangay || 'Barangay not set';
+  const location = session?.user.location || session?.user.barangay || 'Location not set';
   const phone = session?.user.phone || 'Phone number not set';
+
+  const renderReportDetails = () => {
+    if (!selectedReport) return null;
+
+    return (
+      <Modal animationType="slide" onRequestClose={() => setSelectedReport(null)} transparent visible>
+        <View style={styles.reportModalBackdrop}>
+          <Pressable accessibilityLabel="Close report details" onPress={() => setSelectedReport(null)} style={styles.reportModalDismissArea} />
+          <View style={[styles.reportDetailsSheet, { paddingBottom: insets.bottom + 12 }]}>
+            <View style={styles.reportDetailsHeader}>
+              <View style={styles.reportDetailsHeaderText}>
+                <Text style={styles.reportDetailsEyebrow}>MY REPORT</Text>
+                <Text style={styles.reportDetailsTitle}>Report details</Text>
+              </View>
+              <Pressable accessibilityLabel="Close report details" accessibilityRole="button" onPress={() => setSelectedReport(null)} style={styles.reportDetailsClose}>
+                <Feather color="#314238" name="x" size={20} />
+              </Pressable>
+            </View>
+
+            <ScrollView contentContainerStyle={styles.reportDetailsContent} showsVerticalScrollIndicator={false}>
+              {selectedReport.photoUrl ? (
+                <Image accessibilityLabel="Submitted waste photo" resizeMode="cover" source={{ uri: selectedReport.photoUrl }} style={styles.reportDetailsPhoto} />
+              ) : (
+                <View style={styles.reportNoPhotoCard}>
+                  <MaterialCommunityIcons color="#07815f" name="image-off-outline" size={28} />
+                  <Text style={styles.reportNoPhotoText}>Submitted photo unavailable</Text>
+                </View>
+              )}
+
+              <View style={styles.reportDetailsStatusRow}>
+                <StatusPill status={selectedReport.status} />
+                <Text style={styles.reportDetailsDate}>{formatDate(selectedReport.createdAt, { month: 'short', day: 'numeric', year: 'numeric' })}</Text>
+              </View>
+
+              <ReportStatusTracker status={selectedReport.status} />
+
+              <Text style={styles.reportDetailsSectionTitle}>REPORT INFORMATION</Text>
+              <View style={styles.reportDetailsInfoCard}>
+                <View style={styles.reportDetailIcon}><Feather color="#07815f" name="map-pin" size={16} /></View>
+                <View style={styles.reportDetailInfoText}>
+                  <Text style={styles.reportDetailLabel}>Location</Text>
+                  <Text style={styles.reportDetailValue}>{selectedReport.barangay || 'Location not recorded'}</Text>
+                </View>
+              </View>
+              <View style={styles.reportDetailsInfoCard}>
+                <View style={styles.reportDetailIcon}><MaterialCommunityIcons color="#07815f" name="sack-outline" size={17} /></View>
+                <View style={styles.reportDetailInfoText}>
+                  <Text style={styles.reportDetailLabel}>Detected bag count</Text>
+                  <Text style={styles.reportDetailValue}>{getDetectedBagCount(selectedReport)}</Text>
+                </View>
+              </View>
+
+              {selectedReport.description ? (
+                <View style={styles.reportDescriptionCard}>
+                  <Text style={styles.reportDetailLabel}>Your note</Text>
+                  <Text style={styles.reportDescriptionDetail}>{selectedReport.description}</Text>
+                </View>
+              ) : null}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
 
   const capturePhoto = async () => {
     setReportMessage('');
@@ -400,7 +515,9 @@ export default function ResidentScreen() {
         body: JSON.stringify({
           name: profileName.trim(),
           phone: profilePhone.trim(),
-          barangay: profileBarangay.trim(),
+          location: profileLocation.trim(),
+          // Keep the legacy field populated until all existing accounts migrate.
+          barangay: profileLocation.trim(),
         }),
       });
       const result = (await response.json()) as ApiResponse<AuthSession['user']>;
@@ -444,19 +561,26 @@ export default function ResidentScreen() {
     return date >= currentWeekStart && date <= currentWeekEnd;
   });
   const todayCollection = upcomingByDate.get(dateKey(new Date()));
-  const nextCollection = schedule?.routes[0];
+  const upcomingCollections = schedule?.upcomingCollections || [];
+  const visibleUpcomingCollections = showAllUpcoming ? upcomingCollections : upcomingCollections.slice(0, 3);
+  const nextCollectionEntry = schedule?.upcomingCollections.find((collection) => (
+    schedule.nextCollection && dateKey(collection.date) === dateKey(schedule.nextCollection)
+  ));
+  const nextTimeWindows = nextCollectionEntry?.timeWindows
+    || schedule?.schedules.find((entry) => entry.wasteType === schedule.nextWasteType)?.timeWindows
+    || [];
 
   const homeScreen = (
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
       <Text style={styles.greeting}>Good morning,</Text>
       <Text style={styles.name}>{displayName}</Text>
-      <Text style={styles.location}>{barangay} · {CITY}</Text>
+      <Text style={styles.location}>{location} · {CITY}</Text>
 
       <Card style={styles.nextCollectionCard}>
         <Text style={styles.darkCardEyebrow}>NEXT COLLECTION</Text>
-        {isLoadingSchedule ? <ActivityIndicator color="#ffffff" style={styles.scheduleLoader} /> : nextCollection ? <>
-          <Text style={styles.nextDate}>{formatDate(nextCollection.nextCollection, { weekday: 'long', month: 'long', day: 'numeric' })}</Text>
-          <View style={styles.nextInfoRow}><WastePill type={toWasteLabel(nextCollection.nextWasteType)} /><Text style={styles.nextTime}>{formatTime(nextCollection.nextCollection)}</Text></View>
+        {isLoadingSchedule ? <ActivityIndicator color="#ffffff" style={styles.scheduleLoader} /> : schedule?.nextCollection ? <>
+          <Text style={styles.nextDate}>{formatDate(schedule.nextCollection, { weekday: 'long', month: 'long', day: 'numeric' })}</Text>
+          <View style={styles.nextInfoRow}><WastePill type={toWasteLabel(schedule.nextWasteType)} /><Text style={styles.nextTime}>{nextTimeWindows.length ? nextTimeWindows.join(' · ') : 'Time unavailable'}</Text></View>
         </> : <Text style={styles.nextDate}>{scheduleError ? 'Schedule unavailable' : 'No upcoming collection'}</Text>}
         <View style={styles.darkDivider} />
         <Text style={styles.reminder}>Segregate food waste, garden waste, and paper into green bags.</Text>
@@ -469,7 +593,7 @@ export default function ResidentScreen() {
 
       <Card style={styles.card}>
         <View style={styles.cardTopRow}><Text style={styles.cardHeading}>MY RECENT REPORTS</Text><Pressable onPress={() => setActiveTab('report')}><Text style={styles.viewAll}>View All</Text></Pressable></View>
-        {isLoadingReports ? <ActivityIndicator color="#07815f" style={styles.loadingReports} /> : reportError ? <Text style={styles.errorMessage}>{reportError}</Text> : <ReportList reports={pastReports.slice(0, 2)} />}
+        {isLoadingReports ? <ActivityIndicator color="#07815f" style={styles.loadingReports} /> : reportError ? <Text style={styles.errorMessage}>{reportError}</Text> : <ReportList onSelect={setSelectedReport} reports={pastReports.slice(0, 2)} />}
       </Card>
     </ScrollView>
   );
@@ -477,7 +601,7 @@ export default function ResidentScreen() {
   const scheduleScreen = (
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
       <Text style={styles.screenTitle}>Collection Schedule</Text>
-      <Text style={styles.screenSubtitle}>{barangay} · {formatDate(currentWeekDates[0], { month: 'long', year: 'numeric' })}</Text>
+      <Text style={styles.screenSubtitle}>{location} · {formatDate(currentWeekDates[0], { month: 'long', year: 'numeric' })}</Text>
 
       <Card style={styles.card}>
         <Text style={styles.cardHeading}>THIS WEEK</Text>
@@ -487,15 +611,15 @@ export default function ResidentScreen() {
             const collection = upcomingByDate.get(dateKey(date));
             const isToday = dateKey(date) === dateKey(new Date());
             const isNonBio = collection?.wasteType === 'non-biodegradable';
-            return <View key={dateKey(date)} style={[styles.dateCell, collection && (isNonBio ? styles.nonBioCollectionDateCell : styles.collectionDateCell), isToday && styles.currentDateCell]}><Text style={[styles.dateText, isToday && styles.currentDateText]}>{date.getDate()}</Text>{collection ? <View style={[styles.collectionDot, isNonBio && styles.nonBioCollectionDot, isToday && styles.currentCollectionDot]} /> : null}</View>;
+            return <View key={dateKey(date)} style={[styles.dateCell, collection && (isNonBio ? styles.nonBioCollectionDateCell : styles.collectionDateCell), isToday && styles.currentDateCell]}>{isToday ? <Text style={styles.todayLabel}>TODAY</Text> : null}<Text style={[styles.dateText, isToday && styles.currentDateText]}>{date.getDate()}</Text>{collection ? <View style={[styles.collectionDot, isNonBio && styles.nonBioCollectionDot]} /> : null}</View>;
           })}</View>
         </>}
         <View style={styles.calendarLegend}><View style={styles.legendItem}><View style={[styles.legendDot, styles.legendBio]} /><Text style={styles.legendText}>Biodegradable</Text></View><View style={styles.legendItem}><View style={[styles.legendDot, styles.legendNonBio]} /><Text style={styles.legendText}>Non-Biodegradable</Text></View></View>
       </Card>
 
       <Card style={styles.card}>
-        <Text style={styles.cardHeading}>UPCOMING COLLECTIONS</Text>
-        {isLoadingSchedule ? <ActivityIndicator color="#07815f" style={styles.loadingSchedule} /> : scheduleError ? <Text style={styles.errorMessage}>{scheduleError}</Text> : schedule?.upcomingCollections.length ? schedule.upcomingCollections.map((collection) => <View key={collection.date} style={[styles.upcomingRow, collection.wasteType === 'biodegradable' ? styles.upcomingBio : styles.upcomingNonBio]}><View><Text style={styles.collectionDate}>{formatDate(collection.date, { weekday: 'short', month: 'short', day: 'numeric' })}</Text><Text style={styles.collectionTime}>Collection at {formatTime(collection.date)}</Text></View><WastePill type={toWasteLabel(collection.wasteType)} /></View>) : <Text style={styles.emptyScheduleText}>No upcoming collections found.</Text>}
+        <View style={styles.cardTopRow}><Text style={styles.cardHeading}>UPCOMING COLLECTIONS</Text>{upcomingCollections.length > 3 ? <Pressable accessibilityRole="button" onPress={() => setShowAllUpcoming((visible) => !visible)}><Text style={styles.viewAll}>{showAllUpcoming ? 'Show Less' : 'View All'}</Text></Pressable> : null}</View>
+        {isLoadingSchedule ? <ActivityIndicator color="#07815f" style={styles.loadingSchedule} /> : scheduleError ? <Text style={styles.errorMessage}>{scheduleError}</Text> : visibleUpcomingCollections.length ? visibleUpcomingCollections.map((collection) => <View key={collection.date} style={[styles.upcomingRow, collection.wasteType === 'biodegradable' ? styles.upcomingBio : styles.upcomingNonBio]}><View><Text style={styles.collectionDate}>{formatDate(collection.date, { weekday: 'short', month: 'short', day: 'numeric' })}</Text><Text style={styles.collectionTime}>{collection.timeWindows.length ? collection.timeWindows.join(' · ') : 'Time unavailable'}</Text></View><WastePill type={toWasteLabel(collection.wasteType)} /></View>) : <Text style={styles.emptyScheduleText}>No upcoming collections found.</Text>}
       </Card>
     </ScrollView>
   );
@@ -509,7 +633,7 @@ export default function ResidentScreen() {
         <Text style={styles.cardHeading}>PREVIEW &amp; SUBMIT</Text>
         <Pressable accessibilityRole="button" onPress={capturePhoto} style={[styles.photoPreview, !selectedPhoto && styles.photoEmpty]}>
           {selectedPhoto ? <Image source={{ uri: selectedPhoto.uri }} style={styles.photoImage} /> : <View style={styles.photoEmptyContent}><View style={styles.cameraIcon}><Feather color="#07815f" name="camera" size={24} /></View><Text style={styles.photoEmptyTitle}>Take a photo of the waste</Text><Text style={styles.photoEmptySubtext}>This photo is used to verify your report.</Text></View>}
-          {selectedPhoto ? <View style={styles.locationTag}><Feather color="#ffffff" name="map-pin" size={12} /><Text style={styles.locationTagText}>{barangay}</Text></View> : null}
+          {selectedPhoto ? <View style={styles.locationTag}><Feather color="#ffffff" name="map-pin" size={12} /><Text style={styles.locationTagText}>{location}</Text></View> : null}
         </Pressable>
         <Text style={styles.fieldLabel}>Brief note (optional)</Text>
         <TextInput multiline onChangeText={setDescription} placeholder="Add details for the collection team" placeholderTextColor="#9aa69f" style={styles.descriptionInput} value={description} />
@@ -521,7 +645,7 @@ export default function ResidentScreen() {
         <Text style={styles.cardHeading}>PAST REPORTS</Text>
         {isLoadingReports ? <ActivityIndicator color="#07815f" style={styles.loadingReports} /> : null}
         {reportError ? <Text style={styles.errorMessage}>{reportError}</Text> : null}
-        {!isLoadingReports && !reportError ? <ReportList reports={pastReports} /> : null}
+        {!isLoadingReports && !reportError ? <ReportList onSelect={setSelectedReport} reports={pastReports} /> : null}
       </Card>
     </ScrollView>
   );
@@ -535,8 +659,8 @@ export default function ResidentScreen() {
           <TextInput autoCapitalize="words" onChangeText={setProfileName} style={styles.profileInput} value={profileName} />
           <Text style={styles.profileFieldLabel}>Phone Number</Text>
           <TextInput keyboardType="phone-pad" onChangeText={setProfilePhone} style={styles.profileInput} value={profilePhone} />
-          <Text style={styles.profileFieldLabel}>Barangay</Text>
-          <BarangayPicker onChange={setProfileBarangay} value={profileBarangay} />
+          <Text style={styles.profileFieldLabel}>Collection Location</Text>
+          <BarangayPicker onChange={setProfileLocation} value={profileLocation} />
           {profileMessage ? <Text accessibilityRole="alert" style={profileMessage === 'Profile updated.' ? styles.successMessage : styles.errorMessage}>{profileMessage}</Text> : null}
           <View style={styles.profileEditActions}>
             <Pressable disabled={isSavingProfile} onPress={() => { setIsEditingProfile(false); setProfileMessage(''); }} style={styles.profileCancelButton}><Text style={styles.profileCancelText}>Cancel</Text></Pressable>
@@ -546,7 +670,7 @@ export default function ResidentScreen() {
           <View style={styles.avatar}><Text style={styles.avatarText}>{firstInitial}</Text></View>
           <Text style={styles.profileName}>{displayName}</Text>
           <Text style={styles.profilePhone}>{phone}</Text>
-          <Text style={styles.profileLocation}>{barangay}, {CITY}</Text>
+          <Text style={styles.profileLocation}>{location}, {CITY}</Text>
           <Pressable accessibilityRole="button" onPress={() => { setProfileMessage(''); setIsEditingProfile(true); }} style={styles.editProfileButton}><Feather color="#07815f" name="edit-2" size={14} /><Text style={styles.editProfileText}>Edit Profile</Text></Pressable>
           {profileMessage ? <Text style={styles.successMessage}>{profileMessage}</Text> : null}
         </>}
@@ -566,10 +690,11 @@ export default function ResidentScreen() {
     <SafeAreaView edges={['left', 'right']} style={styles.safeArea}>
       <StatusBar backgroundColor="transparent" style="light" translucent />
       <View style={[styles.residentHeader, { paddingTop: insets.top }]}>
-        {showBanner && todayCollection ? <View style={styles.bannerWrap}><CollectionBanner barangay={barangay} collection={todayCollection} onDismiss={() => setShowBanner(false)} /></View> : null}
+        {showBanner && todayCollection ? <View style={styles.bannerWrap}><CollectionBanner barangay={location} collection={todayCollection} onDismiss={() => setShowBanner(false)} /></View> : null}
       </View>
       <View style={styles.content}>{tabScreen}</View>
       <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
+      {renderReportDetails()}
     </SafeAreaView>
   );
 }
@@ -632,15 +757,15 @@ const styles = StyleSheet.create({
   calendarDays: { flexDirection: 'row', justifyContent: 'space-around', marginTop: 13 },
   calendarDay: { color: '#78877e', fontSize: 10, textAlign: 'center', width: 31 },
   calendarDates: { flexDirection: 'row', justifyContent: 'space-around', marginTop: 7 },
-  dateCell: { alignItems: 'center', borderRadius: 9, height: 37, justifyContent: 'center', width: 31 },
+  dateCell: { alignItems: 'center', borderRadius: 9, height: 45, justifyContent: 'center', width: 36 },
   collectionDateCell: { backgroundColor: '#d8f8e8' },
   nonBioCollectionDateCell: { backgroundColor: '#eaf3ff' },
-  currentDateCell: { backgroundColor: '#dceaff' },
+  currentDateCell: { borderColor: '#07815f', borderWidth: 2 },
   dateText: { color: '#627269', fontSize: 10, fontWeight: '700' },
-  currentDateText: { color: '#3475cf' },
+  currentDateText: { color: '#07815f', fontWeight: '800' },
+  todayLabel: { color: '#07815f', fontSize: 7, fontWeight: '800', letterSpacing: 0.3, marginBottom: 2 },
   collectionDot: { backgroundColor: '#10a875', borderRadius: 3, height: 4, marginTop: 3, width: 4 },
   nonBioCollectionDot: { backgroundColor: '#4689e1' },
-  currentCollectionDot: { backgroundColor: '#4689e1' },
   calendarLegend: { borderTopColor: '#edf1ef', borderTopWidth: 1, flexDirection: 'row', gap: 14, marginTop: 12, paddingTop: 10 },
   legendItem: { alignItems: 'center', flexDirection: 'row', gap: 5 },
   legendDot: { borderRadius: 4, height: 7, width: 7 },
@@ -674,6 +799,7 @@ const styles = StyleSheet.create({
   errorMessage: { color: '#cc4251', fontSize: 11, fontWeight: '600', lineHeight: 15, marginTop: 9 },
   loadingReports: { marginTop: 14 },
   emptyReportText: { color: '#89978f', fontSize: 11, marginTop: 13 },
+  reportRowPressable: { borderRadius: 10 },
   pastReportRow: { alignItems: 'center', borderBottomColor: '#eff2f0', borderBottomWidth: 1, flexDirection: 'row', justifyContent: 'space-between', minHeight: 62 },
   reportThumbnail: { alignItems: 'center', backgroundColor: '#f2f7f4', borderRadius: 8, height: 44, justifyContent: 'center', marginRight: 9, overflow: 'hidden', width: 44 },
   reportThumbnailImage: { height: '100%', width: '100%' },
@@ -698,6 +824,38 @@ const styles = StyleSheet.create({
   menuText: { color: '#34483d', flex: 1, fontSize: 12, fontWeight: '600', marginLeft: 11 },
   signOutButton: { alignItems: 'center', borderColor: '#ffdadd', borderRadius: 13, borderWidth: 1, flexDirection: 'row', gap: 7, height: 45, justifyContent: 'center', marginTop: 13 },
   signOutText: { color: '#e23d4f', fontSize: 12, fontWeight: '800' },
+  reportModalBackdrop: { backgroundColor: 'rgba(10, 28, 19, 0.42)', flex: 1, justifyContent: 'flex-end' },
+  reportModalDismissArea: { bottom: 0, left: 0, position: 'absolute', right: 0, top: 0 },
+  reportDetailsSheet: { backgroundColor: '#ffffff', borderTopLeftRadius: 24, borderTopRightRadius: 24, flexShrink: 1, maxHeight: '90%', paddingHorizontal: 18, paddingTop: 18, width: '100%' },
+  reportDetailsHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  reportDetailsHeaderText: { flex: 1 },
+  reportDetailsEyebrow: { color: '#07815f', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
+  reportDetailsTitle: { color: '#20362a', fontSize: 20, fontWeight: '800', marginTop: 4 },
+  reportDetailsClose: { alignItems: 'center', backgroundColor: '#f1f5f2', borderRadius: 18, height: 36, justifyContent: 'center', width: 36 },
+  reportDetailsContent: { paddingBottom: 28, paddingTop: 16 },
+  reportDetailsPhoto: { backgroundColor: '#edf3ef', borderRadius: 16, height: 220, width: '100%' },
+  reportNoPhotoCard: { alignItems: 'center', backgroundColor: '#f1f5f2', borderRadius: 16, height: 150, justifyContent: 'center' },
+  reportNoPhotoText: { color: '#718077', fontSize: 12, fontWeight: '700', marginTop: 8 },
+  reportDetailsStatusRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 },
+  reportDetailsDate: { color: '#89978f', fontSize: 10 },
+  reportDetailsSectionTitle: { color: '#61746a', fontSize: 10, fontWeight: '800', letterSpacing: 0.4, marginTop: 18 },
+  reportStatusTracker: { backgroundColor: '#f8fbf9', borderColor: '#e0e9e3', borderRadius: 14, borderWidth: 1, marginTop: 12, padding: 12 },
+  trackerStages: { flexDirection: 'row', marginTop: 14 },
+  trackerStage: { alignItems: 'center', flex: 1, position: 'relative' },
+  trackerDot: { alignItems: 'center', backgroundColor: '#dce5df', borderRadius: 9, height: 18, justifyContent: 'center', width: 18, zIndex: 1 },
+  trackerDotActive: { backgroundColor: '#07815f' },
+  trackerConnector: { backgroundColor: '#dce5df', height: 2, left: '50%', position: 'absolute', right: '-50%', top: 8 },
+  trackerConnectorActive: { backgroundColor: '#07815f' },
+  trackerLabel: { color: '#93a098', fontSize: 9, marginTop: 7, textAlign: 'center' },
+  trackerLabelActive: { color: '#315043', fontWeight: '800' },
+  rejectedTrackerText: { color: '#d44859', fontSize: 11, fontWeight: '700', marginTop: 10 },
+  reportDetailsInfoCard: { alignItems: 'center', backgroundColor: '#f8fbf9', borderRadius: 12, flexDirection: 'row', marginTop: 8, padding: 11 },
+  reportDetailIcon: { alignItems: 'center', backgroundColor: '#e3f6eb', borderRadius: 17, height: 34, justifyContent: 'center', width: 34 },
+  reportDetailInfoText: { flex: 1, marginLeft: 10 },
+  reportDetailLabel: { color: '#829087', fontSize: 10, fontWeight: '700' },
+  reportDetailValue: { color: '#2d4538', fontSize: 13, fontWeight: '700', marginTop: 3 },
+  reportDescriptionCard: { backgroundColor: '#f8fbf9', borderRadius: 12, marginTop: 8, padding: 11 },
+  reportDescriptionDetail: { color: '#3f5549', fontSize: 12, lineHeight: 18, marginTop: 5 },
   bottomNav: { backgroundColor: '#ffffff', borderTopColor: '#e2e9e5', borderTopWidth: 1, flexDirection: 'row', height: 70, paddingTop: 8 },
   navItem: { alignItems: 'center', flex: 1 },
   navText: { color: '#99a7a0', fontSize: 9, fontWeight: '600', marginTop: 3 },

@@ -34,7 +34,7 @@ export default function SignupScreen() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [barangay, setBarangay] = useState('');
+  const [location, setLocation] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
@@ -53,8 +53,8 @@ export default function SignupScreen() {
       return;
     }
 
-    if (!barangay) {
-      setError('Please select your barangay.');
+    if (!location) {
+      setError('Please select your collection location.');
       return;
     }
 
@@ -75,7 +75,9 @@ export default function SignupScreen() {
           email: email.trim(),
           password,
           phone: phone.trim(),
-          barangay,
+          location,
+          // Keep the legacy field populated until all existing accounts migrate.
+          barangay: location,
           // Required by the current backend validator; resident is the only role this screen creates.
           role: 'resident',
         }),
@@ -172,8 +174,8 @@ export default function SignupScreen() {
                 </View>
 
                 <View style={styles.fieldGroup}>
-                  <Text style={styles.label}>Barangay</Text>
-                  <BarangayPicker onChange={setBarangay} value={barangay} />
+                  <Text style={styles.label}>Collection Location</Text>
+                  <BarangayPicker onChange={setLocation} value={location} />
                 </View>
 
                 <View style={styles.passwordDivider}>
