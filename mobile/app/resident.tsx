@@ -16,7 +16,9 @@ import {
 import { useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Card } from 'heroui-native';
-import { clearSession, getSession, type AuthSession } from '@/lib/session';
+import { BarangayPicker } from '@/components/barangay-picker';
+import { clearSession, getSession, saveSession, type AuthSession } from '@/lib/session';
+import { getResidentScheduleFixture, type ApiWasteType, type ScheduleData, type UpcomingCollection } from '@/types/resident-schedule';
 
 type ResidentTab = 'home' | 'schedule' | 'report' | 'profile';
 
@@ -24,8 +26,14 @@ type ApiReport = {
   _id: string;
   barangay: string;
   description: string;
-  photoUrl?: string;
-  status: 'pending' | 'verified' | 'rejected' | 'resolved';
+  photoUrl?: string | null;
+  bagCount?: number | null;
+  detectedBagCount?: number | null;
+  aiResult?: {
+    bagCount?: number | null;
+    detectedBagCount?: number | null;
+  };
+  status: 'pending' | 'verified' | 'scheduled' | 'rejected' | 'resolved';
   createdAt: string;
 };
 
@@ -36,27 +44,71 @@ type ApiResponse<T> = {
 };
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
-const BRGY = 'Brgy. Triangulo';
 const CITY = 'Naga City';
+const USE_SCHEDULE_FIXTURE = process.env.NODE_ENV === 'development' && process.env.EXPO_PUBLIC_USE_SCHEDULE_FIXTURE === 'true';
 
-const MOCK_RECENT_REPORTS = [
-  { location: 'In front of residence', date: 'Jun 26, 2025', status: 'Resolved' as const },
-  { location: 'Corner Magsaysay / Luna', date: 'Jun 22, 2025', status: 'Scheduled' as const },
-];
+type WasteLabel = 'Biodegradable' | 'Non-Biodegradable';
 
-const UPCOMING_COLLECTIONS = [
-  { date: 'Mon, Jun 30', type: 'Biodegradable', time: '5:00–9:00 AM' },
-  { date: 'Wed, Jul 2', type: 'Non-Biodegradable', time: '5:00–9:00 AM' },
-  { date: 'Fri, Jul 4', type: 'Biodegradable', time: '5:00–9:00 AM' },
-];
+function toWasteLabel(type?: ApiWasteType | null): WasteLabel {
+  return type === 'non-biodegradable' ? 'Non-Biodegradable' : 'Biodegradable';
+}
 
-function CollectionBanner({ onDismiss }: { onDismiss: () => void }) {
+function formatDate(value: string | Date | null | undefined, options: Intl.DateTimeFormatOptions) {
+  if (!value) return 'No upcoming collection';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Date unavailable';
+  return date.toLocaleDateString('en-PH', options);
+}
+
+function formatTime(value: string | Date | null | undefined) {
+  if (!value) return 'Time unavailable';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Time unavailable';
+  return date.toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' });
+}
+
+function dateKey(value: string | Date) {
+  const date = value instanceof Date ? value : new Date(value);
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function getCurrentWeekDates() {
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+  const mondayOffset = (today.getDay() + 6) % 7;
+  today.setDate(today.getDate() - mondayOffset);
+
+  return Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(today);
+    date.setDate(today.getDate() + index);
+    return date;
+  });
+}
+
+function getDetectedBagCount(report: ApiReport) {
+  const count = report.detectedBagCount
+    ?? report.bagCount
+    ?? report.aiResult?.detectedBagCount
+    ?? report.aiResult?.bagCount;
+
+  return typeof count === 'number' ? `${count} bag${count === 1 ? '' : 's'}` : 'Not available';
+}
+
+function CollectionBanner({
+  barangay,
+  collection,
+  onDismiss,
+}: {
+  barangay: string;
+  collection: UpcomingCollection;
+  onDismiss: () => void;
+}) {
   return (
     <View style={styles.collectionBanner}>
       <View style={styles.bannerCheck}><Feather color="#ffffff" name="check" size={12} /></View>
       <View style={styles.bannerTextWrap}>
-        <Text style={styles.bannerTitle}>Your area has been collected</Text>
-        <Text style={styles.bannerSubtitle}>{BRGY} · Today 7:30 AM</Text>
+        <Text style={styles.bannerTitle}>Collection scheduled today</Text>
+        <Text style={styles.bannerSubtitle}>{barangay} · {toWasteLabel(collection.wasteType)}</Text>
       </View>
       <Pressable accessibilityLabel="Dismiss collection update" hitSlop={10} onPress={onDismiss}>
         <Feather color="#dcfff0" name="x" size={16} />
@@ -77,10 +129,16 @@ function WastePill({ type }: { type: 'Biodegradable' | 'Non-Biodegradable' }) {
 
 function StatusPill({ status }: { status: string }) {
   const normalized = status.toLowerCase();
-  const style = normalized === 'resolved' || normalized === 'verified' ? styles.resolvedPill : normalized === 'rejected' ? styles.rejectedPill : styles.scheduledPill;
-  const textStyle = normalized === 'resolved' || normalized === 'verified' ? styles.resolvedText : normalized === 'rejected' ? styles.rejectedText : styles.scheduledText;
-  const dotStyle = normalized === 'resolved' || normalized === 'verified' ? styles.resolvedDot : normalized === 'rejected' ? styles.rejectedDot : styles.scheduledDot;
-  const label = normalized === 'pending' ? 'Pending' : normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  const style = normalized === 'resolved' ? styles.resolvedPill : normalized === 'rejected' ? styles.rejectedPill : styles.scheduledPill;
+  const textStyle = normalized === 'resolved' ? styles.resolvedText : normalized === 'rejected' ? styles.rejectedText : styles.scheduledText;
+  const dotStyle = normalized === 'resolved' ? styles.resolvedDot : normalized === 'rejected' ? styles.rejectedDot : styles.scheduledDot;
+  const label = normalized === 'pending'
+    ? 'Pending'
+    : normalized === 'verified' || normalized === 'scheduled'
+      ? 'Acknowledged-Scheduled'
+      : normalized === 'resolved'
+        ? 'Resolved'
+        : 'Rejected';
   return <View style={[styles.statusPill, style]}><View style={[styles.statusDot, dotStyle]} /><Text style={[styles.statusText, textStyle]}>{label}</Text></View>;
 }
 
@@ -118,9 +176,12 @@ function ReportList({ reports }: { reports: ApiReport[] }) {
     <>
       {reports.map((report) => (
         <View key={report._id} style={styles.pastReportRow}>
+          <View style={styles.reportThumbnail}>
+            {report.photoUrl ? <Image source={{ uri: report.photoUrl }} style={styles.reportThumbnailImage} /> : <Feather color="#9aa69f" name="image" size={17} />}
+          </View>
           <View style={styles.reportMain}>
             <Text numberOfLines={1} style={styles.reportLocation}>{report.barangay || 'Location not recorded'}</Text>
-            <Text numberOfLines={1} style={styles.reportMeta}>{new Date(report.createdAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })} · Bag count not recorded</Text>
+            <Text numberOfLines={1} style={styles.reportMeta}>{formatDate(report.createdAt, { month: 'short', day: 'numeric', year: 'numeric' })} · Detected bags: {getDetectedBagCount(report)}</Text>
             {report.description ? <Text numberOfLines={1} style={styles.reportDescription}>{report.description}</Text> : null}
           </View>
           <StatusPill status={report.status} />
@@ -136,6 +197,9 @@ export default function ResidentScreen() {
   const [activeTab, setActiveTab] = useState<ResidentTab>('home');
   const [showBanner, setShowBanner] = useState(true);
   const [session, setSession] = useState<AuthSession | null>(null);
+  const [schedule, setSchedule] = useState<ScheduleData | null>(null);
+  const [isLoadingSchedule, setIsLoadingSchedule] = useState(false);
+  const [scheduleError, setScheduleError] = useState('');
   const [pastReports, setPastReports] = useState<ApiReport[]>([]);
   const [isLoadingReports, setIsLoadingReports] = useState(false);
   const [reportError, setReportError] = useState('');
@@ -143,6 +207,58 @@ export default function ResidentScreen() {
   const [description, setDescription] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [reportMessage, setReportMessage] = useState('');
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [profileName, setProfileName] = useState('');
+  const [profilePhone, setProfilePhone] = useState('');
+  const [profileBarangay, setProfileBarangay] = useState('');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileMessage, setProfileMessage] = useState('');
+
+  const loadSchedule = useCallback(async (token: string, residentBarangay?: string) => {
+    if (!residentBarangay) {
+      setSchedule(null);
+      setScheduleError('Add a barangay in your profile to load your schedule.');
+      setIsLoadingSchedule(false);
+      return;
+    }
+
+    setIsLoadingSchedule(true);
+    setScheduleError('');
+
+    if (USE_SCHEDULE_FIXTURE) {
+      const fixture = getResidentScheduleFixture(residentBarangay);
+      if (fixture) {
+        setSchedule(fixture);
+        setIsLoadingSchedule(false);
+        return;
+      }
+    }
+
+    if (!API_URL) {
+      setSchedule(null);
+      setScheduleError('Schedule service is not configured.');
+      setIsLoadingSchedule(false);
+      return;
+    }
+
+    try {
+      const query = `?barangay=${encodeURIComponent(residentBarangay)}`;
+      const response = await fetch(`${API_URL}/resident/schedule${query}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const result = (await response.json()) as ApiResponse<ScheduleData>;
+      if (!response.ok || !result.success) throw new Error(result.error || 'Unable to load your collection schedule.');
+      const scheduleData = result.data || null;
+      setSchedule(scheduleData);
+      if (!scheduleData?.routes?.length) {
+        setScheduleError('No collection schedule is available for this location yet.');
+      }
+    } catch (error) {
+      setScheduleError(error instanceof Error ? error.message : 'Unable to load your collection schedule.');
+    } finally {
+      setIsLoadingSchedule(false);
+    }
+  }, []);
 
   const loadReports = useCallback(async (token: string) => {
     if (!API_URL) {
@@ -180,11 +296,18 @@ export default function ResidentScreen() {
 
   useEffect(() => {
     if (session?.token) void loadReports(session.token);
-  }, [loadReports, session?.token]);
+    if (session?.token) void loadSchedule(session.token, session.user.barangay);
+  }, [loadReports, loadSchedule, session?.token, session?.user.barangay]);
+
+  useEffect(() => {
+    setProfileName(session?.user.name || '');
+    setProfilePhone(session?.user.phone || '');
+    setProfileBarangay(session?.user.barangay || '');
+  }, [session?.user.barangay, session?.user.name, session?.user.phone]);
 
   const displayName = session?.user.name?.trim() || 'Resident';
   const firstInitial = displayName.charAt(0).toUpperCase();
-  const barangay = session?.user.barangay || BRGY;
+  const barangay = session?.user.barangay || 'Barangay not set';
   const phone = session?.user.phone || 'Phone number not set';
 
   const capturePhoto = async () => {
@@ -251,15 +374,77 @@ export default function ResidentScreen() {
     }
   };
 
+  const saveProfile = async () => {
+    if (!session?.token) {
+      setProfileMessage('Please sign in again before updating your profile.');
+      return;
+    }
+    if (!API_URL) {
+      setProfileMessage('Profile service is not configured.');
+      return;
+    }
+    if (!profileName.trim()) {
+      setProfileMessage('Name is required.');
+      return;
+    }
+
+    setIsSavingProfile(true);
+    setProfileMessage('');
+    try {
+      const response = await fetch(`${API_URL}/auth/me`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: profileName.trim(),
+          phone: profilePhone.trim(),
+          barangay: profileBarangay.trim(),
+        }),
+      });
+      const result = (await response.json()) as ApiResponse<AuthSession['user']>;
+      if (!response.ok || !result.success || !result.data) {
+        throw new Error(result.error || 'Unable to update your profile.');
+      }
+
+      const updatedSession = { token: session.token, user: result.data };
+      await saveSession(updatedSession);
+      setSession(updatedSession);
+      setIsEditingProfile(false);
+      setProfileMessage('Profile updated.');
+    } catch (error) {
+      setProfileMessage(error instanceof Error ? error.message : 'Unable to update your profile.');
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
   const signOut = async () => {
     await clearSession();
     setSession(null);
+    setSchedule(null);
     setPastReports([]);
     setSelectedPhoto(null);
     setDescription('');
     setReportMessage('');
+    setIsEditingProfile(false);
+    setProfileMessage('');
     router.replace('/login');
   };
+
+  const currentWeekDates = getCurrentWeekDates();
+  const upcomingByDate = new Map((schedule?.upcomingCollections || []).map((collection) => [dateKey(collection.date), collection]));
+  const currentWeekStart = new Date(currentWeekDates[0]);
+  currentWeekStart.setHours(0, 0, 0, 0);
+  const currentWeekEnd = new Date(currentWeekDates[currentWeekDates.length - 1]);
+  currentWeekEnd.setHours(23, 59, 59, 999);
+  const weeklyCollections = (schedule?.upcomingCollections || []).filter((collection) => {
+    const date = new Date(collection.date);
+    return date >= currentWeekStart && date <= currentWeekEnd;
+  });
+  const todayCollection = upcomingByDate.get(dateKey(new Date()));
+  const nextCollection = schedule?.routes[0];
 
   const homeScreen = (
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -269,24 +454,22 @@ export default function ResidentScreen() {
 
       <Card style={styles.nextCollectionCard}>
         <Text style={styles.darkCardEyebrow}>NEXT COLLECTION</Text>
-        <Text style={styles.nextDate}>Monday, June 30</Text>
-        <View style={styles.nextInfoRow}><WastePill type="Biodegradable" /><Text style={styles.nextTime}>5:00–9:00 AM</Text></View>
+        {isLoadingSchedule ? <ActivityIndicator color="#ffffff" style={styles.scheduleLoader} /> : nextCollection ? <>
+          <Text style={styles.nextDate}>{formatDate(nextCollection.nextCollection, { weekday: 'long', month: 'long', day: 'numeric' })}</Text>
+          <View style={styles.nextInfoRow}><WastePill type={toWasteLabel(nextCollection.nextWasteType)} /><Text style={styles.nextTime}>{formatTime(nextCollection.nextCollection)}</Text></View>
+        </> : <Text style={styles.nextDate}>{scheduleError ? 'Schedule unavailable' : 'No upcoming collection'}</Text>}
         <View style={styles.darkDivider} />
         <Text style={styles.reminder}>Segregate food waste, garden waste, and paper into green bags.</Text>
       </Card>
 
       <Card style={styles.card}>
         <Text style={styles.cardHeading}>WEEKLY SCHEDULE</Text>
-        {[
-          ['Monday', 'Biodegradable'],
-          ['Wednesday', 'Non-Biodegradable'],
-          ['Friday', 'Biodegradable'],
-        ].map(([day, type]) => <View key={day} style={styles.weeklyRow}><Text style={styles.rowDay}>{day}</Text><WastePill type={type as 'Biodegradable' | 'Non-Biodegradable'} /></View>)}
+        {isLoadingSchedule ? <ActivityIndicator color="#07815f" style={styles.loadingSchedule} /> : scheduleError ? <Text style={styles.errorMessage}>{scheduleError}</Text> : weeklyCollections.length ? weeklyCollections.map((collection) => <View key={collection.date} style={styles.weeklyRow}><Text style={styles.rowDay}>{collection.dayName}</Text><WastePill type={toWasteLabel(collection.wasteType)} /></View>) : <Text style={styles.emptyScheduleText}>No collections scheduled this week.</Text>}
       </Card>
 
       <Card style={styles.card}>
         <View style={styles.cardTopRow}><Text style={styles.cardHeading}>MY RECENT REPORTS</Text><Pressable onPress={() => setActiveTab('report')}><Text style={styles.viewAll}>View All</Text></Pressable></View>
-        {MOCK_RECENT_REPORTS.map((report) => <View key={report.date} style={styles.recentReportRow}><View style={styles.reportMain}><Text style={styles.reportLocation}>{report.location}</Text><Text style={styles.reportMeta}>{report.date}</Text></View><StatusPill status={report.status} /></View>)}
+        {isLoadingReports ? <ActivityIndicator color="#07815f" style={styles.loadingReports} /> : reportError ? <Text style={styles.errorMessage}>{reportError}</Text> : <ReportList reports={pastReports.slice(0, 2)} />}
       </Card>
     </ScrollView>
   );
@@ -294,18 +477,25 @@ export default function ResidentScreen() {
   const scheduleScreen = (
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
       <Text style={styles.screenTitle}>Collection Schedule</Text>
-      <Text style={styles.screenSubtitle}>{barangay} · June 2025</Text>
+      <Text style={styles.screenSubtitle}>{barangay} · {formatDate(currentWeekDates[0], { month: 'long', year: 'numeric' })}</Text>
 
       <Card style={styles.card}>
         <Text style={styles.cardHeading}>THIS WEEK</Text>
-        <View style={styles.calendarDays}>{['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((day, index) => <Text key={`${day}-${index}`} style={styles.calendarDay}>{day}</Text>)}</View>
-        <View style={styles.calendarDates}>{['28', '29', '30', '1', '2', '3', '4'].map((date, index) => <View key={date} style={[styles.dateCell, index === 2 && styles.currentDateCell, (index === 0 || index === 4) && styles.collectionDateCell]}><Text style={[styles.dateText, index === 2 && styles.currentDateText]}>{date}</Text>{(index === 0 || index === 2 || index === 4) ? <View style={[styles.collectionDot, index === 2 && styles.currentCollectionDot]} /> : null}</View>)}</View>
+        {isLoadingSchedule ? <ActivityIndicator color="#07815f" style={styles.loadingSchedule} /> : scheduleError ? <Text style={styles.errorMessage}>{scheduleError}</Text> : <>
+          <View style={styles.calendarDays}>{currentWeekDates.map((date) => <Text key={dateKey(date)} style={styles.calendarDay}>{date.toLocaleDateString('en-PH', { weekday: 'short' }).slice(0, 1)}</Text>)}</View>
+          <View style={styles.calendarDates}>{currentWeekDates.map((date) => {
+            const collection = upcomingByDate.get(dateKey(date));
+            const isToday = dateKey(date) === dateKey(new Date());
+            const isNonBio = collection?.wasteType === 'non-biodegradable';
+            return <View key={dateKey(date)} style={[styles.dateCell, collection && (isNonBio ? styles.nonBioCollectionDateCell : styles.collectionDateCell), isToday && styles.currentDateCell]}><Text style={[styles.dateText, isToday && styles.currentDateText]}>{date.getDate()}</Text>{collection ? <View style={[styles.collectionDot, isNonBio && styles.nonBioCollectionDot, isToday && styles.currentCollectionDot]} /> : null}</View>;
+          })}</View>
+        </>}
         <View style={styles.calendarLegend}><View style={styles.legendItem}><View style={[styles.legendDot, styles.legendBio]} /><Text style={styles.legendText}>Biodegradable</Text></View><View style={styles.legendItem}><View style={[styles.legendDot, styles.legendNonBio]} /><Text style={styles.legendText}>Non-Biodegradable</Text></View></View>
       </Card>
 
       <Card style={styles.card}>
         <Text style={styles.cardHeading}>UPCOMING COLLECTIONS</Text>
-        {UPCOMING_COLLECTIONS.map((collection) => <View key={collection.date} style={[styles.upcomingRow, collection.type === 'Biodegradable' ? styles.upcomingBio : styles.upcomingNonBio]}><View><Text style={styles.collectionDate}>{collection.date}</Text><Text style={styles.collectionTime}>{collection.time}</Text></View><WastePill type={collection.type as 'Biodegradable' | 'Non-Biodegradable'} /></View>)}
+        {isLoadingSchedule ? <ActivityIndicator color="#07815f" style={styles.loadingSchedule} /> : scheduleError ? <Text style={styles.errorMessage}>{scheduleError}</Text> : schedule?.upcomingCollections.length ? schedule.upcomingCollections.map((collection) => <View key={collection.date} style={[styles.upcomingRow, collection.wasteType === 'biodegradable' ? styles.upcomingBio : styles.upcomingNonBio]}><View><Text style={styles.collectionDate}>{formatDate(collection.date, { weekday: 'short', month: 'short', day: 'numeric' })}</Text><Text style={styles.collectionTime}>Collection at {formatTime(collection.date)}</Text></View><WastePill type={toWasteLabel(collection.wasteType)} /></View>) : <Text style={styles.emptyScheduleText}>No upcoming collections found.</Text>}
       </Card>
     </ScrollView>
   );
@@ -339,10 +529,27 @@ export default function ResidentScreen() {
   const profileScreen = (
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
       <Card style={styles.profileCard}>
-        <View style={styles.avatar}><Text style={styles.avatarText}>{firstInitial}</Text></View>
-        <Text style={styles.profileName}>{displayName}</Text>
-        <Text style={styles.profilePhone}>{phone}</Text>
-        <Text style={styles.profileLocation}>{barangay}, {CITY}</Text>
+        {isEditingProfile ? <>
+          <Text style={styles.profileEditTitle}>Edit Profile</Text>
+          <Text style={styles.profileFieldLabel}>Full Name</Text>
+          <TextInput autoCapitalize="words" onChangeText={setProfileName} style={styles.profileInput} value={profileName} />
+          <Text style={styles.profileFieldLabel}>Phone Number</Text>
+          <TextInput keyboardType="phone-pad" onChangeText={setProfilePhone} style={styles.profileInput} value={profilePhone} />
+          <Text style={styles.profileFieldLabel}>Barangay</Text>
+          <BarangayPicker onChange={setProfileBarangay} value={profileBarangay} />
+          {profileMessage ? <Text accessibilityRole="alert" style={profileMessage === 'Profile updated.' ? styles.successMessage : styles.errorMessage}>{profileMessage}</Text> : null}
+          <View style={styles.profileEditActions}>
+            <Pressable disabled={isSavingProfile} onPress={() => { setIsEditingProfile(false); setProfileMessage(''); }} style={styles.profileCancelButton}><Text style={styles.profileCancelText}>Cancel</Text></Pressable>
+            <Pressable disabled={isSavingProfile} onPress={saveProfile} style={[styles.profileSaveButton, isSavingProfile && styles.disabledButton]}>{isSavingProfile ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.profileSaveText}>Save Changes</Text>}</Pressable>
+          </View>
+        </> : <>
+          <View style={styles.avatar}><Text style={styles.avatarText}>{firstInitial}</Text></View>
+          <Text style={styles.profileName}>{displayName}</Text>
+          <Text style={styles.profilePhone}>{phone}</Text>
+          <Text style={styles.profileLocation}>{barangay}, {CITY}</Text>
+          <Pressable accessibilityRole="button" onPress={() => { setProfileMessage(''); setIsEditingProfile(true); }} style={styles.editProfileButton}><Feather color="#07815f" name="edit-2" size={14} /><Text style={styles.editProfileText}>Edit Profile</Text></Pressable>
+          {profileMessage ? <Text style={styles.successMessage}>{profileMessage}</Text> : null}
+        </>}
       </Card>
 
       <Card style={styles.menuCard}>
@@ -359,7 +566,7 @@ export default function ResidentScreen() {
     <SafeAreaView edges={['left', 'right']} style={styles.safeArea}>
       <StatusBar backgroundColor="transparent" style="light" translucent />
       <View style={[styles.residentHeader, { paddingTop: insets.top }]}>
-        {showBanner ? <View style={styles.bannerWrap}><CollectionBanner onDismiss={() => setShowBanner(false)} /></View> : null}
+        {showBanner && todayCollection ? <View style={styles.bannerWrap}><CollectionBanner barangay={barangay} collection={todayCollection} onDismiss={() => setShowBanner(false)} /></View> : null}
       </View>
       <View style={styles.content}>{tabScreen}</View>
       <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
@@ -387,6 +594,7 @@ const styles = StyleSheet.create({
   nextCollectionCard: { backgroundColor: '#126b4c', borderRadius: 16, marginTop: 13, padding: 14, shadowColor: '#0b4c36', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.14, shadowRadius: 10 },
   darkCardEyebrow: { color: '#b9e6d3', fontSize: 10, fontWeight: '800' },
   nextDate: { color: '#ffffff', fontSize: 18, fontWeight: '800', marginTop: 7 },
+  scheduleLoader: { marginTop: 12 },
   nextInfoRow: { alignItems: 'center', flexDirection: 'row', gap: 12, marginTop: 9 },
   nextTime: { color: '#c6e5d6', fontSize: 11 },
   darkDivider: { backgroundColor: 'rgba(203,239,220,0.20)', height: 1, marginTop: 12 },
@@ -394,6 +602,8 @@ const styles = StyleSheet.create({
   cardHeading: { color: '#61746a', fontSize: 10, fontWeight: '800', letterSpacing: 0.3 },
   cardTopRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   viewAll: { color: '#07815f', fontSize: 10, fontWeight: '800' },
+  loadingSchedule: { marginTop: 14 },
+  emptyScheduleText: { color: '#89978f', fontSize: 11, marginTop: 13 },
   weeklyRow: { alignItems: 'center', borderBottomColor: '#eff2f0', borderBottomWidth: 1, flexDirection: 'row', justifyContent: 'space-between', minHeight: 36 },
   rowDay: { color: '#34483d', fontSize: 12, fontWeight: '600' },
   wastePill: { alignItems: 'center', borderRadius: 12, flexDirection: 'row', gap: 3, paddingHorizontal: 8, paddingVertical: 4 },
@@ -424,10 +634,12 @@ const styles = StyleSheet.create({
   calendarDates: { flexDirection: 'row', justifyContent: 'space-around', marginTop: 7 },
   dateCell: { alignItems: 'center', borderRadius: 9, height: 37, justifyContent: 'center', width: 31 },
   collectionDateCell: { backgroundColor: '#d8f8e8' },
+  nonBioCollectionDateCell: { backgroundColor: '#eaf3ff' },
   currentDateCell: { backgroundColor: '#dceaff' },
   dateText: { color: '#627269', fontSize: 10, fontWeight: '700' },
   currentDateText: { color: '#3475cf' },
   collectionDot: { backgroundColor: '#10a875', borderRadius: 3, height: 4, marginTop: 3, width: 4 },
+  nonBioCollectionDot: { backgroundColor: '#4689e1' },
   currentCollectionDot: { backgroundColor: '#4689e1' },
   calendarLegend: { borderTopColor: '#edf1ef', borderTopWidth: 1, flexDirection: 'row', gap: 14, marginTop: 12, paddingTop: 10 },
   legendItem: { alignItems: 'center', flexDirection: 'row', gap: 5 },
@@ -463,12 +675,24 @@ const styles = StyleSheet.create({
   loadingReports: { marginTop: 14 },
   emptyReportText: { color: '#89978f', fontSize: 11, marginTop: 13 },
   pastReportRow: { alignItems: 'center', borderBottomColor: '#eff2f0', borderBottomWidth: 1, flexDirection: 'row', justifyContent: 'space-between', minHeight: 62 },
+  reportThumbnail: { alignItems: 'center', backgroundColor: '#f2f7f4', borderRadius: 8, height: 44, justifyContent: 'center', marginRight: 9, overflow: 'hidden', width: 44 },
+  reportThumbnailImage: { height: '100%', width: '100%' },
   profileCard: { alignItems: 'center', backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 16, borderWidth: 1, padding: 18, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 8 },
   avatar: { alignItems: 'center', backgroundColor: '#0c8765', borderRadius: 26, height: 52, justifyContent: 'center', width: 52 },
   avatarText: { color: '#ffffff', fontSize: 22, fontWeight: '800' },
   profileName: { color: '#2c4135', fontSize: 16, fontWeight: '800', marginTop: 10 },
   profilePhone: { color: '#6f8177', fontSize: 10, marginTop: 4 },
   profileLocation: { color: '#829087', fontSize: 10, marginTop: 3 },
+  editProfileButton: { alignItems: 'center', flexDirection: 'row', gap: 5, marginTop: 12 },
+  editProfileText: { color: '#07815f', fontSize: 11, fontWeight: '800' },
+  profileEditTitle: { color: '#2c4135', fontSize: 16, fontWeight: '800', marginBottom: 4 },
+  profileFieldLabel: { alignSelf: 'stretch', color: '#61746a', fontSize: 11, fontWeight: '700', marginTop: 10 },
+  profileInput: { alignSelf: 'stretch', backgroundColor: '#f9fbfa', borderColor: '#dbe5df', borderRadius: 10, borderWidth: 1, color: '#243f31', fontSize: 12, height: 40, marginTop: 5, paddingHorizontal: 10 },
+  profileEditActions: { alignSelf: 'stretch', flexDirection: 'row', gap: 8, marginTop: 14 },
+  profileCancelButton: { alignItems: 'center', borderColor: '#dce5e0', borderRadius: 10, borderWidth: 1, flex: 1, height: 40, justifyContent: 'center' },
+  profileCancelText: { color: '#3c5145', fontSize: 11, fontWeight: '800' },
+  profileSaveButton: { alignItems: 'center', backgroundColor: '#07815f', borderRadius: 10, flex: 1.3, height: 40, justifyContent: 'center' },
+  profileSaveText: { color: '#ffffff', fontSize: 11, fontWeight: '800' },
   menuCard: { backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 16, borderWidth: 1, marginTop: 13, paddingHorizontal: 13, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 8 },
   menuRow: { alignItems: 'center', borderBottomColor: '#edf1ef', borderBottomWidth: 1, flexDirection: 'row', minHeight: 52 },
   menuText: { color: '#34483d', flex: 1, fontSize: 12, fontWeight: '600', marginLeft: 11 },

@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { BarangayPicker } from '@/components/barangay-picker';
 import { saveSession, type AccountUser } from '@/lib/session';
 
 type RegisterResponse = {
@@ -33,6 +34,7 @@ export default function SignupScreen() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [barangay, setBarangay] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
@@ -51,6 +53,11 @@ export default function SignupScreen() {
       return;
     }
 
+    if (!barangay) {
+      setError('Please select your barangay.');
+      return;
+    }
+
     if (!API_URL) {
       setError('EXPO_PUBLIC_API_URL is not configured.');
       return;
@@ -64,10 +71,11 @@ export default function SignupScreen() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name,
-          email,
+          name: name.trim(),
+          email: email.trim(),
           password,
-          phone,
+          phone: phone.trim(),
+          barangay,
           // Required by the current backend validator; resident is the only role this screen creates.
           role: 'resident',
         }),
@@ -161,6 +169,11 @@ export default function SignupScreen() {
                       value={phone}
                     />
                   </View>
+                </View>
+
+                <View style={styles.fieldGroup}>
+                  <Text style={styles.label}>Barangay</Text>
+                  <BarangayPicker onChange={setBarangay} value={barangay} />
                 </View>
 
                 <View style={styles.passwordDivider}>
