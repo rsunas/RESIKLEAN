@@ -1,7 +1,7 @@
-const express  = require('express');
-const router   = express.Router();
+const express = require('express');
+const router = express.Router();
 const { register, login, getMe, updateMe } = require('../controllers/auth.controller');
-const { protect }                 = require('../middlewares/auth');
+const { protect } = require('../middlewares/auth');
 const { registerRules, loginRules, validate } = require('../validators/auth.validator');
 
 // POST /api/auth/register

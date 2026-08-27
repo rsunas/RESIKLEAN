@@ -11,6 +11,7 @@ const userSchema = new mongoose.Schema(
     role:     { type: String, enum: ROLES, required: true },
     // Resident-specific
     barangay: { type: String },
+    location: { type: String, trim: true },  // canonical location from CollectionLocation
     phone:    { type: String, trim: true },
     // Collector-specific
     assignedRouteId: { type: mongoose.Schema.Types.ObjectId, ref: 'Route' },

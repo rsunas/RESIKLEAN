@@ -3,12 +3,13 @@ const express = require('express');
 const cors = require('cors');
 const { errorHandler } = require('./src/middlewares/errorHandler');
 
-const authRoutes      = require('./src/routes/auth.routes');
-const residentRoutes  = require('./src/routes/resident.routes');
-const collectorRoutes = require('./src/routes/collector.routes');
-const staffRoutes     = require('./src/routes/staff.routes');
-const adminRoutes     = require('./src/routes/admin.routes');
-const truckRoutes     = require('./src/routes/truck.routes');
+const authRoutes               = require('./src/routes/auth.routes');
+const residentRoutes           = require('./src/routes/resident.routes');
+const collectorRoutes          = require('./src/routes/collector.routes');
+const staffRoutes              = require('./src/routes/staff.routes');
+const adminRoutes              = require('./src/routes/admin.routes');
+const truckRoutes              = require('./src/routes/truck.routes');
+const collectionLocationRoutes = require('./src/routes/collectionLocation.routes');
 
 const app = express();
 
@@ -32,6 +33,7 @@ app.use('/api/collector', collectorRoutes);
 app.use('/api/staff', staffRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/trucks', truckRoutes);
+app.use('/api/collection-locations', collectionLocationRoutes);
 
 // ── Global Error Handler (must be last) ───────────────────────────────────────
 app.use(errorHandler);

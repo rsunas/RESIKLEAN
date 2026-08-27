@@ -15,14 +15,14 @@ const tokenResponse = (user, statusCode, res) => {
 // ── POST /api/auth/register ───────────────────────────────────────────────────
 const register = async (req, res) => {
   try {
-    const { name, email, password, barangay, phone } = req.body;
+    const { name, email, password, barangay, location, phone } = req.body;
 
     // Prevent duplicate emails
     const existing = await User.findOne({ email });
     if (existing) return sendError(res, 'Email is already registered', 409);
 
     // Force role to 'resident' for all public signups
-    const user = await User.create({ name, email, password, role: 'resident', barangay, phone });
+    const user = await User.create({ name, email, password, role: 'resident', barangay, location, phone });
     tokenResponse(user, 201, res);
   } catch (err) {
     sendError(res, err.message, 500);
@@ -59,7 +59,7 @@ const getMe = async (req, res) => {
 const updateMe = async (req, res) => {
   try {
     // Only allow these fields to be updated
-    const allowedFields = ['name', 'phone', 'barangay'];
+    const allowedFields = ['name', 'phone', 'barangay', 'location'];
     const updates = {};
 
     allowedFields.forEach((field) => {
