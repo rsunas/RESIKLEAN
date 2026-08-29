@@ -2,6 +2,7 @@ const MissedReport = require('../models/MissedReport');
 const Route        = require('../models/Route');
 const CollectionLocation = require('../models/CollectionLocation');
 const { uploadPhoto } = require('../services/cloudinary.service');
+const { verifyWastePhoto } = require('../services/roboflow.service');
 const { sendSuccess, sendError } = require('../utils/response');
 
 // ── GET /api/resident/schedule ────────────────────────────────────────────────
@@ -198,9 +199,19 @@ const submitReport = async (req, res) => {
 
     // Upload photo to Cloudinary if one was attached
     let photoUrl = null;
+    let aiVerified = false;
+    let aiConfidence = 0;
+    let detectedBagCount = 0;
+
     if (req.file) {
       const result = await uploadPhoto(req.file.buffer);
       photoUrl = result.url;
+
+      // Run AI verification via Roboflow
+      const aiResult = await verifyWastePhoto(photoUrl);
+      aiVerified = aiResult.verified;
+      aiConfidence = aiResult.confidence;
+      detectedBagCount = aiResult.detectedBagCount;
     }
 
     const report = await MissedReport.create({
@@ -208,7 +219,9 @@ const submitReport = async (req, res) => {
       barangay,
       description: description || '',
       photoUrl,
-      // aiVerified & aiConfidence will be updated by the Roboflow sprint
+      aiVerified,
+      aiConfidence,
+      detectedBagCount,
     });
 
     sendSuccess(res, report, 201);

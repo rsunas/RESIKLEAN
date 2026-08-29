@@ -12,6 +12,7 @@ const missedReportSchema = new mongoose.Schema(
     photoUrl:     { type: String },                        // Cloudinary URL
     aiVerified:   { type: Boolean, default: false },       // Roboflow result
     aiConfidence: { type: Number },                        // 0–1
+    detectedBagCount: { type: Number, default: 0 },        // Count of detected waste bags
     status:       {
       type: String,
       enum: ['pending', 'verified', 'scheduled', 'rejected', 'resolved'],
