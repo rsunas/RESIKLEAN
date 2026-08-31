@@ -46,6 +46,13 @@
           "microphonePermission": false
         }
       ],
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "collection-reminders",
+          "color": "#07815f"
+        }
+      ],
       "expo-secure-store"
     ],
     "experiments": {

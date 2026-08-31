@@ -1,7 +1,8 @@
 import { Feather, MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { io } from 'socket.io-client';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -14,17 +15,24 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Card } from 'heroui-native';
 import { BarangayPicker } from '@/components/barangay-picker';
+import { cancelScheduledCollectionReminders, scheduleCollectionReminders } from '@/lib/notifications';
 import { clearSession, getSession, saveSession, type AuthSession } from '@/lib/session';
 import { type ApiWasteType, type LegacyScheduleData, type ScheduleData, type UpcomingCollection } from '@/types/resident-schedule';
 
 type ResidentTab = 'home' | 'schedule' | 'report' | 'profile';
 
+type ResidentReference = {
+  _id?: string;
+  id?: string;
+};
+
 type ApiReport = {
   _id: string;
+  residentId?: string | ResidentReference;
   barangay: string;
   description: string;
   photoUrl?: string | null;
@@ -45,7 +53,16 @@ type ApiResponse<T> = {
 };
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
+const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL?.replace(/\/$/, '') || API_URL?.replace(/\/api\/?$/, '');
 const CITY = 'Naga City';
+
+type SocketStatus = 'connecting' | 'connected' | 'disconnected' | 'unavailable';
+
+type ComplaintSocketPayload = {
+  reportId?: string;
+  status?: ApiReport['status'];
+  report?: Partial<ApiReport>;
+};
 
 type WasteLabel = 'Biodegradable' | 'Non-Biodegradable';
 
@@ -78,6 +95,32 @@ function getCurrentWeekDates() {
   });
 }
 
+function startOfMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function getMonthWeeks(month: Date) {
+  const firstDay = startOfMonth(month);
+  const gridStart = new Date(firstDay);
+  gridStart.setDate(firstDay.getDate() - firstDay.getDay());
+
+  const lastDay = new Date(month.getFullYear(), month.getMonth() + 1, 0);
+  const gridEnd = new Date(lastDay);
+  gridEnd.setDate(lastDay.getDate() + (6 - lastDay.getDay()));
+
+  const weeks: Date[][] = [];
+  const cursor = new Date(gridStart);
+  while (cursor <= gridEnd) {
+    weeks.push(Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(cursor);
+      date.setDate(cursor.getDate() + index);
+      return date;
+    }));
+    cursor.setDate(cursor.getDate() + 7);
+  }
+  return weeks;
+}
+
 function getDetectedBagCount(report: ApiReport) {
   const count = report.detectedBagCount
     ?? report.bagCount
@@ -85,6 +128,41 @@ function getDetectedBagCount(report: ApiReport) {
     ?? report.aiResult?.bagCount;
 
   return typeof count === 'number' ? `${count} bag${count === 1 ? '' : 's'}` : 'Not available';
+}
+
+function normalizeId(value: unknown): string {
+  if (!value) return '';
+  if (typeof value === 'object') {
+    const reference = value as ResidentReference;
+    return normalizeId(reference._id || reference.id);
+  }
+  return String(value);
+}
+
+function mergeRealtimeReport(reports: ApiReport[], payload: ComplaintSocketPayload): ApiReport[] {
+  const incomingReport = payload.report || {};
+  const reportId = normalizeId(incomingReport._id || payload.reportId);
+  if (!reportId) return reports;
+
+  const nextReport = {
+    ...incomingReport,
+    _id: reportId,
+    status: incomingReport.status || payload.status || 'pending',
+  } as ApiReport;
+  const existingIndex = reports.findIndex((report) => normalizeId(report._id) === reportId);
+  if (existingIndex === -1) return [nextReport, ...reports];
+
+  return reports.map((report, index) => index === existingIndex ? { ...report, ...nextReport } : report);
+}
+
+function realtimeStatusText(status: SocketStatus) {
+  return status === 'connected'
+    ? 'Live updates connected'
+    : status === 'connecting'
+      ? 'Connecting live updates'
+      : status === 'unavailable'
+        ? 'Live updates unavailable'
+        : 'Live updates disconnected';
 }
 
 function normalizeScheduleData(data: ScheduleData | LegacyScheduleData | null, fallbackLocation: string): ScheduleData | null {
@@ -149,6 +227,94 @@ function WastePill({ type }: { type: 'Biodegradable' | 'Non-Biodegradable' }) {
   );
 }
 
+function MonthlyScheduleCalendar({ collections }: { collections: UpcomingCollection[] }) {
+  const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(new Date()));
+  const [selectedDate, setSelectedDate] = useState(() => new Date());
+  const [isExpanded, setIsExpanded] = useState(false);
+  const monthWeeks = useMemo(() => getMonthWeeks(visibleMonth), [visibleMonth]);
+  const eventByDate = useMemo(() => new Map(collections.map((collection) => [dateKey(collection.date), collection])), [collections]);
+  const selectedWeek = monthWeeks.find((week) => week.some((date) => dateKey(date) === dateKey(selectedDate))) || monthWeeks[0];
+  const visibleWeeks = isExpanded ? monthWeeks : [selectedWeek];
+  const selectedCollection = eventByDate.get(dateKey(selectedDate));
+  const monthLabel = visibleMonth.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' });
+
+  const changeMonth = (offset: number) => {
+    const nextMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + offset, 1);
+    setVisibleMonth(nextMonth);
+    setSelectedDate(nextMonth);
+  };
+
+  const selectDate = (date: Date) => {
+    setSelectedDate(date);
+    if (date.getMonth() !== visibleMonth.getMonth() || date.getFullYear() !== visibleMonth.getFullYear()) {
+      setVisibleMonth(startOfMonth(date));
+    }
+  };
+
+  return (
+    <Card style={styles.calendarCard}>
+      <View style={styles.calendarHeader}>
+        <Text style={styles.calendarMonthTitle}>{monthLabel}</Text>
+        <View style={styles.calendarHeaderActions}>
+          <Pressable accessibilityLabel="Previous month" hitSlop={10} onPress={() => changeMonth(-1)} style={styles.calendarHeaderButton}>
+            <Feather color="#315043" name="chevron-left" size={24} />
+          </Pressable>
+          <Pressable accessibilityLabel="Next month" hitSlop={10} onPress={() => changeMonth(1)} style={styles.calendarHeaderButton}>
+            <Feather color="#315043" name="chevron-right" size={24} />
+          </Pressable>
+          <Pressable accessibilityLabel={isExpanded ? 'Collapse calendar' : 'Expand calendar'} accessibilityState={{ expanded: isExpanded }} hitSlop={10} onPress={() => setIsExpanded((expanded) => !expanded)} style={styles.calendarHeaderButton}>
+            <Feather color="#315043" name={isExpanded ? 'chevron-up' : 'chevron-down'} size={24} />
+          </Pressable>
+        </View>
+      </View>
+
+      <View style={styles.calendarWeekdayRow}>
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => <Text key={`${day}-${index}`} style={styles.calendarWeekday}>{day}</Text>)}
+      </View>
+      <View style={styles.calendarDivider} />
+
+      <View style={styles.monthGrid}>
+        {visibleWeeks.map((week) => (
+          <View key={dateKey(week[0])} style={styles.monthWeek}>
+            {week.map((date) => {
+              const inMonth = date.getMonth() === visibleMonth.getMonth() && date.getFullYear() === visibleMonth.getFullYear();
+              const selected = dateKey(date) === dateKey(selectedDate);
+              const collection = eventByDate.get(dateKey(date));
+              return (
+                <Pressable accessibilityLabel={date.toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })} accessibilityRole="button" key={dateKey(date)} onPress={() => selectDate(date)} style={styles.monthDateCell}>
+                  <View style={[styles.monthDateCircle, selected && styles.monthDateCircleSelected]}>
+                    <Text style={[styles.monthDateText, !inMonth && styles.monthDateTextOutside, selected && styles.monthDateTextSelected]}>{date.getDate()}</Text>
+                  </View>
+                  <View style={[styles.monthEventDot, collection?.wasteType === 'biodegradable' && styles.monthEventDotBio, collection?.wasteType === 'non-biodegradable' && styles.monthEventDotNonBio]} />
+                </Pressable>
+              );
+            })}
+          </View>
+        ))}
+      </View>
+
+      <View style={styles.calendarLegend}>
+        <View style={styles.calendarLegendItem}><View style={[styles.monthEventDot, styles.monthEventDotBio]} /><Text style={styles.calendarLegendText}>Biodegradable</Text></View>
+        <View style={styles.calendarLegendItem}><View style={[styles.monthEventDot, styles.monthEventDotNonBio]} /><Text style={styles.calendarLegendText}>Non-Biodegradable</Text></View>
+      </View>
+
+      {isExpanded ? (
+        <View style={styles.selectedCalendarDay}>
+          <Feather color="#07815f" name="calendar" size={22} />
+          {selectedCollection ? (
+            <View style={styles.selectedCalendarEventText}>
+              <Text style={styles.selectedCalendarEventDate}>{formatDate(selectedDate, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</Text>
+              <View style={styles.selectedCalendarEventMeta}><WastePill type={toWasteLabel(selectedCollection.wasteType)} /><Text style={styles.selectedCalendarEventTime}>{selectedCollection.timeWindows.length ? selectedCollection.timeWindows.join(' · ') : 'Time unavailable'}</Text></View>
+            </View>
+          ) : (
+            <Text style={styles.selectedCalendarEmpty}>No events scheduled for {formatDate(selectedDate, { month: 'long', day: 'numeric', year: 'numeric' })}</Text>
+          )}
+        </View>
+      ) : null}
+    </Card>
+  );
+}
+
 function StatusPill({ status }: { status: string }) {
   const normalized = status.toLowerCase();
   const style = normalized === 'resolved' ? styles.resolvedPill : normalized === 'rejected' ? styles.rejectedPill : styles.scheduledPill;
@@ -164,15 +330,30 @@ function StatusPill({ status }: { status: string }) {
   return <View style={[styles.statusPill, style]}><View style={[styles.statusDot, dotStyle]} /><Text style={[styles.statusText, textStyle]}>{label}</Text></View>;
 }
 
+function RealtimeStatus({ status }: { status: SocketStatus }) {
+  const statusStyle = status === 'connected'
+    ? styles.realtimeConnected
+    : status === 'connecting'
+      ? styles.realtimeConnecting
+      : styles.realtimeDisconnected;
+
+  return (
+    <View accessibilityLiveRegion="polite" style={[styles.realtimeStatus, statusStyle]}>
+      <View style={styles.realtimeStatusDot} />
+      <Text style={styles.realtimeStatusText}>{realtimeStatusText(status)}</Text>
+    </View>
+  );
+}
+
 function ReportStatusTracker({ status }: { status: ApiReport['status'] }) {
   const normalized = status.toLowerCase();
   const currentStep = normalized === 'resolved' ? 2 : normalized === 'verified' || normalized === 'scheduled' ? 1 : 0;
   const rejected = normalized === 'rejected';
-  const stages = ['Submitted', 'Acknowledged-Scheduled', 'Resolved'];
+  const stages = ['Submitted', 'Acknowledged\nScheduled', 'Resolved'];
 
   return (
     <View style={styles.reportStatusTracker}>
-      <Text style={styles.reportDetailsSectionTitle}>STATUS TRACKER</Text>
+      <Text style={styles.trackerTitle}>STATUS TRACKER</Text>
       {rejected ? (
         <Text style={styles.rejectedTrackerText}>This report was rejected.</Text>
       ) : (
@@ -251,8 +432,9 @@ function ReportList({ reports, onSelect }: { reports: ApiReport[]; onSelect: (re
 
 export default function ResidentScreen() {
   const router = useRouter();
+  const { tab } = useLocalSearchParams<{ tab?: string }>();
   const insets = useSafeAreaInsets();
-  const [activeTab, setActiveTab] = useState<ResidentTab>('home');
+  const [activeTab, setActiveTab] = useState<ResidentTab>(tab === 'schedule' ? 'schedule' : 'home');
   const [showBanner, setShowBanner] = useState(true);
   const [showAllUpcoming, setShowAllUpcoming] = useState(false);
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -273,6 +455,8 @@ export default function ResidentScreen() {
   const [profileLocation, setProfileLocation] = useState('');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileMessage, setProfileMessage] = useState('');
+  const [socketStatus, setSocketStatus] = useState<SocketStatus>('unavailable');
+  const socketRef = useRef<ReturnType<typeof io> | null>(null);
 
   const loadSchedule = useCallback(async (token: string, residentLocation?: string) => {
     if (!residentLocation) {
@@ -349,6 +533,71 @@ export default function ResidentScreen() {
     if (session?.token) void loadReports(session.token);
     if (session?.token) void loadSchedule(session.token, session.user.location || session.user.barangay);
   }, [loadReports, loadSchedule, session?.token, session?.user.barangay, session?.user.location]);
+
+  useEffect(() => {
+    if (tab === 'schedule') setActiveTab('schedule');
+  }, [tab]);
+
+  useEffect(() => {
+    const token = session?.token;
+    const userId = normalizeId(session?.user._id || session?.user.id);
+    if (!token) {
+      setSocketStatus('disconnected');
+      return undefined;
+    }
+    if (!SOCKET_URL) {
+      setSocketStatus('unavailable');
+      return undefined;
+    }
+
+    setSocketStatus('connecting');
+    const socket = io(SOCKET_URL, { auth: { token } });
+    socketRef.current = socket;
+
+    const handleConnect = () => setSocketStatus('connected');
+    const handleDisconnect = () => setSocketStatus('disconnected');
+    const handleConnectError = () => setSocketStatus('disconnected');
+    const handleComplaintEvent = (payload: ComplaintSocketPayload) => {
+      const incomingReport = payload.report || {};
+      const reportId = normalizeId(incomingReport._id || payload.reportId);
+      const reportResidentId = normalizeId(incomingReport.residentId);
+      if (!reportId || (reportResidentId && userId && reportResidentId !== userId)) return;
+
+      // If the server payload does not identify the resident, use the authenticated
+      // REST endpoint so no resident ever receives another resident's report.
+      if (!reportResidentId || !userId) {
+        void loadReports(token);
+        return;
+      }
+
+      setPastReports((current) => mergeRealtimeReport(current, payload));
+      setSelectedReport((current) => {
+        if (!current || normalizeId(current._id) !== reportId) return current;
+        return {
+          ...current,
+          ...incomingReport,
+          _id: reportId,
+          status: incomingReport.status || payload.status || current.status,
+        } as ApiReport;
+      });
+    };
+
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    socket.on('connect_error', handleConnectError);
+    socket.on('complaint:created', handleComplaintEvent);
+    socket.on('complaint:status-updated', handleComplaintEvent);
+
+    return () => {
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('connect_error', handleConnectError);
+      socket.off('complaint:created', handleComplaintEvent);
+      socket.off('complaint:status-updated', handleComplaintEvent);
+      socket.disconnect();
+      if (socketRef.current === socket) socketRef.current = null;
+    };
+  }, [loadReports, session?.token, session?.user._id, session?.user.id]);
 
   useEffect(() => {
     setProfileName(session?.user.name || '');
@@ -538,6 +787,13 @@ export default function ResidentScreen() {
   };
 
   const signOut = async () => {
+    socketRef.current?.disconnect();
+    socketRef.current = null;
+    try {
+      await cancelScheduledCollectionReminders();
+    } catch {
+      // The session is still cleared if local notification cleanup fails.
+    }
     await clearSession();
     setSession(null);
     setSchedule(null);
@@ -561,7 +817,15 @@ export default function ResidentScreen() {
     return date >= currentWeekStart && date <= currentWeekEnd;
   });
   const todayCollection = upcomingByDate.get(dateKey(new Date()));
-  const upcomingCollections = schedule?.upcomingCollections || [];
+  const upcomingCollections = useMemo(() => schedule?.upcomingCollections || [], [schedule?.upcomingCollections]);
+  useEffect(() => {
+    if (!session?.token || session.user.role !== 'resident' || !schedule) return;
+
+    void scheduleCollectionReminders(upcomingCollections, schedule.location || location).catch((error) => {
+      console.warn('Collection reminder scheduling failed:', error);
+    });
+  }, [location, schedule, session?.token, session?.user.role, upcomingCollections]);
+
   const visibleUpcomingCollections = showAllUpcoming ? upcomingCollections : upcomingCollections.slice(0, 3);
   const nextCollectionEntry = schedule?.upcomingCollections.find((collection) => (
     schedule.nextCollection && dateKey(collection.date) === dateKey(schedule.nextCollection)
@@ -603,23 +867,12 @@ export default function ResidentScreen() {
       <Text style={styles.screenTitle}>Collection Schedule</Text>
       <Text style={styles.screenSubtitle}>{location} · {formatDate(currentWeekDates[0], { month: 'long', year: 'numeric' })}</Text>
 
-      <Card style={styles.card}>
-        <Text style={styles.cardHeading}>THIS WEEK</Text>
-        {isLoadingSchedule ? <ActivityIndicator color="#07815f" style={styles.loadingSchedule} /> : scheduleError ? <Text style={styles.errorMessage}>{scheduleError}</Text> : <>
-          <View style={styles.calendarDays}>{currentWeekDates.map((date) => <Text key={dateKey(date)} style={styles.calendarDay}>{date.toLocaleDateString('en-PH', { weekday: 'short' }).slice(0, 1)}</Text>)}</View>
-          <View style={styles.calendarDates}>{currentWeekDates.map((date) => {
-            const collection = upcomingByDate.get(dateKey(date));
-            const isToday = dateKey(date) === dateKey(new Date());
-            const isNonBio = collection?.wasteType === 'non-biodegradable';
-            return <View key={dateKey(date)} style={[styles.dateCell, collection && (isNonBio ? styles.nonBioCollectionDateCell : styles.collectionDateCell), isToday && styles.currentDateCell]}>{isToday ? <Text style={styles.todayLabel}>TODAY</Text> : null}<Text style={[styles.dateText, isToday && styles.currentDateText]}>{date.getDate()}</Text>{collection ? <View style={[styles.collectionDot, isNonBio && styles.nonBioCollectionDot]} /> : null}</View>;
-          })}</View>
-        </>}
-        <View style={styles.calendarLegend}><View style={styles.legendItem}><View style={[styles.legendDot, styles.legendBio]} /><Text style={styles.legendText}>Biodegradable</Text></View><View style={styles.legendItem}><View style={[styles.legendDot, styles.legendNonBio]} /><Text style={styles.legendText}>Non-Biodegradable</Text></View></View>
-      </Card>
+      {isLoadingSchedule ? <Card style={styles.card}><ActivityIndicator color="#07815f" style={styles.loadingSchedule} /></Card> : <MonthlyScheduleCalendar collections={upcomingCollections} />}
+      {scheduleError ? <Text style={styles.errorMessage}>{scheduleError}</Text> : null}
 
       <Card style={styles.card}>
         <View style={styles.cardTopRow}><Text style={styles.cardHeading}>UPCOMING COLLECTIONS</Text>{upcomingCollections.length > 3 ? <Pressable accessibilityRole="button" onPress={() => setShowAllUpcoming((visible) => !visible)}><Text style={styles.viewAll}>{showAllUpcoming ? 'Show Less' : 'View All'}</Text></Pressable> : null}</View>
-        {isLoadingSchedule ? <ActivityIndicator color="#07815f" style={styles.loadingSchedule} /> : scheduleError ? <Text style={styles.errorMessage}>{scheduleError}</Text> : visibleUpcomingCollections.length ? visibleUpcomingCollections.map((collection) => <View key={collection.date} style={[styles.upcomingRow, collection.wasteType === 'biodegradable' ? styles.upcomingBio : styles.upcomingNonBio]}><View><Text style={styles.collectionDate}>{formatDate(collection.date, { weekday: 'short', month: 'short', day: 'numeric' })}</Text><Text style={styles.collectionTime}>{collection.timeWindows.length ? collection.timeWindows.join(' · ') : 'Time unavailable'}</Text></View><WastePill type={toWasteLabel(collection.wasteType)} /></View>) : <Text style={styles.emptyScheduleText}>No upcoming collections found.</Text>}
+        {isLoadingSchedule ? <ActivityIndicator color="#07815f" style={styles.loadingSchedule} /> : visibleUpcomingCollections.length ? visibleUpcomingCollections.map((collection) => <View key={collection.date} style={[styles.upcomingRow, collection.wasteType === 'biodegradable' ? styles.upcomingBio : styles.upcomingNonBio]}><View><Text style={styles.collectionDate}>{formatDate(collection.date, { weekday: 'short', month: 'short', day: 'numeric' })}</Text><Text style={styles.collectionTime}>{collection.timeWindows.length ? collection.timeWindows.join(' · ') : 'Time unavailable'}</Text></View><WastePill type={toWasteLabel(collection.wasteType)} /></View>) : <Text style={styles.emptyScheduleText}>No upcoming collections found.</Text>}
       </Card>
     </ScrollView>
   );
@@ -628,6 +881,7 @@ export default function ResidentScreen() {
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
       <Text style={styles.screenTitle}>Report Issue</Text>
       <Text style={styles.screenSubtitle}>Photo-verified uncollected waste reports</Text>
+      <RealtimeStatus status={socketStatus} />
 
       <Card style={styles.reportCard}>
         <Text style={styles.cardHeading}>PREVIEW &amp; SUBMIT</Text>
@@ -715,7 +969,41 @@ const styles = StyleSheet.create({
   location: { color: '#809087', fontSize: 11, marginTop: 3 },
   screenTitle: { color: '#1f382a', fontSize: 20, fontWeight: '800', marginTop: 2 },
   screenSubtitle: { color: '#74847b', fontSize: 11, marginTop: 4 },
+  realtimeStatus: { alignItems: 'center', borderRadius: 10, flexDirection: 'row', gap: 7, marginTop: 10, paddingHorizontal: 10, paddingVertical: 8 },
+  realtimeConnected: { backgroundColor: '#e7f9f0' },
+  realtimeConnecting: { backgroundColor: '#fff6e4' },
+  realtimeDisconnected: { backgroundColor: '#fff0f2' },
+  realtimeStatusDot: { backgroundColor: '#07815f', borderRadius: 4, height: 7, width: 7 },
+  realtimeStatusText: { color: '#3f5d51', fontSize: 10, fontWeight: '700' },
   card: { backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 16, borderWidth: 1, marginTop: 13, padding: 13, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 8 },
+  calendarCard: { backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 16, borderWidth: 1, marginTop: 13, padding: 17, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 8 },
+  calendarHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  calendarMonthTitle: { color: '#20372a', fontSize: 22, fontWeight: '800' },
+  calendarHeaderActions: { alignItems: 'center', flexDirection: 'row', gap: 6 },
+  calendarHeaderButton: { alignItems: 'center', borderRadius: 18, height: 36, justifyContent: 'center', width: 36 },
+  calendarWeekdayRow: { flexDirection: 'row', marginTop: 25 },
+  calendarWeekday: { color: '#829087', flex: 1, fontSize: 12, fontWeight: '800', textAlign: 'center' },
+  calendarDivider: { backgroundColor: '#edf1ef', height: 1, marginTop: 13 },
+  monthGrid: { marginTop: 8 },
+  monthWeek: { flexDirection: 'row' },
+  monthDateCell: { alignItems: 'center', flex: 1, height: 58, justifyContent: 'center' },
+  monthDateCircle: { alignItems: 'center', borderRadius: 24, height: 48, justifyContent: 'center', width: 48 },
+  monthDateCircleSelected: { backgroundColor: '#d8f8e8' },
+  monthDateText: { color: '#2d4538', fontSize: 15, fontWeight: '600' },
+  monthDateTextOutside: { color: '#b0bbb5' },
+  monthDateTextSelected: { color: '#07815f', fontWeight: '800' },
+  monthEventDot: { backgroundColor: 'transparent', borderRadius: 3, height: 5, marginTop: 1, width: 5 },
+  monthEventDotBio: { backgroundColor: '#07815f' },
+  monthEventDotNonBio: { backgroundColor: '#2f70d7' },
+  calendarLegend: { alignItems: 'center', borderTopColor: '#edf1ef', borderTopWidth: 1, flexDirection: 'row', gap: 16, justifyContent: 'center', marginTop: 4, paddingTop: 10 },
+  calendarLegendItem: { alignItems: 'center', flexDirection: 'row', gap: 6 },
+  calendarLegendText: { color: '#84928a', fontSize: 9 },
+  selectedCalendarDay: { alignItems: 'center', backgroundColor: '#f8fbf9', borderColor: '#e0e9e3', borderRadius: 14, borderWidth: 1, flexDirection: 'row', gap: 12, marginTop: 10, paddingHorizontal: 14, paddingVertical: 13 },
+  selectedCalendarEventText: { flex: 1 },
+  selectedCalendarEventDate: { color: '#2d4538', fontSize: 12, fontWeight: '800' },
+  selectedCalendarEventMeta: { alignItems: 'center', flexDirection: 'row', gap: 8, marginTop: 6 },
+  selectedCalendarEventTime: { color: '#74847b', flex: 1, fontSize: 10 },
+  selectedCalendarEmpty: { color: '#89978f', flex: 1, fontSize: 12, lineHeight: 18 },
   nextCollectionCard: { backgroundColor: '#126b4c', borderRadius: 16, marginTop: 13, padding: 14, shadowColor: '#0b4c36', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.14, shadowRadius: 10 },
   darkCardEyebrow: { color: '#b9e6d3', fontSize: 10, fontWeight: '800' },
   nextDate: { color: '#ffffff', fontSize: 18, fontWeight: '800', marginTop: 7 },
@@ -754,24 +1042,6 @@ const styles = StyleSheet.create({
   scheduledText: { color: '#2f70d7' },
   resolvedText: { color: '#07815f' },
   rejectedText: { color: '#d44859' },
-  calendarDays: { flexDirection: 'row', justifyContent: 'space-around', marginTop: 13 },
-  calendarDay: { color: '#78877e', fontSize: 10, textAlign: 'center', width: 31 },
-  calendarDates: { flexDirection: 'row', justifyContent: 'space-around', marginTop: 7 },
-  dateCell: { alignItems: 'center', borderRadius: 9, height: 45, justifyContent: 'center', width: 36 },
-  collectionDateCell: { backgroundColor: '#d8f8e8' },
-  nonBioCollectionDateCell: { backgroundColor: '#eaf3ff' },
-  currentDateCell: { borderColor: '#07815f', borderWidth: 2 },
-  dateText: { color: '#627269', fontSize: 10, fontWeight: '700' },
-  currentDateText: { color: '#07815f', fontWeight: '800' },
-  todayLabel: { color: '#07815f', fontSize: 7, fontWeight: '800', letterSpacing: 0.3, marginBottom: 2 },
-  collectionDot: { backgroundColor: '#10a875', borderRadius: 3, height: 4, marginTop: 3, width: 4 },
-  nonBioCollectionDot: { backgroundColor: '#4689e1' },
-  calendarLegend: { borderTopColor: '#edf1ef', borderTopWidth: 1, flexDirection: 'row', gap: 14, marginTop: 12, paddingTop: 10 },
-  legendItem: { alignItems: 'center', flexDirection: 'row', gap: 5 },
-  legendDot: { borderRadius: 4, height: 7, width: 7 },
-  legendBio: { backgroundColor: '#90e8c1' },
-  legendNonBio: { backgroundColor: '#b9d3fb' },
-  legendText: { color: '#84928a', fontSize: 9 },
   upcomingRow: { alignItems: 'center', borderRadius: 13, flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, padding: 10 },
   upcomingBio: { backgroundColor: '#f0fcf6', borderColor: '#cbf2dd', borderWidth: 1 },
   upcomingNonBio: { backgroundColor: '#f5f9ff', borderColor: '#d9e8ff', borderWidth: 1 },
@@ -839,14 +1109,15 @@ const styles = StyleSheet.create({
   reportDetailsStatusRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 },
   reportDetailsDate: { color: '#89978f', fontSize: 10 },
   reportDetailsSectionTitle: { color: '#61746a', fontSize: 10, fontWeight: '800', letterSpacing: 0.4, marginTop: 18 },
-  reportStatusTracker: { backgroundColor: '#f8fbf9', borderColor: '#e0e9e3', borderRadius: 14, borderWidth: 1, marginTop: 12, padding: 12 },
+  reportStatusTracker: { backgroundColor: '#f8fbf9', borderColor: '#e0e9e3', borderRadius: 14, borderWidth: 1, marginTop: 12, paddingBottom: 11, paddingHorizontal: 14, paddingTop: 8 },
+  trackerTitle: { color: '#61746a', fontSize: 10, fontWeight: '800', letterSpacing: 0.4 },
   trackerStages: { flexDirection: 'row', marginTop: 14 },
-  trackerStage: { alignItems: 'center', flex: 1, position: 'relative' },
+  trackerStage: { alignItems: 'center', flex: 1, minWidth: 0, position: 'relative' },
   trackerDot: { alignItems: 'center', backgroundColor: '#dce5df', borderRadius: 9, height: 18, justifyContent: 'center', width: 18, zIndex: 1 },
   trackerDotActive: { backgroundColor: '#07815f' },
   trackerConnector: { backgroundColor: '#dce5df', height: 2, left: '50%', position: 'absolute', right: '-50%', top: 8 },
   trackerConnectorActive: { backgroundColor: '#07815f' },
-  trackerLabel: { color: '#93a098', fontSize: 9, marginTop: 7, textAlign: 'center' },
+  trackerLabel: { color: '#93a098', fontSize: 9, lineHeight: 12, marginTop: 7, minHeight: 24, textAlign: 'center' },
   trackerLabelActive: { color: '#315043', fontWeight: '800' },
   rejectedTrackerText: { color: '#d44859', fontSize: 11, fontWeight: '700', marginTop: 10 },
   reportDetailsInfoCard: { alignItems: 'center', backgroundColor: '#f8fbf9', borderRadius: 12, flexDirection: 'row', marginTop: 8, padding: 11 },

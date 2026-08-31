@@ -1,9 +1,12 @@
 import { Button, Card, Chip, Input } from '@heroui/react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { io } from 'socket.io-client';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import PageHeader from '../components/PageHeader.jsx';
 import TruckManagementPanel from '../components/TruckManagementPanel.jsx';
 
 const API_URL = import.meta.env.VITE_API_URL;
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || API_URL?.replace(/\/api\/?$/, '');
 
 const NAV_ITEMS = [
   { id: 'overview', label: 'Overview', icon: 'grid' },
@@ -55,6 +58,74 @@ function titleCase(value = '') {
 
 function formatTonnes(value) {
   return `${Number(value || 0).toLocaleString('en-PH', { maximumFractionDigits: 1 })} t`;
+}
+
+function formatReportDate(value) {
+  if (!value) return 'Date unavailable';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? 'Date unavailable' : date.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function getReportBagCount(report = {}) {
+  const count = report.detectedBagCount ?? report.bagCount ?? report.aiResult?.detectedBagCount ?? report.aiResult?.bagCount;
+  if (typeof count === 'number') return `${count} bag${count === 1 ? '' : 's'}`;
+  if (report.aiVerified && typeof report.aiConfidence === 'number') return `${Math.max(1, Math.round(report.aiConfidence * 12))} bags estimated`;
+  return 'Not available';
+}
+
+function normalizeId(value) {
+  if (!value) return '';
+  if (typeof value === 'object') return normalizeId(value._id || value.id);
+  return String(value);
+}
+
+function mergeRealtimeReports(reports, payload) {
+  const currentReports = Array.isArray(reports) ? reports : [];
+  const incomingReport = payload?.report && typeof payload.report === 'object' ? payload.report : {};
+  const reportId = normalizeId(incomingReport._id || payload?.reportId);
+  if (!reportId) return currentReports;
+
+  const nextReport = {
+    ...incomingReport,
+    _id: reportId,
+    status: incomingReport.status || payload.status || 'pending',
+  };
+  const existingIndex = currentReports.findIndex((report) => normalizeId(report._id) === reportId);
+  if (existingIndex === -1) return [nextReport, ...currentReports];
+
+  return currentReports.map((report, index) => index === existingIndex ? { ...report, ...nextReport } : report);
+}
+
+function mergeComplaintRow(complaint, payload) {
+  if (!complaint) return complaint;
+  const incomingReport = payload?.report && typeof payload.report === 'object' ? payload.report : {};
+  const reportId = normalizeId(incomingReport._id || payload?.reportId);
+  const complaintId = normalizeId(complaint.id || complaint.report?._id);
+  if (!reportId || reportId !== complaintId) return complaint;
+
+  const report = {
+    ...(complaint.report || {}),
+    ...incomingReport,
+    _id: reportId,
+    status: incomingReport.status || payload.status || complaint.status || 'pending',
+  };
+  return {
+    ...complaint,
+    bags: getReportBagCount(report),
+    reporter: report.residentId?.name || complaint.reporter,
+    report,
+    status: report.status,
+  };
+}
+
+function socketStatusLabel(status) {
+  return status === 'connected'
+    ? 'Live updates'
+    : status === 'connecting'
+      ? 'Connecting live updates'
+      : status === 'unavailable'
+        ? 'Live updates unavailable'
+        : 'Live updates disconnected';
 }
 
 function startOfDay(date) {
@@ -118,10 +189,6 @@ function StatusChip({ status }) {
   return <Chip className={`status-chip status-${normalized.replace(' ', '-')}`} size="sm">{label}</Chip>;
 }
 
-function PanelTitle({ title, subtitle, action }) {
-  return <div className="panel-title"><div><p className="eyebrow">Operations</p><h2>{title}</h2><p>{subtitle}</p></div>{action}</div>;
-}
-
 function MetricCard({ icon, label, value, caption, tone = 'green' }) {
   return <Card className="metric-card"><div className={`metric-icon metric-${tone}`}><Icon name={icon} size={20} /></div><div><p className="metric-label">{label}</p><strong className="metric-value">{value}</strong><p className="metric-caption">{caption}</p></div></Card>;
 }
@@ -163,6 +230,43 @@ function RoutePreview({ route }) {
   return <div className={`route-preview ${route.flagged ? 'flagged-route' : ''}`}><div><strong>{route.street}</strong>{route.flagged ? <span className="flag">Flagged</span> : null}<p>{route.area} · {route.collector}</p></div><span>{route.date}</span><StatusChip status={route.status} /></div>;
 }
 
+function ComplaintDetailsModal({ complaint, onClose }) {
+  if (!complaint) return null;
+
+  const report = complaint.report || complaint;
+  const reporter = report.residentId?.name || complaint.reporter || 'Resident';
+  const email = report.residentId?.email || 'Not available';
+  const status = report.status || complaint.status || 'pending';
+
+  return (
+    <div className="modal-layer" onClick={onClose} role="presentation">
+      <div aria-labelledby="complaint-details-title" aria-modal="true" className="activity-detail-modal" onClick={(event) => event.stopPropagation()} role="dialog">
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Resident complaint</p>
+            <h2 id="complaint-details-title">Complaint details</h2>
+          </div>
+          <button aria-label="Close complaint details" onClick={onClose} type="button">×</button>
+        </div>
+        <div className="activity-detail-body">
+          {report.photoUrl ? <img alt={`Submitted complaint from ${reporter}`} className="activity-detail-photo" src={report.photoUrl} /> : <div className="activity-photo-empty"><Icon name="image" size={28} /><p>No submitted photo available</p></div>}
+          <div className="activity-detail-grid">
+            <div><span>Location</span><strong>{report.barangay || 'Location not recorded'}</strong></div>
+            <div><span>Reported by</span><strong>{reporter}</strong></div>
+            <div><span>Resident email</span><strong>{email}</strong></div>
+            <div><span>Submitted</span><strong>{formatReportDate(report.createdAt)}</strong></div>
+            <div><span>Detected bags</span><strong>{getReportBagCount(report)}</strong></div>
+            <div><span>Current status</span><StatusChip status={status} /></div>
+            <div><span>AI verification</span><strong>{report.aiVerified ? `Verified${typeof report.aiConfidence === 'number' ? ` (${Math.round(report.aiConfidence * 100)}% confidence)` : ''}` : 'Not verified'}</strong></div>
+          </div>
+          {report.description ? <div className="activity-detail-notes"><span>Resident note</span><p>{report.description}</p></div> : null}
+        </div>
+        <div className="modal-footer"><Button className="outline-button" onPress={onClose} type="button" variant="secondary">Close</Button></div>
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -173,10 +277,14 @@ export default function Dashboard() {
   const [search, setSearch] = useState('');
   const [showAccountForm, setShowAccountForm] = useState(false);
   const [selectedActivity, setSelectedActivity] = useState(null);
+  const [selectedComplaint, setSelectedComplaint] = useState(null);
   const [newAccount, setNewAccount] = useState(EMPTY_ACCOUNT);
   const [createdAccounts, setCreatedAccounts] = useState([]);
   const [submissionState, setSubmissionState] = useState({ loading: false, message: '', error: '' });
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [socketStatus, setSocketStatus] = useState('unavailable');
+  const [complaintUpdateError, setComplaintUpdateError] = useState('');
+  const socketRef = useRef(null);
   const [apiData, setApiData] = useState({ users: null, routes: null, reports: null, loads: null, tonnage: null, compliance: null, usingPlaceholder: true });
 
   const refreshDashboard = useCallback(async () => {
@@ -212,6 +320,48 @@ export default function Dashboard() {
 
   useEffect(() => { void refreshDashboard(); }, [refreshDashboard]);
 
+  useEffect(() => {
+    if (!token || !SOCKET_URL) {
+      setSocketStatus(SOCKET_URL ? 'disconnected' : 'unavailable');
+      return undefined;
+    }
+
+    setSocketStatus('connecting');
+    const socket = io(SOCKET_URL, { auth: { token } });
+    socketRef.current = socket;
+
+    const handleConnect = () => setSocketStatus('connected');
+    const handleDisconnect = () => setSocketStatus('disconnected');
+    const handleConnectError = () => setSocketStatus('disconnected');
+    const handleComplaintEvent = (payload) => {
+      const reportId = normalizeId(payload?.report?._id || payload?.reportId);
+      if (!reportId) return;
+
+      setApiData((current) => ({
+        ...current,
+        reports: mergeRealtimeReports(current.reports, payload),
+        usingPlaceholder: false,
+      }));
+      setSelectedComplaint((current) => mergeComplaintRow(current, payload));
+    };
+
+    socket.on('connect', handleConnect);
+    socket.on('disconnect', handleDisconnect);
+    socket.on('connect_error', handleConnectError);
+    socket.on('complaint:created', handleComplaintEvent);
+    socket.on('complaint:status-updated', handleComplaintEvent);
+
+    return () => {
+      socket.off('connect', handleConnect);
+      socket.off('disconnect', handleDisconnect);
+      socket.off('connect_error', handleConnectError);
+      socket.off('complaint:created', handleComplaintEvent);
+      socket.off('complaint:status-updated', handleComplaintEvent);
+      socket.disconnect();
+      if (socketRef.current === socket) socketRef.current = null;
+    };
+  }, [token]);
+
   const accountRows = useMemo(() => {
     if (!apiData.users?.length) return [...createdAccounts, ...PLACEHOLDER_ACCOUNTS];
     return [...createdAccounts, ...apiData.users.filter((user) => ['collector', 'staff'].includes(user.role)).map((user) => ({ id: user._id, name: user.name, role: user.role, area: user.barangay || 'Not assigned', contact: user.contact || '—', email: user.email }))];
@@ -223,8 +373,8 @@ export default function Dashboard() {
   }, [apiData.routes]);
 
   const complaintRows = useMemo(() => {
-    if (!apiData.reports?.length) return PLACEHOLDER_COMPLAINTS;
-    return apiData.reports.map((report) => ({ id: report._id, street: report.description || `${report.barangay || 'Unassigned area'} report`, bags: report.aiVerified ? Math.max(1, Math.round((report.aiConfidence || 0.5) * 12)) : '—', time: new Date(report.createdAt).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' }), date: new Date(report.createdAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }), reporter: report.residentId?.name || 'Resident', status: report.status || 'pending' }));
+    if (!apiData.reports?.length) return PLACEHOLDER_COMPLAINTS.map((complaint) => ({ ...complaint, report: complaint }));
+    return apiData.reports.map((report) => ({ id: report._id, street: report.description || `${report.barangay || 'Unassigned area'} report`, bags: getReportBagCount(report), time: new Date(report.createdAt).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' }), date: new Date(report.createdAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }), reporter: report.residentId?.name || 'Resident', status: report.status || 'pending', report }));
   }, [apiData.reports]);
 
   const activityRows = useMemo(() => {
@@ -245,6 +395,8 @@ export default function Dashboard() {
   }, [apiData.compliance]);
 
   const signOut = () => {
+    socketRef.current?.disconnect();
+    socketRef.current = null;
     sessionStorage.removeItem('resiklean_admin_token');
     sessionStorage.removeItem('resiklean_admin_user');
     navigate('/login', { replace: true });
@@ -254,9 +406,37 @@ export default function Dashboard() {
     setSearchParams(page === 'overview' ? {} : { view: page });
   };
 
-  const updateComplaintStatus = (id, status) => {
-    setSubmissionState({ loading: false, error: '', message: `Complaint status set to ${titleCase(status)} locally.` });
-    setApiData((current) => ({ ...current, reports: current.reports?.map((report) => report._id === id ? { ...report, status } : report) || current.reports }));
+  const updateComplaintStatus = async (id, status) => {
+    setComplaintUpdateError('');
+    const previousReport = apiData.reports?.find((report) => normalizeId(report._id) === normalizeId(id));
+    setApiData((current) => ({
+      ...current,
+      reports: current.reports?.map((report) => normalizeId(report._id) === normalizeId(id) ? { ...report, status } : report) || current.reports,
+    }));
+    setSelectedComplaint((current) => mergeComplaintRow(current, { reportId: id, status }));
+
+    if (!API_URL || !token || String(id).startsWith('complaint-')) return;
+
+    try {
+      const response = await fetch(`${API_URL.replace(/\/$/, '')}/admin/reports/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || 'Unable to update the complaint status.');
+
+      const payload = { reportId: id, status, report: result.data };
+      setApiData((current) => ({ ...current, reports: mergeRealtimeReports(current.reports, payload), usingPlaceholder: false }));
+      setSelectedComplaint((current) => mergeComplaintRow(current, payload));
+    } catch (error) {
+      setApiData((current) => ({
+        ...current,
+        reports: current.reports?.map((report) => normalizeId(report._id) === normalizeId(id) && previousReport ? previousReport : report) || current.reports,
+      }));
+      setSelectedComplaint((current) => previousReport ? mergeComplaintRow(current, { reportId: id, report: previousReport }) : current);
+      setComplaintUpdateError(error instanceof Error ? error.message : 'Unable to update the complaint status.');
+    }
   };
 
   const createAccount = async (event) => {
@@ -284,7 +464,7 @@ export default function Dashboard() {
   if (!token) return <Navigate replace to="/login" />;
 
   const overview = <>
-    <div className="overview-intro"><div><p className="eyebrow">Operational snapshot</p><h2>Collection at a glance</h2><p>Live information from SWMO collection and landfill activity.</p></div><Button className="outline-button" isDisabled={isRefreshing} onPress={refreshDashboard} variant="secondary"><Icon name="refresh" size={16} />{isRefreshing ? 'Refreshing…' : 'Refresh data'}</Button></div>
+    <PageHeader action={<Button className="outline-button" isDisabled={isRefreshing} onPress={refreshDashboard} variant="secondary"><Icon name="refresh" size={16} />{isRefreshing ? 'Refreshing…' : 'Refresh data'}</Button>} category="Operational snapshot" description="Live information from SWMO collection and landfill activity." title="Collection at a glance" />
     <div className="metrics-grid">
       <MetricCard caption={completionRate ? 'Across today’s active routes' : 'Live route data unavailable'} icon="route" label="Collection completion" value={completionRate || '—'} />
       <MetricCard caption={apiData.usingPlaceholder ? 'Connect the admin API to view totals' : `${totalLoads} submitted truckload${totalLoads === 1 ? '' : 's'}`} icon="truck" label="Recorded tonnage" tone="teal" value={apiData.usingPlaceholder ? '—' : formatTonnes(totalTonnage)} />
@@ -297,20 +477,21 @@ export default function Dashboard() {
     <Card className="overview-routes"><div className="card-heading-row overview-route-heading"><div><p className="eyebrow">Collection tracking</p><h3>Recent route activity</h3><p>Street-level collection status</p></div><button className="text-button" onClick={() => selectPage('routes')}>View route history <Icon name="arrow" size={15} /></button></div>{routeRows.slice(0, 4).map((route) => <RoutePreview key={route.id} route={route} />)}<button className="view-more" onClick={() => selectPage('routes')}>View all {routeRows.length} entries <Icon name="arrow" size={15} /></button></Card>
   </>;
 
-  const routeHistory = <><PanelTitle action={<Button className="outline-button" variant="secondary">Export</Button>} subtitle="Street-level collection tracking by collector" title="Route history" /><Card className="table-card"><div className="filter-row"><select aria-label="Filter by collector" defaultValue="all"><option value="all">All collectors</option>{accountRows.filter((account) => account.role === 'collector').map((account) => <option key={account.id}>{account.name}</option>)}</select><select aria-label="Filter by area" defaultValue="all"><option value="all">All areas</option>{[...new Set(routeRows.map((route) => route.area))].map((area) => <option key={area}>{area}</option>)}</select><input aria-label="Filter by date" type="date" /><span className="entries-count">{filteredRoutes.length} entries</span></div><div className="table-scroll"><table><thead><tr><th>Area</th><th>Date</th><th>Street</th><th>Collector</th><th>Status</th></tr></thead><tbody>{filteredRoutes.map((route) => <tr key={route.id}><td>{route.area}{route.flagged ? <span className="flag">Flagged</span> : null}</td><td>{route.date}</td><td>{route.street}</td><td><AvatarName name={route.collector} /></td><td><StatusChip status={route.status} /></td></tr>)}</tbody></table></div></Card></>;
+  const routeHistory = <><PageHeader action={<Button className="outline-button" variant="secondary">Export</Button>} category="Operations" description="Street-level collection tracking by collector" title="Route history" /><Card className="table-card"><div className="filter-row"><select aria-label="Filter by collector" defaultValue="all"><option value="all">All collectors</option>{accountRows.filter((account) => account.role === 'collector').map((account) => <option key={account.id}>{account.name}</option>)}</select><select aria-label="Filter by area" defaultValue="all"><option value="all">All areas</option>{[...new Set(routeRows.map((route) => route.area))].map((area) => <option key={area}>{area}</option>)}</select><input aria-label="Filter by date" type="date" /><span className="entries-count">{filteredRoutes.length} entries</span></div><div className="table-scroll"><table><thead><tr><th>Area</th><th>Date</th><th>Street</th><th>Collector</th><th>Status</th></tr></thead><tbody>{filteredRoutes.map((route) => <tr key={route.id}><td>{route.area}{route.flagged ? <span className="flag">Flagged</span> : null}</td><td>{route.date}</td><td>{route.street}</td><td><AvatarName name={route.collector} /></td><td><StatusChip status={route.status} /></td></tr>)}</tbody></table></div></Card></>;
 
-  const complaints = <><PanelTitle action={<Chip className="pending-count" size="sm">{complaintRows.filter((complaint) => complaint.status === 'pending').length} pending</Chip>} subtitle="Resident-submitted missed collection reports" title="Complaint queue" /><div className="complaint-list">{complaintRows.map((complaint) => <Card className="complaint-card" key={complaint.id}><div className="complaint-art"><Icon name="alert" size={24} /></div><div className="complaint-main"><h3>{complaint.street}</h3><p>{complaint.bags} bags detected · {complaint.time}</p></div><div className="complaint-meta"><span>Date</span><strong>{complaint.date}</strong></div><div className="complaint-meta"><span>Reported by</span><strong>{complaint.reporter}</strong></div><select aria-label={`Update ${complaint.street} status`} className={`complaint-status status-${complaint.status}`} onChange={(event) => updateComplaintStatus(complaint.id, event.target.value)} value={complaint.status}><option value="pending">Pending</option><option value="verified">Scheduled</option><option value="resolved">Resolved</option><option value="rejected">Rejected</option></select></Card>)}</div></>;
+  const complaints = <><PageHeader action={<Chip className="pending-count" size="sm">{complaintRows.filter((complaint) => complaint.status === 'pending').length} pending</Chip>} category="Operations" description="Resident-submitted missed collection reports" title="Complaint queue" />{complaintUpdateError ? <p className="feedback error-feedback">{complaintUpdateError}</p> : null}<div className="complaint-list">{complaintRows.map((complaint) => <Card className="complaint-card" key={complaint.id}><div className="complaint-art"><Icon name="alert" size={24} /></div><div className="complaint-main"><h3>{complaint.street}</h3><p>{complaint.bags} detected · {complaint.time}</p><button className="complaint-details-button" onClick={() => setSelectedComplaint(complaint)} type="button">View details <Icon name="arrow" size={14} /></button></div><div className="complaint-meta"><span>Date</span><strong>{complaint.date}</strong></div><div className="complaint-meta"><span>Reported by</span><strong>{complaint.reporter}</strong></div><select aria-label={`Update ${complaint.street} status`} className={`complaint-status status-${complaint.status}`} onChange={(event) => updateComplaintStatus(complaint.id, event.target.value)} value={complaint.status}><option value="pending">Pending</option><option value="verified">Scheduled</option><option value="resolved">Resolved</option><option value="rejected">Rejected</option></select></Card>)}</div>{selectedComplaint ? <ComplaintDetailsModal complaint={selectedComplaint} onClose={() => setSelectedComplaint(null)} /> : null}</>;
 
-  const activity = <Card className="table-card staff-activity-card"><div className="card-heading-row"><div><p className="eyebrow">Landfill operations</p><h3>Staff activity log</h3><p>{apiData.usingPlaceholder ? 'Sample activity while the admin API is unavailable' : `${totalLoads} recorded truckload${totalLoads === 1 ? '' : 's'}`} · click a submission to view its audit photo</p></div><Button className="outline-button" isDisabled={isRefreshing} onPress={refreshDashboard} variant="secondary">{isRefreshing ? 'Refreshing…' : 'Refresh data'}</Button></div><div className="table-scroll"><table><thead><tr><th>Area</th><th>Driver</th><th>L (m)</th><th>W (m)</th><th>H (m)</th><th>Slope</th><th>Tonnage</th><th>Time</th></tr></thead><tbody>{activityRows.map((row) => <tr aria-label={`View truckload from ${row.area}`} className="activity-row" key={row.id} onClick={() => row.photoUrl || row.notes ? setSelectedActivity(row) : null} onKeyDown={(event) => { if ((event.key === 'Enter' || event.key === ' ') && (row.photoUrl || row.notes)) { event.preventDefault(); setSelectedActivity(row); } }} tabIndex={row.photoUrl || row.notes ? 0 : undefined}><td>{row.area}</td><td><strong>{row.driver}</strong></td><td>{row.length}</td><td>{row.width}</td><td>{row.height}</td><td>{row.slope}</td><td className="tonnage-cell">{row.tonnage}</td><td>{row.time}</td></tr>)}</tbody></table></div></Card>;
+  const activity = <>
+    <PageHeader action={<Button className="outline-button" isDisabled={isRefreshing} onPress={refreshDashboard} variant="secondary">{isRefreshing ? 'Refreshing…' : 'Refresh data'}</Button>} category="Landfill operations" description={apiData.usingPlaceholder ? 'Sample activity while the admin API is unavailable' : `${totalLoads} recorded truckload${totalLoads === 1 ? '' : 's'} · click a submission to view its audit photo`} title="Staff activity log" />
+    <Card className="table-card staff-activity-card"><div className="table-scroll"><table><thead><tr><th>Area</th><th>Driver</th><th>L (m)</th><th>W (m)</th><th>H (m)</th><th>Slope</th><th>Tonnage</th><th>Time</th></tr></thead><tbody>{activityRows.map((row) => <tr aria-label={`View truckload from ${row.area}`} className="activity-row" key={row.id} onClick={() => row.photoUrl || row.notes ? setSelectedActivity(row) : null} onKeyDown={(event) => { if ((event.key === 'Enter' || event.key === ' ') && (row.photoUrl || row.notes)) { event.preventDefault(); setSelectedActivity(row); } }} tabIndex={row.photoUrl || row.notes ? 0 : undefined}><td>{row.area}</td><td><strong>{row.driver}</strong></td><td>{row.length}</td><td>{row.width}</td><td>{row.height}</td><td>{row.slope}</td><td className="tonnage-cell">{row.tonnage}</td><td>{row.time}</td></tr>)}</tbody></table></div></Card>
+  </>;
 
-  const assignments = <><PanelTitle action={<Chip className="active-count" size="sm">{routeRows.filter((route) => route.collector !== 'Unassigned').length} assigned</Chip>} subtitle="Manage collectors assigned to SWMO areas" title="Collector assignments" /><Card className="table-card"><div className="table-scroll"><table><thead><tr><th>Collector</th><th>Currently assigned area</th><th>Last updated</th><th>Action</th></tr></thead><tbody>{routeRows.slice(0, 5).map((route) => <tr key={route.id}><td><AvatarName name={route.collector} /></td><td>{route.area}</td><td>Current schedule</td><td><Button className="reassign-button" variant="secondary">Reassign</Button></td></tr>)}</tbody></table></div></Card></>;
+  const assignments = <><PageHeader action={<Chip className="active-count" size="sm">{routeRows.filter((route) => route.collector !== 'Unassigned').length} assigned</Chip>} category="Operations" description="Manage collectors assigned to SWMO areas" title="Collector assignments" /><Card className="table-card"><div className="table-scroll"><table><thead><tr><th>Collector</th><th>Currently assigned area</th><th>Last updated</th><th>Action</th></tr></thead><tbody>{routeRows.slice(0, 5).map((route) => <tr key={route.id}><td><AvatarName name={route.collector} /></td><td>{route.area}</td><td>Current schedule</td><td><Button className="reassign-button" variant="secondary">Reassign</Button></td></tr>)}</tbody></table></div></Card></>;
 
-  const accounts = <><PanelTitle action={<Button className="primary-button" onPress={() => { setSubmissionState({ loading: false, error: '', message: '' }); setShowAccountForm(true); }}><Icon name="plus" size={16} />Add account</Button>} subtitle="Manage collector and staff accounts" title="Account management" />{submissionState.message ? <p className="feedback success-feedback">{submissionState.message}</p> : null}{submissionState.error ? <p className="feedback error-feedback">{submissionState.error}</p> : null}<Card className="table-card"><div className="table-scroll"><table><thead><tr><th>Name</th><th>Role</th><th>Assigned area</th><th>Contact</th><th>Email</th></tr></thead><tbody>{filteredAccounts.map((account) => <tr key={account.id}><td><AvatarName name={account.name} /></td><td><Chip className={`role-chip role-${account.role}`} size="sm">{titleCase(account.role)}</Chip></td><td>{account.area}</td><td>{account.contact}</td><td>{account.email}</td></tr>)}</tbody></table></div></Card></>;
+  const accounts = <><PageHeader action={<Button className="primary-button" onPress={() => { setSubmissionState({ loading: false, error: '', message: '' }); setShowAccountForm(true); }}><Icon name="plus" size={16} />Add account</Button>} category="Operations" description="Manage collector and staff accounts" title="Account management" />{submissionState.message ? <p className="feedback success-feedback">{submissionState.message}</p> : null}{submissionState.error ? <p className="feedback error-feedback">{submissionState.error}</p> : null}<Card className="table-card"><div className="table-scroll"><table><thead><tr><th>Name</th><th>Role</th><th>Assigned area</th><th>Contact</th><th>Email</th></tr></thead><tbody>{filteredAccounts.map((account) => <tr key={account.id}><td><AvatarName name={account.name} /></td><td><Chip className={`role-chip role-${account.role}`} size="sm">{titleCase(account.role)}</Chip></td><td>{account.area}</td><td>{account.contact}</td><td>{account.email}</td></tr>)}</tbody></table></div></Card></>;
 
-  const trucks = <><PanelTitle subtitle="Register fleet vehicles and review their dimensions" title="Truck management" /><TruckManagementPanel token={token} /></>;
+  const trucks = <><PageHeader category="Operations" description="Register fleet vehicles and review their dimensions" title="Truck management" /><TruckManagementPanel token={token} /></>;
 
   const pageContent = { overview, routes: routeHistory, complaints, activity, assignments, accounts, trucks }[activePage];
-  const activeLabel = NAV_ITEMS.find((item) => item.id === activePage)?.label || 'Overview';
-
-  return <main className="admin-shell"><aside className="admin-sidebar"><div className="brand"><div className="brand-mark">R</div><div><strong>ResiKlean</strong><span>SWMO administrator</span></div></div><nav>{NAV_ITEMS.map((item) => <button aria-current={activePage === item.id ? 'page' : undefined} className={activePage === item.id ? 'nav-link active' : 'nav-link'} key={item.id} onClick={() => selectPage(item.id)}><Icon name={item.icon} />{item.label}</button>)}</nav><button className="signout-button" onClick={signOut}><Icon name="logout" />Sign out</button></aside><section className="admin-workspace"><header className="topbar"><div><p className="eyebrow">Naga City SWMO</p><h1>{activeLabel}</h1></div><div className="topbar-actions"><Input aria-label="Search dashboard" className="search-input" onChange={(event) => setSearch(event.target.value)} placeholder="Search accounts or routes" startContent={<Icon name="search" size={16} />} value={search} /><button aria-label="Notifications" className="notification-button"><Icon name="bell" size={19} /><i /></button><div className="topbar-avatar">{initials(storedUser.name || 'Admin')}</div><strong className="admin-name">{storedUser.name || 'Admin'}</strong></div></header><section className="dashboard-content">{apiData.usingPlaceholder ? <p className="data-note">Live dashboard data is unavailable. Sample records are shown for the tables; the tonnage chart intentionally stays empty.</p> : null}{pageContent}</section></section>{showAccountForm ? <div className="modal-layer" role="presentation"><div aria-modal="true" className="account-modal" role="dialog"><form onSubmit={createAccount}><div className="modal-header"><div><p className="eyebrow">Account management</p><h2>Add new account</h2></div><button aria-label="Close account form" onClick={() => setShowAccountForm(false)} type="button">×</button></div><div className="modal-body"><label>Full name<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. Juan dela Cruz" required value={newAccount.name} /></label><label>Contact number<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, contact: event.target.value }))} placeholder="09XXXXXXXXX" value={newAccount.contact} /></label><label>Email address<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, email: event.target.value }))} placeholder="user@nagacity.gov.ph" required type="email" value={newAccount.email} /></label><label>Temporary password<Input fullWidth minLength="6" onChange={(event) => setNewAccount((current) => ({ ...current, password: event.target.value }))} placeholder="At least 6 characters" required type="password" value={newAccount.password} /></label><label>Role<select onChange={(event) => setNewAccount((current) => ({ ...current, role: event.target.value }))} value={newAccount.role}><option value="collector">Collector</option><option value="staff">Staff</option></select></label><p className="field-note">Contact number is dashboard-only until the backend stores it.</p>{submissionState.error ? <p className="feedback error-feedback">{submissionState.error}</p> : null}</div><div className="modal-footer"><Button className="outline-button" onPress={() => setShowAccountForm(false)} type="button" variant="secondary">Cancel</Button><Button className="primary-button" isDisabled={submissionState.loading} type="submit">{submissionState.loading ? 'Creating…' : 'Create account'}</Button></div></form></div></div> : null}{selectedActivity ? <div className="modal-layer" onClick={() => setSelectedActivity(null)} role="presentation"><div aria-modal="true" className="activity-detail-modal" onClick={(event) => event.stopPropagation()} role="dialog"><div className="modal-header"><div><p className="eyebrow">Landfill operations</p><h2>Truckload submission</h2></div><button aria-label="Close truckload details" onClick={() => setSelectedActivity(null)} type="button">×</button></div><div className="activity-detail-body">{selectedActivity.photoUrl ? <img alt={`Audit photo for ${selectedActivity.area}`} className="activity-detail-photo" src={selectedActivity.photoUrl} /> : <div className="activity-photo-empty"><Icon name="image" size={28} /><p>No audit photo available</p></div>}<div className="activity-detail-grid"><div><span>Area</span><strong>{selectedActivity.area}</strong></div><div><span>Staff</span><strong>{selectedActivity.driver}</strong></div><div><span>Truck</span><strong>{selectedActivity.truckPlate}</strong></div><div><span>Submitted</span><strong>{selectedActivity.date} · {selectedActivity.time}</strong></div><div><span>Measurements</span><strong>{selectedActivity.length} m × {selectedActivity.width} m × {selectedActivity.height} m</strong></div><div><span>Slope</span><strong>{selectedActivity.slope}</strong></div><div><span>Estimated tonnage</span><strong className="tonnage-cell">{selectedActivity.tonnage}</strong></div></div>{selectedActivity.notes ? <div className="activity-detail-notes"><span>Notes</span><p>{selectedActivity.notes}</p></div> : null}</div><div className="modal-footer"><Button className="outline-button" onPress={() => setSelectedActivity(null)} type="button" variant="secondary">Close</Button></div></div></div> : null}</main>;
+  return <main className="admin-shell"><aside className="admin-sidebar"><div className="brand"><div className="brand-mark">R</div><div><strong>ResiKlean</strong><span>SWMO administrator</span></div></div><nav>{NAV_ITEMS.map((item) => <button aria-current={activePage === item.id ? 'page' : undefined} className={activePage === item.id ? 'nav-link active' : 'nav-link'} key={item.id} onClick={() => selectPage(item.id)}><Icon name={item.icon} />{item.label}</button>)}</nav><button className="signout-button" onClick={signOut}><Icon name="logout" />Sign out</button></aside><section className="admin-workspace"><header className="topbar"><div><p className="eyebrow">Naga City SWMO</p><p className="topbar-context">Administrator workspace</p></div><div className="topbar-actions"><Input aria-label="Search dashboard" className="search-input" onChange={(event) => setSearch(event.target.value)} placeholder="Search accounts or routes" startContent={<Icon name="search" size={16} />} value={search} /><div aria-live="polite" className={`socket-status socket-${socketStatus}`} role="status"><span className="socket-status-dot" />{socketStatusLabel(socketStatus)}</div><button aria-label="Notifications" className="notification-button"><Icon name="bell" size={19} /><i /></button><div className="topbar-avatar">{initials(storedUser.name || 'Admin')}</div><strong className="admin-name">{storedUser.name || 'Admin'}</strong></div></header><section className="dashboard-content">{apiData.usingPlaceholder ? <p className="data-note">Live dashboard data is unavailable. Sample records are shown for the tables; the tonnage chart intentionally stays empty.</p> : null}{pageContent}</section></section>{showAccountForm ? <div className="modal-layer" role="presentation"><div aria-modal="true" className="account-modal" role="dialog"><form onSubmit={createAccount}><div className="modal-header"><div><p className="eyebrow">Account management</p><h2>Add new account</h2></div><button aria-label="Close account form" onClick={() => setShowAccountForm(false)} type="button">×</button></div><div className="modal-body"><label>Full name<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. Juan dela Cruz" required value={newAccount.name} /></label><label>Contact number<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, contact: event.target.value }))} placeholder="09XXXXXXXXX" value={newAccount.contact} /></label><label>Email address<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, email: event.target.value }))} placeholder="user@nagacity.gov.ph" required type="email" value={newAccount.email} /></label><label>Temporary password<Input fullWidth minLength="6" onChange={(event) => setNewAccount((current) => ({ ...current, password: event.target.value }))} placeholder="At least 6 characters" required type="password" value={newAccount.password} /></label><label>Role<select onChange={(event) => setNewAccount((current) => ({ ...current, role: event.target.value }))} value={newAccount.role}><option value="collector">Collector</option><option value="staff">Staff</option></select></label><p className="field-note">Contact number is dashboard-only until the backend stores it.</p>{submissionState.error ? <p className="feedback error-feedback">{submissionState.error}</p> : null}</div><div className="modal-footer"><Button className="outline-button" onPress={() => setShowAccountForm(false)} type="button" variant="secondary">Cancel</Button><Button className="primary-button" isDisabled={submissionState.loading} type="submit">{submissionState.loading ? 'Creating…' : 'Create account'}</Button></div></form></div></div> : null}{selectedActivity ? <div className="modal-layer" onClick={() => setSelectedActivity(null)} role="presentation"><div aria-modal="true" className="activity-detail-modal" onClick={(event) => event.stopPropagation()} role="dialog"><div className="modal-header"><div><p className="eyebrow">Landfill operations</p><h2>Truckload submission</h2></div><button aria-label="Close truckload details" onClick={() => setSelectedActivity(null)} type="button">×</button></div><div className="activity-detail-body">{selectedActivity.photoUrl ? <img alt={`Audit photo for ${selectedActivity.area}`} className="activity-detail-photo" src={selectedActivity.photoUrl} /> : <div className="activity-photo-empty"><Icon name="image" size={28} /><p>No audit photo available</p></div>}<div className="activity-detail-grid"><div><span>Area</span><strong>{selectedActivity.area}</strong></div><div><span>Staff</span><strong>{selectedActivity.driver}</strong></div><div><span>Truck</span><strong>{selectedActivity.truckPlate}</strong></div><div><span>Submitted</span><strong>{selectedActivity.date} · {selectedActivity.time}</strong></div><div><span>Measurements</span><strong>{selectedActivity.length} m × {selectedActivity.width} m × {selectedActivity.height} m</strong></div><div><span>Slope</span><strong>{selectedActivity.slope}</strong></div><div><span>Estimated tonnage</span><strong className="tonnage-cell">{selectedActivity.tonnage}</strong></div></div>{selectedActivity.notes ? <div className="activity-detail-notes"><span>Notes</span><p>{selectedActivity.notes}</p></div> : null}</div><div className="modal-footer"><Button className="outline-button" onPress={() => setSelectedActivity(null)} type="button" variant="secondary">Close</Button></div></div></div> : null}</main>;
 }
