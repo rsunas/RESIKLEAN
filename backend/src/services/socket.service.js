@@ -1,6 +1,9 @@
 // Socket.io Service
 // Emits real-time events to admin dashboard and collector app
-// TODO: implement in real-time sprint
+// Authenticated via JWT on connection handshake
+
+const jwt = require('jsonwebtoken');
+const User = require('../models/User');
 
 let _io = null;
 
@@ -14,8 +17,36 @@ const init = (httpServer) => {
     cors: { origin: '*' },
   });
 
+  // ── Authentication middleware ───────────────────────────────────────────
+  // Clients must send their JWT via: socket.handshake.auth.token
+  // or via the Authorization header (Bearer <token>).
+  _io.use(async (socket, next) => {
+    try {
+      const token =
+        socket.handshake.auth?.token ||
+        socket.handshake.headers?.authorization?.split(' ')[1];
+
+      if (!token) {
+        return next(new Error('Authentication error: no token provided'));
+      }
+
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const user = await User.findById(decoded.id).select('-password');
+
+      if (!user) {
+        return next(new Error('Authentication error: user not found'));
+      }
+
+      // Attach user to the socket for downstream use
+      socket.user = user;
+      next();
+    } catch (err) {
+      next(new Error('Authentication error: invalid token'));
+    }
+  });
+
   _io.on('connection', (socket) => {
-    console.log(`🔌 Socket connected: ${socket.id}`);
+    console.log(`🔌 Socket connected: ${socket.id} (${socket.user.name})`);
     socket.on('disconnect', () => console.log(`🔌 Socket disconnected: ${socket.id}`));
   });
 

@@ -3,6 +3,7 @@ const Route        = require('../models/Route');
 const CollectionLocation = require('../models/CollectionLocation');
 const { uploadPhoto } = require('../services/cloudinary.service');
 const { verifyWastePhoto } = require('../services/roboflow.service');
+const socketService = require('../services/socket.service');
 const { sendSuccess, sendError } = require('../utils/response');
 
 // ── GET /api/resident/schedule ────────────────────────────────────────────────
@@ -222,6 +223,13 @@ const submitReport = async (req, res) => {
       aiVerified,
       aiConfidence,
       detectedBagCount,
+    });
+
+    // Emit real-time event for connected clients (admin dashboard, etc.)
+    socketService.emit('complaint:created', {
+      reportId: report._id,
+      status: report.status,
+      report,
     });
 
     sendSuccess(res, report, 201);

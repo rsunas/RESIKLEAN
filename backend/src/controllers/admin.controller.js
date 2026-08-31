@@ -5,6 +5,7 @@ const MissedReport = require('../models/MissedReport');
 const TruckLoad = require('../models/TruckLoad');
 const Truck = require('../models/Truck');
 const DailyCycleLog = require('../models/DailyCycleLog');
+const socketService = require('../services/socket.service');
 const { sendSuccess, sendError } = require('../utils/response');
 
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
@@ -204,6 +205,13 @@ const updateReportStatus = async (req, res) => {
     ).populate('residentId', 'name email');
 
     if (!report) return sendError(res, 'Report not found', 404);
+
+    // Emit real-time event for connected clients
+    socketService.emit('complaint:status-updated', {
+      reportId: report._id,
+      status: report.status,
+      report,
+    });
 
     sendSuccess(res, report);
   } catch (err) {
