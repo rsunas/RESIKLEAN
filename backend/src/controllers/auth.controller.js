@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const Route = require('../models/Route');
 const { signToken } = require('../utils/jwt');
 const { sendSuccess, sendError } = require('../utils/response');
 
@@ -15,14 +16,14 @@ const tokenResponse = (user, statusCode, res) => {
 // ── POST /api/auth/register ───────────────────────────────────────────────────
 const register = async (req, res) => {
   try {
-    const { name, email, password, barangay, location, phone } = req.body;
+    const { name, email, password, barangay, location, phone, home_segment_id } = req.body;
 
     // Prevent duplicate emails
     const existing = await User.findOne({ email });
     if (existing) return sendError(res, 'Email is already registered', 409);
 
     // Force role to 'resident' for all public signups
-    const user = await User.create({ name, email, password, role: 'resident', barangay, location, phone });
+    const user = await User.create({ name, email, password, role: 'resident', barangay, location, phone, home_segment_id });
     tokenResponse(user, 201, res);
   } catch (err) {
     sendError(res, err.message, 500);
@@ -83,4 +84,19 @@ const updateMe = async (req, res) => {
   }
 };
 
-module.exports = { register, login, getMe, updateMe };
+// ── GET /api/auth/areas ───────────────────────────────────────────────────────
+// Public endpoint for signup dropdown (fetches active Route segments)
+const getPublicAreas = async (req, res) => {
+  try {
+    const areas = await Route.find({ isActive: true })
+      .select('_id barangay name')
+      .sort({ barangay: 1, name: 1 })
+      .lean();
+
+    sendSuccess(res, { count: areas.length, areas });
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
+module.exports = { register, login, getMe, updateMe, getPublicAreas };

@@ -1,8 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const { register, login, getMe, updateMe } = require('../controllers/auth.controller');
+const { register, login, getMe, updateMe, getPublicAreas } = require('../controllers/auth.controller');
 const { protect } = require('../middlewares/auth');
 const { registerRules, loginRules, validate } = require('../validators/auth.validator');
+
+// GET /api/auth/areas (public)
+router.get('/areas', getPublicAreas);
 
 // POST /api/auth/register
 router.post('/register', registerRules, validate, register);
