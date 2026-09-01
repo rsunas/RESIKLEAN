@@ -20,6 +20,14 @@ const userSchema = new mongoose.Schema(
     employeeId: { type: String, trim: true },
     contact:    { type: String, trim: true },
     shift:      { type: String, enum: ['day', 'night'], default: 'day' },
+    // Notifications
+    pushTokens: [{
+      token: { type: String, required: true },
+      platform: { type: String, enum: ['ios', 'android', 'web'] },
+      lastActive: { type: Date, default: Date.now },
+      isEnabled: { type: Boolean, default: true }
+    }],
+    notificationsEnabled: { type: Boolean, default: true },
   },
   { timestamps: true }
 );

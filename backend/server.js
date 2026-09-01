@@ -14,6 +14,10 @@ connectDB().then(() => {
   const httpServer = http.createServer(app);
   socket.init(httpServer);
 
+  // Start cron jobs
+  const notificationJob = require('./src/jobs/notification.job');
+  notificationJob.initJobs();
+
   httpServer.listen(PORT, () =>
     console.log(`🚀 Server running on http://localhost:${PORT}`)
   );

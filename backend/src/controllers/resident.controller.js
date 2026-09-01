@@ -1,3 +1,4 @@
+const User = require('../models/User');
 const MissedReport = require('../models/MissedReport');
 const Route        = require('../models/Route');
 const CollectionLocation = require('../models/CollectionLocation');
@@ -257,4 +258,48 @@ const getMyReports = async (req, res) => {
   }
 };
 
-module.exports = { getSchedule, submitReport, getMyReports };
+// ── POST /api/resident/push-token ─────────────────────────────────────────────
+// Registers or updates an Expo push token for the resident
+const registerPushToken = async (req, res) => {
+  try {
+    const { token, platform } = req.body;
+    if (!token) return sendError(res, 'Push token is required', 400);
+
+    const user = await User.findById(req.user._id);
+    if (!user) return sendError(res, 'User not found', 404);
+
+    // Check if token already exists
+    const existingToken = user.pushTokens.find(pt => pt.token === token);
+    
+    if (existingToken) {
+      existingToken.lastActive = Date.now();
+      existingToken.platform = platform || existingToken.platform;
+    } else {
+      user.pushTokens.push({ token, platform, lastActive: Date.now() });
+    }
+
+    await user.save();
+    sendSuccess(res, { message: 'Push token registered successfully' });
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
+// ── DELETE /api/resident/push-token ───────────────────────────────────────────
+// Removes a specific push token
+const removePushToken = async (req, res) => {
+  try {
+    const { token } = req.body;
+    if (!token) return sendError(res, 'Push token is required', 400);
+
+    await User.findByIdAndUpdate(req.user._id, {
+      $pull: { pushTokens: { token } }
+    });
+
+    sendSuccess(res, { message: 'Push token removed successfully' });
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
+module.exports = { getSchedule, submitReport, getMyReports, registerPushToken, removePushToken };
