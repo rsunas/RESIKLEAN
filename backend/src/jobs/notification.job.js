@@ -126,8 +126,8 @@ const sendRemindersForDate = async (targetDate, type) => {
 };
 
 const initJobs = () => {
-  // Night-before reminders: runs daily at 8:00 PM
-  cron.schedule('0 20 * * *', () => {
+  // Night-before reminders: runs daily at 7:00 PM
+  cron.schedule('0 19 * * *', () => {
     console.log('[Notification Job] Running night-before reminders...');
     const tomorrow = new Date();
     tomorrow.setDate(tomorrow.getDate() + 1);
@@ -136,8 +136,8 @@ const initJobs = () => {
     timezone: TIMEZONE
   });
 
-  // Collection-day reminders: runs daily at 6:00 AM
-  cron.schedule('0 6 * * *', () => {
+  // Collection-day reminders: runs daily at 5:00 AM
+  cron.schedule('0 5 * * *', () => {
     console.log('[Notification Job] Running collection-day reminders...');
     const today = new Date();
     sendRemindersForDate(today, 'collection-day');
@@ -145,7 +145,7 @@ const initJobs = () => {
     timezone: TIMEZONE
   });
 
-  console.log(`[Notification Job] Scheduled night-before (20:00) and collection-day (06:00) jobs in ${TIMEZONE}`);
+  console.log(`[Notification Job] Scheduled night-before (19:00) and collection-day (05:00) jobs in ${TIMEZONE}`);
 };
 
 module.exports = { initJobs };
