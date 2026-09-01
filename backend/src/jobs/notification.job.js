@@ -67,7 +67,9 @@ const sendRemindersForDate = async (targetDate, type) => {
             data: { 
               screen: 'schedule', 
               date: targetDate.toISOString(),
-              wasteType
+              wasteType,
+              location: route.name,
+              timeWindow: null // Routes currently don't specify timeWindows in the schema
             }
           });
         }
@@ -106,7 +108,9 @@ const sendRemindersForDate = async (targetDate, type) => {
             data: { 
               screen: 'schedule', 
               date: targetDate.toISOString(),
-              wasteType
+              wasteType,
+              location: loc.name,
+              timeWindow: schedule.timeWindows && schedule.timeWindows.length > 0 ? schedule.timeWindows[0] : null
             }
           });
         }
