@@ -1,6 +1,13 @@
-import Constants from 'expo-constants';
-import * as Device from 'expo-device';
-import * as Notifications from 'expo-notifications';
+// Use local-only modules directly. The package index initializes remote-push
+// listeners in Expo Go, which is unsupported on Android SDK 53+.
+import { AndroidImportance } from 'expo-notifications/build/NotificationChannelManager.types';
+import { getPermissionsAsync, requestPermissionsAsync } from 'expo-notifications/build/NotificationPermissions';
+import { SchedulableTriggerInputTypes } from 'expo-notifications/build/Notifications.types';
+import { setNotificationHandler } from 'expo-notifications/build/NotificationsHandler';
+import getAllScheduledNotificationsAsync from 'expo-notifications/build/getAllScheduledNotificationsAsync';
+import cancelScheduledNotificationAsync from 'expo-notifications/build/cancelScheduledNotificationAsync';
+import scheduleNotificationAsync from 'expo-notifications/build/scheduleNotificationAsync';
+import setNotificationChannelAsync from 'expo-notifications/build/setNotificationChannelAsync';
 import { Platform } from 'react-native';
 import type { UpcomingCollection } from '@/types/resident-schedule';
 
@@ -9,7 +16,7 @@ const COLLECTION_REMINDER_PREFIX = 'collection-reminder:';
 const COLLECTION_REMINDER_HOUR = 19;
 const COLLECTION_MORNING_REMINDER_HOUR = 5;
 
-Notifications.setNotificationHandler({
+setNotificationHandler({
   handleNotification: async () => ({
     shouldPlaySound: true,
     shouldSetBadge: true,
@@ -22,22 +29,22 @@ async function ensureNotificationPermissionsAsync(): Promise<boolean> {
   if (Platform.OS === 'web') return false;
 
   if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync(COLLECTION_NOTIFICATION_CHANNEL_ID, {
+    await setNotificationChannelAsync(COLLECTION_NOTIFICATION_CHANNEL_ID, {
       name: 'Collection reminders',
-      importance: Notifications.AndroidImportance.HIGH,
+      importance: AndroidImportance.HIGH,
       vibrationPattern: [0, 250, 250, 250],
       sound: 'default',
     });
   }
 
-  const permission = await Notifications.getPermissionsAsync();
-  let finalStatus = permission.status;
-  if (finalStatus !== Notifications.PermissionStatus.GRANTED) {
-    const requested = await Notifications.requestPermissionsAsync();
-    finalStatus = requested.status;
+  const permission = await getPermissionsAsync();
+  let granted = permission.granted;
+  if (!granted) {
+    const requested = await requestPermissionsAsync();
+    granted = requested.granted;
   }
 
-  return finalStatus === Notifications.PermissionStatus.GRANTED;
+  return granted;
 }
 
 function getLocalDateKey(value: string) {
@@ -60,13 +67,13 @@ function getWasteLabel(wasteType: UpcomingCollection['wasteType']) {
 export async function cancelScheduledCollectionReminders() {
   if (Platform.OS === 'web') return;
 
-  const scheduledNotifications = await Notifications.getAllScheduledNotificationsAsync();
+  const scheduledNotifications = await getAllScheduledNotificationsAsync();
   const collectionReminders = scheduledNotifications.filter((notification) => (
     notification.identifier.startsWith(COLLECTION_REMINDER_PREFIX)
   ));
 
   await Promise.all(collectionReminders.map((notification) => (
-    Notifications.cancelScheduledNotificationAsync(notification.identifier)
+    cancelScheduledNotificationAsync(notification.identifier)
   )));
 }
 
@@ -104,7 +111,7 @@ export async function scheduleCollectionReminders(collections: UpcomingCollectio
     for (const reminder of reminders) {
       if (reminder.date <= now) continue;
 
-      await Notifications.scheduleNotificationAsync({
+      await scheduleNotificationAsync({
         identifier: reminder.id,
         content: {
           title: reminder.title,
@@ -113,7 +120,7 @@ export async function scheduleCollectionReminders(collections: UpcomingCollectio
           data: { screen: 'schedule', date: collection.date, wasteType: collection.wasteType },
         },
         trigger: {
-          type: Notifications.SchedulableTriggerInputTypes.DATE,
+          type: SchedulableTriggerInputTypes.DATE,
           date: reminder.date,
           channelId: COLLECTION_NOTIFICATION_CHANNEL_ID,
         },
@@ -123,20 +130,4 @@ export async function scheduleCollectionReminders(collections: UpcomingCollectio
   }
 
   return scheduledCount;
-}
-
-export async function registerForPushNotificationsAsync(): Promise<string | null> {
-  if (!Device.isDevice) return null;
-
-  if (!(await ensureNotificationPermissionsAsync())) return null;
-
-  const projectId = process.env.EXPO_PUBLIC_EAS_PROJECT_ID
-    || Constants.expoConfig?.extra?.eas?.projectId
-    || Constants.easConfig?.projectId;
-  if (!projectId) {
-    throw new Error('EAS projectId is not configured. Run eas init before registering push notifications.');
-  }
-
-  const token = await Notifications.getExpoPushTokenAsync({ projectId });
-  return token.data;
 }
