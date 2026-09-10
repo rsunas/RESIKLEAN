@@ -26,14 +26,15 @@ const getAssignedRoute = async (req, res) => {
 };
 
 // ── PATCH /api/collector/route/logs/:stopId ───────────────────────────────────
-// Collector marks a stop as collected (or skipped).
-// Body: { latitude, longitude, collectedAt, status }
-// This is called when the mobile app detects a geofence entry,
+// Collector marks a stop as collected.
+// Body: { latitude, longitude, collectedAt }
+// Status is always set to 'collected' server-side — client cannot override it.
+// This is called when the mobile app detects a geofence exit event,
 // even if it was recorded offline and synced later.
 const markStop = async (req, res) => {
   try {
     const { stopId } = req.params;
-    const { latitude, longitude, collectedAt, status = 'collected' } = req.body;
+    const { latitude, longitude, collectedAt } = req.body;
 
     // Look up the collector's active route
     const route = await Route.findOne({
@@ -67,7 +68,7 @@ const markStop = async (req, res) => {
       collectedAt: collectedAt ? new Date(collectedAt) : new Date(),
       latitude,
       longitude,
-      status,
+      status: 'collected', // Always auto-set; client cannot override
     });
 
     sendSuccess(res, log, 201);
@@ -99,13 +100,11 @@ const getTodayProgress = async (req, res) => {
     const totalStops   = route.stops.length;
     const completedIds = new Set(logs.map((l) => l.stopId.toString()));
     const completed    = logs.filter((l) => l.status === 'collected').length;
-    const skipped      = logs.filter((l) => l.status === 'skipped').length;
 
     sendSuccess(res, {
       routeName: route.name,
       totalStops,
       completed,
-      skipped,
       remaining: totalStops - completedIds.size,
       complianceRate: totalStops
         ? `${((completed / totalStops) * 100).toFixed(1)}%`

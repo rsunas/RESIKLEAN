@@ -143,7 +143,6 @@ const getComplianceReport = async (req, res) => {
 
         const totalStops = route.stops.length;
         const collected = logs.filter((l) => l.status === 'collected').length;
-        const skipped = logs.filter((l) => l.status === 'skipped').length;
 
         return {
           routeId: route._id,
@@ -152,7 +151,6 @@ const getComplianceReport = async (req, res) => {
           collector: route.collectorId?.name || 'Unassigned',
           totalStops,
           collected,
-          skipped,
           remaining: totalStops - logs.length,
           complianceRate: totalStops
             ? `${((collected / totalStops) * 100).toFixed(1)}%`

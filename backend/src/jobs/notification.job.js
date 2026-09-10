@@ -21,9 +21,9 @@ const sendRemindersForDate = async (targetDate, type) => {
     const dayOfWeekNum = DAY_NAMES.indexOf(dayOfWeekStr); // 0 = Sunday, 1 = Monday, etc.
 
     // 1. Find legacy routes scheduled for this day
-    const scheduledRoutes = await Route.find({ 
-      isActive: true, 
-      schedule: dayOfWeekNum 
+    const scheduledRoutes = await Route.find({
+      isActive: true,
+      schedule: dayOfWeekNum
     }).lean();
 
     // 2. Find new CollectionLocations scheduled for this day
@@ -53,7 +53,7 @@ const sendRemindersForDate = async (targetDate, type) => {
         if (notifiedUserIds.has(user._id.toString())) continue;
         notifiedUserIds.add(user._id.toString());
 
-        const messageBody = type === 'night-before' 
+        const messageBody = type === 'night-before'
           ? `Reminder: Tomorrow is collection day for ${wasteType} waste in ${route.name}.`
           : `Today is collection day for ${wasteType} waste in ${route.name}. Please bring out your trash.`;
 
@@ -64,8 +64,8 @@ const sendRemindersForDate = async (targetDate, type) => {
             sound: 'default',
             title: 'Resiklean Collection Reminder',
             body: messageBody,
-            data: { 
-              screen: 'schedule', 
+            data: {
+              screen: 'schedule',
               date: targetDate.toISOString(),
               wasteType,
               location: route.name,
@@ -94,7 +94,7 @@ const sendRemindersForDate = async (targetDate, type) => {
         if (notifiedUserIds.has(user._id.toString())) continue;
         notifiedUserIds.add(user._id.toString());
 
-        const messageBody = type === 'night-before' 
+        const messageBody = type === 'night-before'
           ? `Reminder: Tomorrow is collection day for ${wasteType} waste in ${loc.name}.`
           : `Today is collection day for ${wasteType} waste in ${loc.name}. Please bring out your trash.`;
 
@@ -105,8 +105,8 @@ const sendRemindersForDate = async (targetDate, type) => {
             sound: 'default',
             title: 'Resiklean Collection Reminder',
             body: messageBody,
-            data: { 
-              screen: 'schedule', 
+            data: {
+              screen: 'schedule',
               date: targetDate.toISOString(),
               wasteType,
               location: loc.name,

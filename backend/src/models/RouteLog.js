@@ -12,7 +12,7 @@ const routeLogSchema = new mongoose.Schema(
     collectedAt: { type: Date, required: true },   // timestamp from device (may differ from createdAt)
     latitude:    { type: Number },
     longitude:   { type: Number },
-    status:      { type: String, enum: ['collected', 'skipped'], default: 'collected' },
+    status:      { type: String, enum: ['collected'], default: 'collected' },  // Auto-set by server; no manual override
   },
   { timestamps: true }
 );
