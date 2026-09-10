@@ -4,7 +4,8 @@ const { sendSuccess, sendError } = require('../utils/response');
 
 // ── GET /api/collector/route ──────────────────────────────────────────────────
 // Returns the route assigned to the logged-in collector,
-// including all stops ordered by sequence.
+// but ONLY if the route is scheduled for today.
+// Stops are returned ordered by sequence.
 const getAssignedRoute = async (req, res) => {
   try {
     const route = await Route.findOne({
@@ -15,6 +16,22 @@ const getAssignedRoute = async (req, res) => {
       .lean();
 
     if (!route) return sendError(res, 'No active route assigned to you', 404);
+
+    // Check if today is a scheduled collection day for this route
+    // Route.schedule stores day-of-week numbers: 0=Sun, 1=Mon, …, 6=Sat
+    const now = new Date();
+    // Convert to Manila timezone to get the correct local day
+    const manilaDay = new Intl.DateTimeFormat('en-US', {
+      weekday: 'short',
+      timeZone: 'Asia/Manila',
+    }).format(now);
+
+    const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+    const todayNum = dayMap[manilaDay];
+
+    if (!route.schedule.includes(todayNum)) {
+      return sendError(res, 'Your route is not scheduled for today', 404);
+    }
 
     // Sort stops by order field
     route.stops.sort((a, b) => a.order - b.order);
