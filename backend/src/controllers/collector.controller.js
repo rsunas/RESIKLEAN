@@ -43,15 +43,17 @@ const getAssignedRoute = async (req, res) => {
 };
 
 // ── PATCH /api/collector/route/logs/:stopId ───────────────────────────────────
-// Collector marks a stop as collected.
-// Body: { latitude, longitude, collectedAt }
-// Status is always set to 'collected' server-side — client cannot override it.
-// This is called when the mobile app detects a geofence exit event,
-// even if it was recorded offline and synced later.
+// Records a complete stop collection on geofence EXIT.
+// Body: { latitude, longitude, collectedAt, exitedAt }
+// collectedAt = geofence entry time, exitedAt = geofence exit time.
+// dwellSeconds is computed server-side (not trusted from device).
+// flaggedForReview is auto-set if dwellSeconds < 30 (SWMO threshold).
 const markStop = async (req, res) => {
   try {
     const { stopId } = req.params;
-    const { latitude, longitude, collectedAt } = req.body;
+    const { latitude, longitude, collectedAt, exitedAt } = req.body;
+
+    if (!exitedAt) return sendError(res, 'exitedAt is required (geofence exit timestamp)', 400);
 
     // Look up the collector's active route
     const route = await Route.findOne({
@@ -78,14 +80,25 @@ const markStop = async (req, res) => {
     });
     if (existing) return sendError(res, 'Stop already logged today', 409);
 
+    // Compute dwell time server-side (seconds between entry and exit)
+    const entryTime = collectedAt ? new Date(collectedAt) : new Date();
+    const exitTime = new Date(exitedAt);
+    const dwellSeconds = Math.max(0, Math.round((exitTime - entryTime) / 1000));
+
+    // Flag for review if dwell time is below SWMO threshold (30 seconds)
+    const flaggedForReview = dwellSeconds < RouteLog.DWELL_THRESHOLD_SECONDS;
+
     const log = await RouteLog.create({
       routeId: route._id,
       collectorId: req.user._id,
       stopId,
-      collectedAt: collectedAt ? new Date(collectedAt) : new Date(),
+      collectedAt: entryTime,
+      exitedAt: exitTime,
+      dwellSeconds,
       latitude,
       longitude,
       status: 'collected', // Always auto-set; client cannot override
+      flaggedForReview,
     });
 
     sendSuccess(res, log, 201);
