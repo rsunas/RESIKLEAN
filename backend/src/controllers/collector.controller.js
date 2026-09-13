@@ -1,4 +1,4 @@
-const Route    = require('../models/Route');
+const Route = require('../models/Route');
 const RouteLog = require('../models/RouteLog');
 const { sendSuccess, sendError } = require('../utils/response');
 
@@ -73,20 +73,6 @@ const markStop = async (req, res) => {
     const stopExists = route.stops.some((s) => s._id.toString() === stopId);
     if (!stopExists) return sendError(res, 'Stop does not belong to your route', 404);
 
-    // Prevent duplicate logs for the same stop on the same calendar day
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
-    const endOfDay = new Date();
-    endOfDay.setHours(23, 59, 59, 999);
-
-    const existing = await RouteLog.findOne({
-      routeId: route._id,
-      collectorId: req.user._id,
-      stopId,
-      createdAt: { $gte: startOfDay, $lte: endOfDay },
-    });
-    if (existing) return sendError(res, 'Stop already logged today', 409);
-
     // Compute dwell time server-side (seconds between entry and exit)
     const entryTime = collectedAt ? new Date(collectedAt) : new Date();
     const exitTime = new Date(exitedAt);
@@ -95,11 +81,19 @@ const markStop = async (req, res) => {
     // Flag for review if dwell time is below SWMO threshold (30 seconds)
     const flaggedForReview = dwellSeconds < RouteLog.DWELL_THRESHOLD_SECONDS;
 
+    // Derive eventDate from collectedAt in Manila timezone (YYYY-MM-DD).
+    // The compound unique index (stopId + collectorId + eventDate) enforces
+    // one-log-per-stop-per-day at the database level — no race condition possible.
+    const eventDate = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+    }).format(entryTime); // en-CA gives YYYY-MM-DD format
+
     const log = await RouteLog.create({
       clientId: clientId || undefined,
       routeId: route._id,
       collectorId: req.user._id,
       stopId,
+      eventDate,
       collectedAt: entryTime,
       exitedAt: exitTime,
       dwellSeconds,
@@ -111,6 +105,10 @@ const markStop = async (req, res) => {
 
     sendSuccess(res, log, 201);
   } catch (err) {
+    // Compound unique index violation — stop already logged today
+    if (err.code === 11000 && err.message.includes('eventDate')) {
+      return sendError(res, 'Stop already logged today', 409);
+    }
     sendError(res, err.message, 500);
   }
 };
@@ -149,7 +147,7 @@ const batchSyncLogs = async (req, res) => {
     const existingSet = new Set(existingLogs.map((l) => l.clientId));
 
     const inserted = [];
-    const skipped  = [];
+    const skipped = [];
 
     for (const record of logs) {
       const { clientId, stopId, collectedAt, exitedAt, latitude, longitude } = record;
@@ -180,9 +178,14 @@ const batchSyncLogs = async (req, res) => {
 
       // Compute dwell time server-side
       const entryTime = collectedAt ? new Date(collectedAt) : new Date();
-      const exitTime  = new Date(exitedAt);
+      const exitTime = new Date(exitedAt);
       const dwellSeconds = Math.max(0, Math.round((exitTime - entryTime) / 1000));
       const flaggedForReview = dwellSeconds < RouteLog.DWELL_THRESHOLD_SECONDS;
+
+      // Derive eventDate from collectedAt in Manila timezone (YYYY-MM-DD)
+      const eventDate = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Manila',
+      }).format(entryTime);
 
       try {
         const log = await RouteLog.create({
@@ -190,6 +193,7 @@ const batchSyncLogs = async (req, res) => {
           routeId: route._id,
           collectorId: req.user._id,
           stopId,
+          eventDate,
           collectedAt: entryTime,
           exitedAt: exitTime,
           dwellSeconds,
@@ -238,18 +242,20 @@ const getTodayProgress = async (req, res) => {
 
     if (!route) return sendError(res, 'No active route assigned to you', 404);
 
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
+    // Use eventDate (Manila TZ) for consistent day filtering
+    const todayDate = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+    }).format(new Date()); // YYYY-MM-DD
 
     const logs = await RouteLog.find({
       routeId: route._id,
       collectorId: req.user._id,
-      createdAt: { $gte: startOfDay },
+      eventDate: todayDate,
     }).lean();
 
-    const totalStops   = route.stops.length;
+    const totalStops = route.stops.length;
     const completedIds = new Set(logs.map((l) => l.stopId.toString()));
-    const completed    = logs.filter((l) => l.status === 'collected').length;
+    const completed = logs.filter((l) => l.status === 'collected').length;
 
     sendSuccess(res, {
       routeName: route.name,

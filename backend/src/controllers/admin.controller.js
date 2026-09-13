@@ -125,9 +125,13 @@ const assignCollector = async (req, res) => {
 const getComplianceReport = async (req, res) => {
   try {
     const dateParam = req.query.date ? new Date(req.query.date) : new Date();
-    const startOfDay = new Date(dateParam.setHours(0, 0, 0, 0));
-    const endOfDay = new Date(dateParam.setHours(23, 59, 59, 999));
-    const dayOfWeek = startOfDay.getDay();
+
+    // Derive eventDate string (YYYY-MM-DD) in Manila timezone
+    const eventDate = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Manila',
+    }).format(dateParam);
+
+    const dayOfWeek = dateParam.getDay();
 
     // Only routes scheduled to run on this day
     const routes = await Route.find({ schedule: dayOfWeek, isActive: true })
@@ -138,7 +142,7 @@ const getComplianceReport = async (req, res) => {
       routes.map(async (route) => {
         const logs = await RouteLog.find({
           routeId: route._id,
-          createdAt: { $gte: startOfDay, $lte: endOfDay },
+          eventDate,
         }).lean();
 
         const totalStops = route.stops.length;
@@ -159,7 +163,7 @@ const getComplianceReport = async (req, res) => {
       })
     );
 
-    sendSuccess(res, { date: startOfDay.toISOString().split('T')[0], report });
+    sendSuccess(res, { date: eventDate, report });
   } catch (err) {
     sendError(res, err.message, 500);
   }
