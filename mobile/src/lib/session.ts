@@ -11,6 +11,9 @@ export type AccountUser = {
   role?: 'resident' | 'collector' | 'staff' | 'admin';
   barangay?: string;
   location?: string;
+  employeeId?: string;
+  contact?: string;
+  shift?: 'day' | 'night';
 };
 
 export type AuthSession = {

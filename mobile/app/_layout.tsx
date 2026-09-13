@@ -6,6 +6,7 @@ import { HeroUINativeProvider } from 'heroui-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useEffect } from 'react';
 import '@/lib/notifications';
+import '@/lib/driver-geofencing';
 
 function NotificationObserver() {
   const router = useRouter();

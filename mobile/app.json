@@ -11,6 +11,7 @@
       "icon": "./assets/expo.icon"
     },
     "android": {
+      "package": "com.resiklean.mobile",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -53,11 +54,37 @@
           "color": "#07815f"
         }
       ],
-      "expo-secure-store"
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow ResiKlean to access your location while you collect your assigned route.",
+          "locationAlwaysAndWhenInUsePermission": "Allow ResiKlean to monitor assigned collection stops while the app is in the background.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": false,
+          "isIosBackgroundLocationEnabled": true
+        }
+      ],
+      "expo-secure-store",
+      [
+        "@rnmapbox/maps",
+        {
+          "RNMapboxMapsVersion": "11.20.1"
+        }
+      ],
+      "expo-sqlite"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "router": {
+        "root": "app"
+      },
+      "eas": {
+        "projectId": "6ac54ae2-ba95-4657-8a63-93a42f42a78a"
+      }
+    },
+    "owner": "rsunas"
   }
 }
