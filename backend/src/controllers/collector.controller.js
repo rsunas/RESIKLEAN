@@ -272,5 +272,44 @@ const getTodayProgress = async (req, res) => {
   }
 };
 
-module.exports = { getAssignedRoute, markStop, batchSyncLogs, getTodayProgress };
+// ── GET /api/collector/route-history ──────────────────────────────────────────
+// DFD Process 4.0: Returns Route History to the Collector.
+// Returns the logged-in Driver's own past RouteLog entries.
+// Mirrors the pattern used by Staff's GET /api/staff/truckloads.
+// Supports ?from=YYYY-MM-DD&to=YYYY-MM-DD date range filter.
+const getRouteHistory = async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const filter = { collectorId: req.user._id };
 
+    // Filter by eventDate range (Manila-TZ YYYY-MM-DD strings)
+    if (from || to) {
+      filter.eventDate = {};
+      if (from) filter.eventDate.$gte = from;  // e.g. '2026-09-01'
+      if (to) filter.eventDate.$lte = to;      // e.g. '2026-09-18'
+    }
+
+    const logs = await RouteLog.find(filter)
+      .populate('routeId', 'name barangay')
+      .sort({ collectedAt: -1 })
+      .lean();
+
+    // Summary totals
+    const totalStops = logs.length;
+    const flaggedCount = logs.filter((l) => l.flaggedForReview).length;
+    const avgDwell = totalStops
+      ? +(logs.reduce((sum, l) => sum + (l.dwellSeconds || 0), 0) / totalStops).toFixed(1)
+      : 0;
+
+    sendSuccess(res, {
+      count: totalStops,
+      flaggedCount,
+      avgDwellSeconds: avgDwell,
+      logs,
+    });
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
+module.exports = { getAssignedRoute, markStop, batchSyncLogs, getTodayProgress, getRouteHistory };
