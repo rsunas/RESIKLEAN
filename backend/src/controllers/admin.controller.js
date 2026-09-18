@@ -81,13 +81,13 @@ const getAllRoutes = async (req, res) => {
 // Body: { name, barangay, schedule: [0-6], stops: [{ name, latitude, longitude, order }], collectorId? }
 const createRoute = async (req, res) => {
   try {
-    const { name, barangay, schedule, stops, collectorId } = req.body;
+    const { name, barangay, schedule, stops, collectorId, areaBoundary } = req.body;
 
     if (!name || !barangay || !schedule || !stops) {
       return sendError(res, 'name, barangay, schedule, and stops are required', 400);
     }
 
-    const route = await Route.create({ name, barangay, schedule, stops, collectorId });
+    const route = await Route.create({ name, barangay, schedule, stops, collectorId, areaBoundary });
     sendSuccess(res, route, 201);
   } catch (err) {
     sendError(res, err.message, 500);
