@@ -119,6 +119,37 @@ const assignCollector = async (req, res) => {
   }
 };
 
+// ── PATCH /api/admin/routes/:routeId ──────────────────────────────────────────
+// Updates an existing route's details (schedule, name, barangay, stops, etc.)
+// Body: any combination of { name, barangay, schedule, stops, routePath, isActive }
+const updateRoute = async (req, res) => {
+  try {
+    const { routeId } = req.params;
+
+    // Only allow these fields to be updated
+    const allowedFields = ['name', 'barangay', 'schedule', 'stops', 'routePath', 'isActive'];
+    const updates = {};
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return sendError(res, 'No valid fields provided to update', 400);
+    }
+
+    const route = await Route.findByIdAndUpdate(routeId, updates, { new: true })
+      .populate('collectorId', 'name email');
+
+    if (!route) return sendError(res, 'Route not found', 404);
+
+    sendSuccess(res, route);
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
 // ── GET /api/admin/compliance ─────────────────────────────────────────────────
 // Returns a compliance summary per route for a given date.
 // Query: ?date=YYYY-MM-DD (defaults to today)
@@ -343,6 +374,7 @@ module.exports = {
   createUser,
   getAllRoutes,
   createRoute,
+  updateRoute,
   assignCollector,
   getComplianceReport,
   getAllReports,

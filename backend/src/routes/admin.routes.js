@@ -7,6 +7,7 @@ const {
   createUser,
   getAllRoutes,
   createRoute,
+  updateRoute,
   assignCollector,
   getComplianceReport,
   getAllReports,
@@ -26,6 +27,7 @@ router.post('/users', createUser);
 // Routes
 router.get('/routes', getAllRoutes);
 router.post('/routes', createRoute);
+router.patch('/routes/:routeId', updateRoute);
 router.patch('/routes/:routeId/assign', assignCollector);
 
 // Compliance
