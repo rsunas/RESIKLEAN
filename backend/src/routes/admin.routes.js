@@ -14,6 +14,8 @@ const {
   updateReportStatus,
   getTonnageSummary,
   createTruck,
+  updateTruck,
+  archiveTruck,
   createCycleLog,
   getCycleLogs,
 } = require('../controllers/admin.controller');
@@ -42,6 +44,8 @@ router.get('/tonnage', getTonnageSummary);
 
 // Trucks
 router.post('/trucks', createTruck);
+router.patch('/trucks/:truckId', updateTruck);
+router.delete('/trucks/:truckId', archiveTruck);
 
 // Cycle Logs (driver-truck-shift mapping)
 router.post('/cycle-logs', createCycleLog);

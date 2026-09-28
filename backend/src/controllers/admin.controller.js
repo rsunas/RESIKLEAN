@@ -287,20 +287,31 @@ const getTonnageSummary = async (req, res) => {
 
 // ── POST /api/admin/trucks ────────────────────────────────────────────────────
 // Registers a new truck in the fleet.
-// Body: { plateNumber, length, width, height }
+// Body: { plateNumber, truckNumber, truckColor, capacityKg, length, width, height }
 const createTruck = async (req, res) => {
   try {
-    const { plateNumber, length, width, height } = req.body;
+    const { plateNumber, truckNumber, truckColor, capacityKg, length, width, height } = req.body;
 
-    if (!plateNumber || length == null || width == null || height == null) {
-      return sendError(res, 'plateNumber, length, width, and height are required', 400);
+    if (!plateNumber || !truckNumber || !truckColor || capacityKg == null || length == null || width == null || height == null) {
+      return sendError(res, 'plateNumber, truckNumber, truckColor, capacityKg, length, width, and height are required', 400);
     }
 
-    const existing = await Truck.findOne({ plateNumber: plateNumber.toUpperCase() });
-    if (existing) return sendError(res, 'A truck with this plate number already exists', 409);
+    if (capacityKg <= 0 || length <= 0 || width <= 0 || height <= 0) {
+      return sendError(res, 'Capacity and dimensions must be positive numbers', 400);
+    }
+
+    // Check uniqueness of plateNumber and truckNumber
+    const existingPlate = await Truck.findOne({ plateNumber: plateNumber.toUpperCase() });
+    if (existingPlate) return sendError(res, 'A truck with this plate number already exists', 409);
+
+    const existingNumber = await Truck.findOne({ truckNumber });
+    if (existingNumber) return sendError(res, 'A truck with this truck number already exists', 409);
 
     const truck = await Truck.create({
       plateNumber,
+      truckNumber,
+      truckColor,
+      capacityKg,
       length,
       width,
       height,
@@ -308,6 +319,71 @@ const createTruck = async (req, res) => {
     });
 
     sendSuccess(res, truck, 201);
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
+// ── PATCH /api/admin/trucks/:truckId ──────────────────────────────────────────
+// Edit all truck details.
+// Body: any combination of { plateNumber, truckNumber, truckColor, capacityKg, length, width, height }
+const updateTruck = async (req, res) => {
+  try {
+    const { truckId } = req.params;
+    const allowedFields = ['plateNumber', 'truckNumber', 'truckColor', 'capacityKg', 'length', 'width', 'height'];
+    const updates = {};
+
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return sendError(res, 'No valid fields provided to update', 400);
+    }
+
+    // Validate positive numbers if provided
+    for (const numField of ['capacityKg', 'length', 'width', 'height']) {
+      if (updates[numField] !== undefined && updates[numField] <= 0) {
+        return sendError(res, `${numField} must be a positive number`, 400);
+      }
+    }
+
+    // Check uniqueness if plateNumber or truckNumber is being changed
+    if (updates.plateNumber) {
+      const dup = await Truck.findOne({ plateNumber: updates.plateNumber.toUpperCase(), _id: { $ne: truckId } });
+      if (dup) return sendError(res, 'A truck with this plate number already exists', 409);
+    }
+    if (updates.truckNumber) {
+      const dup = await Truck.findOne({ truckNumber: updates.truckNumber, _id: { $ne: truckId } });
+      if (dup) return sendError(res, 'A truck with this truck number already exists', 409);
+    }
+
+    const truck = await Truck.findByIdAndUpdate(truckId, updates, { new: true, runValidators: true });
+    if (!truck) return sendError(res, 'Truck not found', 404);
+
+    sendSuccess(res, truck);
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
+// ── DELETE /api/admin/trucks/:truckId ─────────────────────────────────────────
+// Soft-delete: sets isActive to false and records removedAt timestamp.
+const archiveTruck = async (req, res) => {
+  try {
+    const { truckId } = req.params;
+
+    const truck = await Truck.findByIdAndUpdate(
+      truckId,
+      { isActive: false, removedAt: new Date() },
+      { new: true }
+    );
+
+    if (!truck) return sendError(res, 'Truck not found', 404);
+
+    sendSuccess(res, truck);
   } catch (err) {
     sendError(res, err.message, 500);
   }
@@ -381,6 +457,8 @@ module.exports = {
   updateReportStatus,
   getTonnageSummary,
   createTruck,
+  updateTruck,
+  archiveTruck,
   createCycleLog,
   getCycleLogs,
 };

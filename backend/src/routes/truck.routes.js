@@ -12,7 +12,7 @@ router.use(protect, authorize('staff', 'admin'));
 // Returns all registered trucks (for the Staff volumetric-input dropdown).
 router.get('/', async (req, res) => {
   try {
-    const trucks = await Truck.find()
+    const trucks = await Truck.find({ isActive: true })
       .sort({ plateNumber: 1 })
       .lean();
 
