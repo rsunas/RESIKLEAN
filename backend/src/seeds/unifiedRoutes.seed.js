@@ -39,7 +39,7 @@ const ROUTE_DEFINITIONS = [
     name: 'Area 1 Collection Route',
     barangay: ['Centro', 'Triangulo', 'San Francisco'],
     schedule: [0, 1, 2, 3, 4, 5, 6], // Daily (Sun-Sat)
-    geojsonFile: null, // Not yet traced
+    geojsonFile: 'Area 1 GeoJSON.geojson',
     stops: [
       // Will be populated when Area 1 is traced
     ],
@@ -50,7 +50,7 @@ const ROUTE_DEFINITIONS = [
     name: 'Area 2A Collection Route',
     barangay: ['Bagumbayan Sur', 'Bagumbayan Norte', 'Calauag', 'Liboton'],
     schedule: [0, 1, 2, 3, 4, 5, 6], // Daily (Sun-Sat)
-    geojsonFile: null, // Not yet traced
+    geojsonFile: 'Area 2A GeoJSON.geojson',
     stops: [],
   },
 
@@ -59,7 +59,7 @@ const ROUTE_DEFINITIONS = [
     name: 'Area 2B Collection Route',
     barangay: ['Bagumbayan Sur', 'Bagumbayan Norte', 'Calauag', 'Liboton'],
     schedule: [0, 1, 2, 3, 4, 5, 6], // Daily (Sun-Sat)
-    geojsonFile: null, // Not yet traced
+    geojsonFile: 'Area 2B GeoJSON.geojson',
     stops: [],
   },
 
@@ -84,7 +84,7 @@ const ROUTE_DEFINITIONS = [
     name: 'Area 4 Collection Route',
     barangay: ['Dayangdang', 'Tinago'],
     schedule: [0, 1, 2, 3, 4, 5, 6], // Daily (Sun-Sat)
-    geojsonFile: null, // Not yet traced
+    geojsonFile: 'Area 4 GeoJSON.geojson',
     stops: [],
   },
 
@@ -134,7 +134,7 @@ const ROUTE_DEFINITIONS = [
     name: 'Area 8 Collection Route',
     barangay: ['Panicuason', 'Carolina', 'Pacol', 'San Isidro'],
     schedule: [0, 1, 2, 3, 4, 5, 6], // Daily (Sun-Sat)
-    geojsonFile: null, // Not yet traced
+    geojsonFile: 'Area 8 GeoJSON.geojson',
     stops: [],
   },
 
@@ -143,7 +143,7 @@ const ROUTE_DEFINITIONS = [
     name: 'Area 9 Collection Route',
     barangay: ['Balatas', 'Cararayan'],
     schedule: [0, 1, 2, 3, 4, 5, 6], // Daily (Sun-Sat)
-    geojsonFile: null, // Not yet traced
+    geojsonFile: 'Area 9 GeoJSON.geojson',
     stops: [],
   },
 
@@ -164,7 +164,7 @@ const ROUTE_DEFINITIONS = [
     name: 'Area 11 Collection Route',
     barangay: ['C.C.A.T. - South'],
     schedule: [0, 1, 2, 3, 4, 5, 6], // Daily (Sun-Sat)
-    geojsonFile: null, // Not yet traced
+    geojsonFile: 'Area 11 GeoJSON.geojson',
     stops: [],
   },
 
@@ -173,7 +173,7 @@ const ROUTE_DEFINITIONS = [
     name: 'Area 12 Collection Route',
     barangay: ['Naga City Subdivision', 'Sabella', 'Northfield', 'Villa Obiedo'],
     schedule: [0, 1, 2, 3, 4, 5, 6], // Daily (Sun-Sat)
-    geojsonFile: null, // Not yet traced
+    geojsonFile: 'Area 12 GeoJSON.geojson',
     stops: [],
   },
 
