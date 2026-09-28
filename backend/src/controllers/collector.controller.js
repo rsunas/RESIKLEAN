@@ -12,7 +12,7 @@ const getAssignedRoute = async (req, res) => {
       collectorId: req.user._id,
       isActive: true,
     })
-      .select('name barangay schedule stops')
+      .select('name barangay schedule stops routePath')
       .lean();
 
     if (!route) return sendError(res, 'No active route assigned to you', 404);
