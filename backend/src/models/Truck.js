@@ -4,6 +4,9 @@ const mongoose = require('mongoose');
  * Truck — fleet registry for the sanitary landfill.
  * Admin creates trucks; Staff selects from this list
  * when logging a TruckLoad (volumetric input).
+ *
+ * Dimensions are stored in METERS.
+ * Capacity (cubic meters) is computed automatically as length × width × height.
  */
 const truckSchema = new mongoose.Schema(
   {
@@ -20,19 +23,32 @@ const truckSchema = new mongoose.Schema(
       unique: true,
       trim: true,
     },
-    truckColor: {
+    color: {
       type: String,
-      required: [true, 'Truck color is required'],
+      required: [true, 'Color is required'],
       trim: true,
     },
-    capacityKg: {
+    // Dimensions in meters
+    length: {
       type: Number,
-      required: [true, 'Capacity (kg) is required'],
-      min: [0.01, 'Capacity must be a positive number'],
+      required: [true, 'Length (m) is required'],
+      min: [0.01, 'Length must be a positive number'],
     },
-    length: { type: Number, required: [true, 'Length is required'], min: [0.01, 'Length must be positive'] },
-    width:  { type: Number, required: [true, 'Width is required'],  min: [0.01, 'Width must be positive'] },
-    height: { type: Number, required: [true, 'Height is required'], min: [0.01, 'Height must be positive'] },
+    width: {
+      type: Number,
+      required: [true, 'Width (m) is required'],
+      min: [0.01, 'Width must be a positive number'],
+    },
+    height: {
+      type: Number,
+      required: [true, 'Height (m) is required'],
+      min: [0.01, 'Height must be a positive number'],
+    },
+    availability: {
+      type: String,
+      enum: ['available', 'unavailable'],
+      default: 'available',
+    },
     isActive: { type: Boolean, default: true },
     removedAt: { type: Date, default: null },
     registeredBy: {
@@ -41,7 +57,22 @@ const truckSchema = new mongoose.Schema(
       required: true,
     },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
+  }
 );
+
+/**
+ * Virtual: capacity (cu.m.) — read-only, computed from dimensions.
+ * Returned with two decimal places.
+ */
+truckSchema.virtual('capacity').get(function () {
+  if (this.length != null && this.width != null && this.height != null) {
+    return +(this.length * this.width * this.height).toFixed(2);
+  }
+  return null;
+});
 
 module.exports = mongoose.model('Truck', truckSchema);

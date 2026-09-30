@@ -287,17 +287,22 @@ const getTonnageSummary = async (req, res) => {
 
 // ── POST /api/admin/trucks ────────────────────────────────────────────────────
 // Registers a new truck in the fleet.
-// Body: { plateNumber, truckNumber, truckColor, capacityKg, length, width, height }
+// Body: { plateNumber, truckNumber, color, length, width, height, availability? }
+// Capacity (cu.m.) is auto-computed from length × width × height.
 const createTruck = async (req, res) => {
   try {
-    const { plateNumber, truckNumber, truckColor, capacityKg, length, width, height } = req.body;
+    const { plateNumber, truckNumber, color, length, width, height, availability } = req.body;
 
-    if (!plateNumber || !truckNumber || !truckColor || capacityKg == null || length == null || width == null || height == null) {
-      return sendError(res, 'plateNumber, truckNumber, truckColor, capacityKg, length, width, and height are required', 400);
+    if (!plateNumber || !truckNumber || !color || length == null || width == null || height == null) {
+      return sendError(res, 'plateNumber, truckNumber, color, length, width, and height are required', 400);
     }
 
-    if (capacityKg <= 0 || length <= 0 || width <= 0 || height <= 0) {
-      return sendError(res, 'Capacity and dimensions must be positive numbers', 400);
+    if (length <= 0 || width <= 0 || height <= 0) {
+      return sendError(res, 'All dimensions must be positive numbers', 400);
+    }
+
+    if (availability && !['available', 'unavailable'].includes(availability)) {
+      return sendError(res, 'availability must be either "available" or "unavailable"', 400);
     }
 
     // Check uniqueness of plateNumber and truckNumber
@@ -310,11 +315,11 @@ const createTruck = async (req, res) => {
     const truck = await Truck.create({
       plateNumber,
       truckNumber,
-      truckColor,
-      capacityKg,
+      color,
       length,
       width,
       height,
+      availability: availability || 'available',
       registeredBy: req.user._id,
     });
 
@@ -325,12 +330,12 @@ const createTruck = async (req, res) => {
 };
 
 // ── PATCH /api/admin/trucks/:truckId ──────────────────────────────────────────
-// Edit all truck details.
-// Body: any combination of { plateNumber, truckNumber, truckColor, capacityKg, length, width, height }
+// Edit truck details. Capacity is recalculated automatically from dimensions.
+// Body: any combination of { plateNumber, truckNumber, color, length, width, height, availability }
 const updateTruck = async (req, res) => {
   try {
     const { truckId } = req.params;
-    const allowedFields = ['plateNumber', 'truckNumber', 'truckColor', 'capacityKg', 'length', 'width', 'height'];
+    const allowedFields = ['plateNumber', 'truckNumber', 'color', 'length', 'width', 'height', 'availability'];
     const updates = {};
 
     for (const field of allowedFields) {
@@ -344,10 +349,15 @@ const updateTruck = async (req, res) => {
     }
 
     // Validate positive numbers if provided
-    for (const numField of ['capacityKg', 'length', 'width', 'height']) {
+    for (const numField of ['length', 'width', 'height']) {
       if (updates[numField] !== undefined && updates[numField] <= 0) {
         return sendError(res, `${numField} must be a positive number`, 400);
       }
+    }
+
+    // Validate availability if provided
+    if (updates.availability && !['available', 'unavailable'].includes(updates.availability)) {
+      return sendError(res, 'availability must be either "available" or "unavailable"', 400);
     }
 
     // Check uniqueness if plateNumber or truckNumber is being changed

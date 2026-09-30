@@ -9,12 +9,12 @@ const { sendSuccess, sendError } = require('../utils/response');
 router.use(protect, authorize('staff', 'admin'));
 
 // ── GET /api/trucks ───────────────────────────────────────────────────────────
-// Returns all registered trucks (for the Staff volumetric-input dropdown).
+// Returns all active, registered trucks (for the Staff volumetric-input dropdown).
+// Includes the computed virtual `capacity` (cu.m.) field.
 router.get('/', async (req, res) => {
   try {
     const trucks = await Truck.find({ isActive: true })
-      .sort({ plateNumber: 1 })
-      .lean();
+      .sort({ plateNumber: 1 });
 
     sendSuccess(res, { count: trucks.length, trucks });
   } catch (err) {
