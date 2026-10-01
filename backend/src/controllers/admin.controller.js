@@ -6,6 +6,7 @@ const TruckLoad = require('../models/TruckLoad');
 const Truck = require('../models/Truck');
 const DailyCycleLog = require('../models/DailyCycleLog');
 const socketService = require('../services/socket.service');
+const { uploadPhoto } = require('../services/cloudinary.service');
 const { sendSuccess, sendError } = require('../utils/response');
 
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
@@ -44,11 +45,17 @@ const createUser = async (req, res) => {
     const existingUser = await User.findOne({ email });
     if (existingUser) return sendError(res, 'Email is already taken', 400);
 
+    let profilePhotoUrl;
+    if (req.file) {
+      profilePhotoUrl = await uploadPhoto(req.file.buffer, 'resiklean/profiles');
+    }
+
     const user = await User.create({
       name, email, password, role,
       employeeId: employeeId || undefined,
       contact: contact || undefined,
       shift: shift || undefined,
+      profilePhotoUrl,
     });
 
     // Convert to object and remove password for response

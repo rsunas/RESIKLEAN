@@ -20,6 +20,7 @@ const userSchema = new mongoose.Schema(
     employeeId: { type: String, trim: true },
     contact:    { type: String, trim: true },
     shift:      { type: String, enum: ['day', 'night'], default: 'day' },
+    profilePhotoUrl: { type: String },
     // Notifications
     pushTokens: [{
       token: { type: String, required: true },

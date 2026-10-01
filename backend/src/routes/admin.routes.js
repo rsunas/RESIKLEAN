@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { protect } = require('../middlewares/auth');
 const { authorize } = require('../middlewares/authorize');
+const upload = require('../middlewares/upload');
 const {
   getAllUsers,
   createUser,
@@ -24,7 +25,7 @@ router.use(protect, authorize('admin'));
 
 // Users
 router.get('/users', getAllUsers);
-router.post('/users', createUser);
+router.post('/users', upload.single('avatar'), createUser);
 
 // Routes
 router.get('/routes', getAllRoutes);
