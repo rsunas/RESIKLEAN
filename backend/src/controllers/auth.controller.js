@@ -2,6 +2,10 @@ const User = require('../models/User');
 const Route = require('../models/Route');
 const { signToken } = require('../utils/jwt');
 const { sendSuccess, sendError } = require('../utils/response');
+const { OAuth2Client } = require('google-auth-library');
+const crypto = require('crypto');
+
+const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // ── Helper: sign token and send response ──────────────────────────────────────
 const tokenResponse = (user, statusCode, res) => {
@@ -45,6 +49,48 @@ const login = async (req, res) => {
     tokenResponse(user, 200, res);
   } catch (err) {
     sendError(res, err.message, 500);
+  }
+};
+
+// ── POST /api/auth/google ─────────────────────────────────────────────────────
+const googleLogin = async (req, res) => {
+  try {
+    const { idToken } = req.body;
+
+    // Verify token with Google
+    const ticket = await client.verifyIdToken({
+      idToken,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+
+    const payload = ticket.getPayload();
+    const { email, name, picture } = payload;
+
+    // Find user by email
+    let user = await User.findOne({ email });
+
+    if (!user) {
+      // Create new user if they don't exist
+      // Generate a random secure password for Google signups
+      const randomPassword = crypto.randomBytes(16).toString('hex');
+
+      user = await User.create({
+        name,
+        email,
+        password: randomPassword,
+        role: 'resident',
+        profilePhotoUrl: picture, // Save Google profile picture
+      });
+    } else if (!user.profilePhotoUrl && picture) {
+      // Optional: Update profile picture if they didn't have one
+      user.profilePhotoUrl = picture;
+      await user.save();
+    }
+
+    tokenResponse(user, 200, res);
+  } catch (err) {
+    console.error('Google Auth Error:', err);
+    sendError(res, 'Invalid Google Token', 401);
   }
 };
 
@@ -99,4 +145,4 @@ const getPublicAreas = async (req, res) => {
   }
 };
 
-module.exports = { register, login, getMe, updateMe, getPublicAreas };
+module.exports = { register, login, googleLogin, getMe, updateMe, getPublicAreas };

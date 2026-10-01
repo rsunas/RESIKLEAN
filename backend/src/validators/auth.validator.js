@@ -20,4 +20,8 @@ const loginRules = [
   body('password').notEmpty().withMessage('Password is required'),
 ];
 
-module.exports = { validate, registerRules, loginRules };
+const googleLoginRules = [
+  body('idToken').notEmpty().withMessage('idToken is required'),
+];
+
+module.exports = { validate, registerRules, loginRules, googleLoginRules };
