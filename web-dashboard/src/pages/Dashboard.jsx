@@ -1,9 +1,11 @@
 import { Button, Card, Chip, Input } from '@heroui/react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
+import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PageHeader from '../components/PageHeader.jsx';
 import TruckManagementPanel from '../components/TruckManagementPanel.jsx';
+import RouteAssignmentPanel from '../components/RouteAssignmentPanel.jsx';
 
 const API_URL = import.meta.env.VITE_API_URL;
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || API_URL?.replace(/\/api\/?$/, '');
@@ -13,8 +15,8 @@ const NAV_ITEMS = [
   { id: 'routes', label: 'Route History', icon: 'route' },
   { id: 'complaints', label: 'Complaints', icon: 'alert' },
   { id: 'activity', label: 'Staff Activity', icon: 'chart' },
-  { id: 'assignments', label: 'Collector Assignments', icon: 'users' },
-  { id: 'accounts', label: 'Manage Accounts', icon: 'account' },
+  { id: 'assignments', label: 'Collector Assignments', icon: 'operations' },
+  { id: 'accounts', label: 'Manage Accounts', icon: 'id-card' },
   { id: 'trucks', label: 'Manage Trucks', icon: 'truck' },
 ];
 
@@ -46,7 +48,7 @@ const PLACEHOLDER_ACTIVITY = [
   { id: 'activity-3', area: 'Barangay Concepcion Grande', driver: 'Eddie Villanueva', length: '3.5', width: '2.2', height: '1.6', slope: '—', tonnage: '26.57 t', time: '08:15 AM' },
 ];
 
-const EMPTY_ACCOUNT = { name: '', contact: '', email: '', password: '', role: 'collector' };
+const EMPTY_ACCOUNT = { name: '', contact: '', email: '', password: '', role: 'collector', avatarFile: null, avatarPreview: '' };
 
 function initials(name = '') {
   return name.split(' ').filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'A';
@@ -118,16 +120,6 @@ function mergeComplaintRow(complaint, payload) {
   };
 }
 
-function socketStatusLabel(status) {
-  return status === 'connected'
-    ? 'Live updates'
-    : status === 'connecting'
-      ? 'Connecting live updates'
-      : status === 'unavailable'
-        ? 'Live updates unavailable'
-        : 'Live updates disconnected';
-}
-
 function startOfDay(date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
@@ -171,6 +163,8 @@ function Icon({ name, size = 18 }) {
     chart: <><path d="M4 19V5m0 14h16" /><path d="m7 15 4-4 3 2 5-6" /></>,
     users: <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>,
     account: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>,
+    'id-card': <><rect height="16" rx="2" width="18" x="3" y="4" /><circle cx="8" cy="10" r="2" /><path d="M13 9h5M13 13h5" /></>,
+    operations: <><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="2" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" /></>,
     truck: <><path d="M3 7h11v10H3zM14 10h4l3 3v4h-7z" /><circle cx="7" cy="19" r="2" /><circle cx="18" cy="19" r="2" /></>,
     search: <><circle cx="11" cy="11" r="6" /><path d="m20 20-4.2-4.2" /></>,
     bell: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></>,
@@ -179,6 +173,7 @@ function Icon({ name, size = 18 }) {
     arrow: <path d="m9 18 6-6-6-6" />,
     plus: <path d="M12 5v14m-7-7h14" />,
     image: <><rect height="16" rx="2" width="18" x="3" y="4" /><circle cx="8.5" cy="9" r="1.5" /><path d="m3 17 5-5 3 3 2-2 8 7" /></>,
+    inbox: <><path d="M4 5h16v12H4z" /><path d="M4 13h4l2 3h4l2-3h4" /></>,
   };
   return <svg aria-hidden="true" fill="none" height={size} stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" viewBox="0 0 24 24" width={size}>{paths[name] || paths.grid}</svg>;
 }
@@ -189,8 +184,15 @@ function StatusChip({ status }) {
   return <Chip className={`status-chip status-${normalized.replace(' ', '-')}`} size="sm">{label}</Chip>;
 }
 
-function MetricCard({ icon, label, value, caption, tone = 'green' }) {
-  return <Card className="metric-card"><div className={`metric-icon metric-${tone}`}><Icon name={icon} size={20} /></div><div><p className="metric-label">{label}</p><strong className="metric-value">{value}</strong><p className="metric-caption">{caption}</p></div></Card>;
+function MetricSparkline({ data, color }) {
+  const chartData = data.map((item) => ({ value: Number(item.tonnes ?? item.value ?? 0) }));
+  return <div className="metric-sparkline"><ResponsiveContainer height="100%" width="100%"><AreaChart data={chartData} margin={{ top: 6, right: 0, bottom: 4, left: 0 }}><defs><linearGradient id={`metric-fill-${color.replace('#', '')}`} x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor={color} stopOpacity={0.18} /><stop offset="100%" stopColor={color} stopOpacity={0.01} /></linearGradient></defs><Area dataKey="value" fill={`url(#metric-fill-${color.replace('#', '')})`} isAnimationActive={false} stroke={color} strokeWidth={2} type="monotone" /></AreaChart></ResponsiveContainer></div>;
+}
+
+function MetricCard({ icon, label, value, caption, tone = 'green', trend = [], progress }) {
+  const progressValue = Math.max(0, Math.min(100, Number(progress || 0)));
+  const chartColor = tone === 'teal' ? '#078e78' : tone === 'amber' ? '#d39a21' : '#07815f';
+  return <Card className="metric-card"><div className={`metric-icon metric-${tone}`}><Icon name={icon} size={16} /></div><div className="metric-content"><p className="metric-label">{label}</p><strong className="metric-value">{value}</strong><p className="metric-caption">{caption}</p>{progress !== undefined ? <div aria-label={`${progressValue}% complete`} className="metric-progress"><span style={{ width: `${progressValue}%` }} /></div> : null}</div>{trend.length > 1 ? <MetricSparkline color={chartColor} data={trend} /> : null}</Card>;
 }
 
 function TonnageChart({ series }) {
@@ -198,32 +200,35 @@ function TonnageChart({ series }) {
     return <div className="chart-empty"><Icon name="chart" size={24} /><p>No submitted truckloads yet.</p><span>Daily tonnage will appear after staff record landfill loads.</span></div>;
   }
 
-  const width = 760;
-  const height = 255;
-  const padding = { top: 24, right: 20, bottom: 45, left: 48 };
-  const max = Math.max(...series.map((item) => item.tonnes), 1);
-  const plotHeight = height - padding.top - padding.bottom;
-  const plotWidth = width - padding.left - padding.right;
-  const points = series.map((item, index) => ({ ...item, x: padding.left + (plotWidth / Math.max(series.length - 1, 1)) * index, y: padding.top + plotHeight - (item.tonnes / max) * plotHeight }));
-  const line = points.map((point) => `${point.x},${point.y}`).join(' ');
-  const area = `${padding.left},${padding.top + plotHeight} ${line} ${padding.left + plotWidth},${padding.top + plotHeight}`;
+  const chartData = series.map((item) => ({
+    ...item,
+    label: item.date.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' }),
+  }));
 
   return (
-    <svg aria-label={`Daily tonnage trend from ${formatTrendRange(series)}`} className="tonnage-chart" role="img" viewBox={`0 0 ${width} ${height}`}>
-      <defs><linearGradient id="tonnage-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="#19a974" stopOpacity="0.22" /><stop offset="1" stopColor="#19a974" stopOpacity="0.01" /></linearGradient></defs>
-      {[max, max / 2, 0].map((value) => {
-        const y = padding.top + plotHeight - (value / max) * plotHeight;
-        return <g key={value}><line className="chart-grid" x1={padding.left} x2={width - padding.right} y1={y} y2={y} /><text className="chart-axis" textAnchor="end" x={padding.left - 10} y={y + 4}>{formatTonnes(value)}</text></g>;
-      })}
-      <polygon fill="url(#tonnage-fill)" points={area} />
-      <polyline fill="none" points={line} stroke="#07815f" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" />
-      {points.map((point) => <g key={dateKey(point.date)}><circle className="chart-dot" cx={point.x} cy={point.y} r="4.5"><title>{`${point.date.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}: ${formatTonnes(point.tonnes)}`}</title></circle><text className="chart-label" textAnchor="middle" x={point.x} y={height - 15}>{point.date.toLocaleDateString('en-PH', { weekday: 'short' })}</text></g>)}
-    </svg>
+    <div aria-label={`Daily tonnage trend from ${formatTrendRange(series)}`} className="tonnage-chart" role="img">
+      <ResponsiveContainer height="100%" width="100%">
+        <AreaChart data={chartData} margin={{ top: 10, right: 12, left: 8, bottom: 0 }}>
+          <defs><linearGradient id="tonnage-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#07815f" stopOpacity={0.18} /><stop offset="100%" stopColor="#07815f" stopOpacity={0.02} /></linearGradient></defs>
+          <CartesianGrid stroke="#dbe7e1" strokeDasharray="3 5" />
+          <XAxis axisLine={false} dataKey="label" tick={{ fill: '#71837a', fontSize: 11 }} tickLine={false} />
+          <YAxis axisLine={false} tick={{ fill: '#71837a', fontSize: 11 }} tickFormatter={(value) => formatTonnes(value)} tickLine={false} width={48} />
+          <Tooltip content={<TonnageTooltip />} cursor={{ stroke: '#9ccab5', strokeDasharray: '4 4' }} />
+          <Area activeDot={{ fill: '#fff', r: 4, stroke: '#07815f', strokeWidth: 2 }} dataKey="tonnes" fill="url(#tonnage-fill)" stroke="#07815f" strokeWidth={2.5} type="monotone" />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 
-function AvatarName({ name }) {
-  return <span className="avatar-name"><span className="table-avatar">{initials(name)}</span><span>{name}</span></span>;
+function TonnageTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null;
+  const point = payload[0].payload;
+  return <div className="tonnage-tooltip"><strong>{point.label}</strong><span>{formatTonnes(point.tonnes)}</span></div>;
+}
+
+function AvatarName({ name, photoUrl }) {
+  return <span className="avatar-name">{photoUrl ? <img alt="" className="table-avatar" src={photoUrl} /> : <span className="table-avatar">{initials(name)}</span>}<span>{name}</span></span>;
 }
 
 function RoutePreview({ route }) {
@@ -267,6 +272,59 @@ function ComplaintDetailsModal({ complaint, onClose }) {
   );
 }
 
+function ComplaintInbox({ complaints, selectedComplaint, onSelect, onStatusChange }) {
+  const [query, setQuery] = useState('');
+  const filteredComplaints = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (!normalizedQuery) return complaints;
+    return complaints.filter((complaint) => {
+      const report = complaint.report || complaint;
+      const reporter = report.residentId?.name || complaint.reporter || 'Resident';
+      return [reporter, complaint.street, report.description, report.barangay].filter(Boolean).some((value) => String(value).toLowerCase().includes(normalizedQuery));
+    });
+  }, [complaints, query]);
+
+  const activeComplaint = selectedComplaint && complaints.find((complaint) => complaint.id === selectedComplaint.id);
+  const report = activeComplaint?.report || activeComplaint;
+  const reporter = report?.residentId?.name || activeComplaint?.reporter || 'Resident';
+  const status = report?.status || activeComplaint?.status || 'pending';
+  const photoUrl = report?.photoUrl || activeComplaint?.photoUrl;
+
+  return <Card className="complaint-inbox-card">
+    <aside className="complaint-inbox-list">
+      <div className="complaint-inbox-search"><Icon name="search" size={17} /><Input aria-label="Search complaints" onChange={(event) => setQuery(event.target.value)} placeholder="Search complaints..." value={query} /></div>
+      <div className="complaint-inbox-items">
+        {filteredComplaints.length ? filteredComplaints.map((complaint) => {
+          const itemReport = complaint.report || complaint;
+          const itemReporter = itemReport.residentId?.name || complaint.reporter || 'Resident';
+          const itemPhoto = itemReport.photoUrl || complaint.photoUrl;
+          return <button className={`complaint-inbox-item ${activeComplaint?.id === complaint.id ? 'is-selected' : ''}`} key={complaint.id} onClick={() => onSelect(complaint)} type="button">
+            {itemPhoto ? <img alt="" className="complaint-inbox-avatar complaint-inbox-photo" src={itemPhoto} /> : <span className="complaint-inbox-avatar">{initials(itemReporter)}</span>}
+            <span className="complaint-inbox-copy"><strong>{itemReporter}</strong><b>{complaint.street}</b><small>{itemReport.description || `${complaint.bags} detected · ${complaint.time}`}</small></span>
+            <span className="complaint-inbox-meta"><time>{complaint.time}</time><span className={`complaint-unread-dot status-${complaint.status}`} /></span>
+          </button>;
+        }) : <p className="complaint-inbox-empty">No complaints found.</p>}
+      </div>
+    </aside>
+    <section className="complaint-conversation">
+      {activeComplaint ? <>
+        <header className="complaint-conversation-header"><div className="complaint-conversation-person"><span className="complaint-inbox-avatar">{initials(reporter)}</span><div><strong>{reporter}</strong><span>{activeComplaint.street}</span></div></div><StatusChip status={status} /></header>
+        <div className="complaint-conversation-body">
+          <p className="complaint-conversation-date">{formatReportDate(report.createdAt || activeComplaint.date)}</p>
+          <div className="complaint-message-row"><span className="complaint-inbox-avatar">{initials(reporter)}</span><div className="complaint-message-bubble"><p>{report.description || `Missed collection reported at ${activeComplaint.street}.`}</p><span>{activeComplaint.time} · {activeComplaint.bags} detected</span></div></div>
+          {photoUrl ? <img alt={`Submitted complaint from ${reporter}`} className="complaint-conversation-photo" src={photoUrl} /> : <div className="complaint-conversation-no-photo"><Icon name="image" size={19} /><span>No submitted photo available</span></div>}
+          <div className="complaint-conversation-details"><div><span>Location</span><strong>{report.barangay || 'Location not recorded'}</strong></div><div><span>Email</span><strong>{report.residentId?.email || 'Not available'}</strong></div><div><span>AI verification</span><strong>{report.aiVerified ? 'Verified' : 'Not verified'}</strong></div></div>
+        </div>
+        <footer className="complaint-conversation-footer"><label>Update complaint status<select aria-label={`Update ${activeComplaint.street} status`} className={`complaint-status status-${status}`} onChange={(event) => onStatusChange(activeComplaint.id, event.target.value)} value={status}><option value="pending">Pending</option><option value="verified">Scheduled</option><option value="resolved">Resolved</option><option value="rejected">Rejected</option></select></label></footer>
+      </> : <div className="complaint-conversation-empty"><span><Icon name="inbox" size={24} /></span><h3>Nothing open</h3><p>Pick a complaint from the inbox to read it here.</p></div>}
+    </section>
+  </Card>;
+}
+
+function LogoutConfirmation({ onCancel, onConfirm }) {
+  return <div className="modal-layer" onClick={onCancel} role="presentation"><div aria-modal="true" className="account-modal logout-confirm-modal" onClick={(event) => event.stopPropagation()} role="dialog"><div className="modal-header"><div><p className="eyebrow">Account</p><h2>Sign out?</h2></div><button aria-label="Close sign-out confirmation" onClick={onCancel} type="button">×</button></div><div className="modal-body"><p className="field-note">Are you sure you want to sign out of the admin dashboard?</p></div><div className="modal-footer"><Button className="outline-button" onPress={onCancel} type="button" variant="secondary">Cancel</Button><button className="logout-confirm-button" onClick={onConfirm} type="button">Sign out</button></div></div></div>;
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -274,15 +332,14 @@ export default function Dashboard() {
   const storedUser = JSON.parse(sessionStorage.getItem('resiklean_admin_user') || '{}');
   const requestedPage = searchParams.get('view');
   const activePage = NAV_ITEMS.some((item) => item.id === requestedPage) ? requestedPage : 'overview';
-  const [search, setSearch] = useState('');
   const [showAccountForm, setShowAccountForm] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [selectedActivity, setSelectedActivity] = useState(null);
   const [selectedComplaint, setSelectedComplaint] = useState(null);
   const [newAccount, setNewAccount] = useState(EMPTY_ACCOUNT);
   const [createdAccounts, setCreatedAccounts] = useState([]);
   const [submissionState, setSubmissionState] = useState({ loading: false, message: '', error: '' });
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [socketStatus, setSocketStatus] = useState('unavailable');
   const [complaintUpdateError, setComplaintUpdateError] = useState('');
   const socketRef = useRef(null);
   const [apiData, setApiData] = useState({ users: null, routes: null, reports: null, loads: null, tonnage: null, compliance: null, usingPlaceholder: true });
@@ -321,18 +378,11 @@ export default function Dashboard() {
   useEffect(() => { void refreshDashboard(); }, [refreshDashboard]);
 
   useEffect(() => {
-    if (!token || !SOCKET_URL) {
-      setSocketStatus(SOCKET_URL ? 'disconnected' : 'unavailable');
-      return undefined;
-    }
+    if (!token || !SOCKET_URL) return undefined;
 
-    setSocketStatus('connecting');
     const socket = io(SOCKET_URL, { auth: { token } });
     socketRef.current = socket;
 
-    const handleConnect = () => setSocketStatus('connected');
-    const handleDisconnect = () => setSocketStatus('disconnected');
-    const handleConnectError = () => setSocketStatus('disconnected');
     const handleComplaintEvent = (payload) => {
       const reportId = normalizeId(payload?.report?._id || payload?.reportId);
       if (!reportId) return;
@@ -345,16 +395,10 @@ export default function Dashboard() {
       setSelectedComplaint((current) => mergeComplaintRow(current, payload));
     };
 
-    socket.on('connect', handleConnect);
-    socket.on('disconnect', handleDisconnect);
-    socket.on('connect_error', handleConnectError);
     socket.on('complaint:created', handleComplaintEvent);
     socket.on('complaint:status-updated', handleComplaintEvent);
 
     return () => {
-      socket.off('connect', handleConnect);
-      socket.off('disconnect', handleDisconnect);
-      socket.off('connect_error', handleConnectError);
       socket.off('complaint:created', handleComplaintEvent);
       socket.off('complaint:status-updated', handleComplaintEvent);
       socket.disconnect();
@@ -364,7 +408,7 @@ export default function Dashboard() {
 
   const accountRows = useMemo(() => {
     if (!apiData.users?.length) return [...createdAccounts, ...PLACEHOLDER_ACCOUNTS];
-    return [...createdAccounts, ...apiData.users.filter((user) => ['collector', 'staff'].includes(user.role)).map((user) => ({ id: user._id, name: user.name, role: user.role, area: user.barangay || 'Not assigned', contact: user.contact || '—', email: user.email }))];
+    return [...createdAccounts, ...apiData.users.filter((user) => ['collector', 'staff'].includes(user.role)).map((user) => ({ id: user._id, name: user.name, role: user.role, area: user.barangay || 'Not assigned', contact: user.contact || '—', email: user.email, profilePhotoUrl: user.profilePhotoUrl || '' }))];
   }, [apiData.users, createdAccounts]);
 
   const routeRows = useMemo(() => {
@@ -382,8 +426,6 @@ export default function Dashboard() {
     return apiData.loads.map((load) => ({ id: load._id, area: load.routeId?.barangay || 'Unassigned area', driver: load.staffId?.name || 'Staff member', truckPlate: load.truckPlate || 'Unknown truck', length: load.length ? (load.length / 100).toFixed(1) : '—', width: load.width ? (load.width / 100).toFixed(1) : '—', height: load.height ? (load.height / 100).toFixed(1) : '—', slope: `${Number(load.slope || 0).toFixed(1)} m³`, tonnage: formatTonnes(load.tonnesEstimate), time: new Date(load.arrivedAt).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' }), date: load.arrivedAt ? new Date(load.arrivedAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Date unavailable', photoUrl: load.photoUrl || '', notes: load.notes || '' }));
   }, [apiData.loads]);
 
-  const filteredAccounts = accountRows.filter((account) => `${account.name} ${account.email} ${account.area}`.toLowerCase().includes(search.toLowerCase()));
-  const filteredRoutes = routeRows.filter((route) => `${route.area} ${route.street} ${route.collector}`.toLowerCase().includes(search.toLowerCase()));
   const tonnageSeries = useMemo(() => apiData.usingPlaceholder ? [] : buildTonnageSeries(apiData.loads), [apiData.loads, apiData.usingPlaceholder]);
   const totalTonnage = apiData.tonnage?.totalTonnesEstimate;
   const totalLoads = apiData.tonnage?.count || 0;
@@ -400,6 +442,11 @@ export default function Dashboard() {
     sessionStorage.removeItem('resiklean_admin_token');
     sessionStorage.removeItem('resiklean_admin_user');
     navigate('/login', { replace: true });
+  };
+
+  const confirmSignOut = () => {
+    setShowLogoutConfirm(false);
+    signOut();
   };
 
   const selectPage = (page) => {
@@ -442,14 +489,21 @@ export default function Dashboard() {
   const createAccount = async (event) => {
     event.preventDefault();
     setSubmissionState({ loading: true, error: '', message: '' });
-    const localAccount = { id: `local-${Date.now()}`, name: newAccount.name, role: newAccount.role, area: 'Not assigned', contact: newAccount.contact || '—', email: newAccount.email };
+    const localAccount = { id: `local-${Date.now()}`, name: newAccount.name, role: newAccount.role, area: 'Not assigned', contact: newAccount.contact || '—', email: newAccount.email, profilePhotoUrl: newAccount.avatarPreview };
     try {
       if (API_URL && token) {
-        const response = await fetch(`${API_URL.replace(/\/$/, '')}/admin/users`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: newAccount.name, email: newAccount.email, password: newAccount.password, role: newAccount.role }) });
+        const formData = new FormData();
+        formData.append('name', newAccount.name);
+        formData.append('email', newAccount.email);
+        formData.append('password', newAccount.password);
+        formData.append('role', newAccount.role);
+        if (newAccount.contact) formData.append('contact', newAccount.contact);
+        if (newAccount.avatarFile) formData.append('avatar', newAccount.avatarFile);
+        const response = await fetch(`${API_URL.replace(/\/$/, '')}/admin/users`, { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: formData });
         const result = await response.json();
         if (!response.ok || !result.success) throw new Error(result.error || 'Unable to create the account.');
-        setCreatedAccounts((current) => [{ ...localAccount, id: result.data?._id || localAccount.id }, ...current]);
-        setSubmissionState({ loading: false, error: '', message: 'Account created. Contact and area remain dashboard-only until backend support is added.' });
+        setCreatedAccounts((current) => [{ ...localAccount, id: result.data?._id || localAccount.id, profilePhotoUrl: result.data?.profilePhotoUrl || localAccount.profilePhotoUrl }, ...current]);
+        setSubmissionState({ loading: false, error: '', message: 'Account created with the profile picture.' });
       } else {
         setCreatedAccounts((current) => [localAccount, ...current]);
         setSubmissionState({ loading: false, error: '', message: 'Account added as placeholder data. Configure VITE_API_URL to create it in the backend.' });
@@ -461,37 +515,71 @@ export default function Dashboard() {
     }
   };
 
+  useEffect(() => {
+    if (!showAccountForm) return undefined;
+
+    const body = document.querySelector('.account-modal form .modal-body');
+    if (!body || body.querySelector('[data-account-photo-field]')) return undefined;
+
+    const field = document.createElement('label');
+    field.dataset.accountPhotoField = 'true';
+    field.textContent = 'Profile picture';
+
+    const picker = document.createElement('div');
+    picker.className = 'account-photo-picker';
+    const input = document.createElement('input');
+    input.accept = 'image/jpeg,image/png,image/webp';
+    input.className = 'account-photo-input';
+    input.type = 'file';
+    input.addEventListener('change', () => {
+      const file = input.files?.[0] || null;
+      if (file && file.size > 5 * 1024 * 1024) {
+        setSubmissionState({ loading: false, error: 'Profile picture must be 5 MB or smaller.', message: '' });
+        input.value = '';
+        return;
+      }
+      setNewAccount((current) => ({ ...current, avatarFile: file, avatarPreview: file ? URL.createObjectURL(file) : '' }));
+    });
+    picker.appendChild(input);
+    field.appendChild(picker);
+    body.insertBefore(field, body.querySelector('.field-note'));
+
+    return () => field.remove();
+  }, [showAccountForm]);
+
   if (!token) return <Navigate replace to="/login" />;
 
   const overview = <>
-    <PageHeader action={<Button className="outline-button" isDisabled={isRefreshing} onPress={refreshDashboard} variant="secondary"><Icon name="refresh" size={16} />{isRefreshing ? 'Refreshing…' : 'Refresh data'}</Button>} category="Operational snapshot" description="Live information from SWMO collection and landfill activity." title="Collection at a glance" />
+    <PageHeader action={<Button className="outline-button" isDisabled={isRefreshing} onPress={refreshDashboard} variant="secondary"><Icon name="refresh" size={16} />{isRefreshing ? 'Refreshing…' : 'Refresh data'}</Button>} description="Live information from SWMO collection and landfill activity." title="Collection Overview" />
     <div className="metrics-grid">
-      <MetricCard caption={completionRate ? 'Across today’s active routes' : 'Live route data unavailable'} icon="route" label="Collection completion" value={completionRate || '—'} />
-      <MetricCard caption={apiData.usingPlaceholder ? 'Connect the admin API to view totals' : `${totalLoads} submitted truckload${totalLoads === 1 ? '' : 's'}`} icon="truck" label="Recorded tonnage" tone="teal" value={apiData.usingPlaceholder ? '—' : formatTonnes(totalTonnage)} />
+      <MetricCard caption={completionRate ? 'Across today’s active routes' : 'Live route data unavailable'} icon="route" label="Collection completion" progress={completionRate ? Number.parseFloat(completionRate) : 0} value={completionRate || '—'} />
+      <MetricCard caption={apiData.usingPlaceholder ? 'Connect the admin API to view totals' : `${totalLoads} submitted truckload${totalLoads === 1 ? '' : 's'}`} icon="truck" label="Recorded tonnage" tone="teal" trend={tonnageSeries} value={apiData.usingPlaceholder ? '—' : formatTonnes(totalTonnage)} />
       <MetricCard caption="Reports awaiting review" icon="alert" label="Pending complaints" tone="amber" value={String(complaintRows.filter((item) => item.status === 'pending').length)} />
     </div>
     <Card className="chart-card">
-      <div className="card-heading-row"><div><p className="eyebrow">Landfill activity</p><h3>Tonnage trend</h3><p>{formatTrendRange(tonnageSeries)} · totals are calculated from submitted truckloads</p></div><Chip className="live-chip" size="sm">{apiData.usingPlaceholder ? 'Waiting for API' : 'Live data'}</Chip></div>
+      <div className="card-heading-row"><div><h3>Tonnage trend</h3><p>Volume collected per day · {formatTrendRange(tonnageSeries)}</p></div><Button className="outline-button chart-export-button" variant="secondary">Export</Button></div>
       <TonnageChart series={tonnageSeries} />
     </Card>
     <Card className="overview-routes"><div className="card-heading-row overview-route-heading"><div><p className="eyebrow">Collection tracking</p><h3>Recent route activity</h3><p>Street-level collection status</p></div><button className="text-button" onClick={() => selectPage('routes')}>View route history <Icon name="arrow" size={15} /></button></div>{routeRows.slice(0, 4).map((route) => <RoutePreview key={route.id} route={route} />)}<button className="view-more" onClick={() => selectPage('routes')}>View all {routeRows.length} entries <Icon name="arrow" size={15} /></button></Card>
   </>;
 
-  const routeHistory = <><PageHeader action={<Button className="outline-button" variant="secondary">Export</Button>} category="Operations" description="Street-level collection tracking by collector" title="Route history" /><Card className="table-card"><div className="filter-row"><select aria-label="Filter by collector" defaultValue="all"><option value="all">All collectors</option>{accountRows.filter((account) => account.role === 'collector').map((account) => <option key={account.id}>{account.name}</option>)}</select><select aria-label="Filter by area" defaultValue="all"><option value="all">All areas</option>{[...new Set(routeRows.map((route) => route.area))].map((area) => <option key={area}>{area}</option>)}</select><input aria-label="Filter by date" type="date" /><span className="entries-count">{filteredRoutes.length} entries</span></div><div className="table-scroll"><table><thead><tr><th>Area</th><th>Date</th><th>Street</th><th>Collector</th><th>Status</th></tr></thead><tbody>{filteredRoutes.map((route) => <tr key={route.id}><td>{route.area}{route.flagged ? <span className="flag">Flagged</span> : null}</td><td>{route.date}</td><td>{route.street}</td><td><AvatarName name={route.collector} /></td><td><StatusChip status={route.status} /></td></tr>)}</tbody></table></div></Card></>;
+  const routeHistory = <><PageHeader action={<Button className="outline-button" variant="secondary">Export</Button>} description="Street-level collection tracking by collector" title="Route history" /><Card className="table-card"><div className="filter-row"><select aria-label="Filter by collector" defaultValue="all"><option value="all">All collectors</option>{accountRows.filter((account) => account.role === 'collector').map((account) => <option key={account.id}>{account.name}</option>)}</select><select aria-label="Filter by area" defaultValue="all"><option value="all">All areas</option>{[...new Set(routeRows.map((route) => route.area))].map((area) => <option key={area}>{area}</option>)}</select><input aria-label="Filter by date" type="date" /><span className="entries-count">{routeRows.length} entries</span></div><div className="table-scroll"><table><thead><tr><th>Area</th><th>Date</th><th>Street</th><th>Collector</th><th>Status</th></tr></thead><tbody>{routeRows.map((route) => <tr key={route.id}><td>{route.area}{route.flagged ? <span className="flag">Flagged</span> : null}</td><td>{route.date}</td><td>{route.street}</td><td><AvatarName name={route.collector} /></td><td><StatusChip status={route.status} /></td></tr>)}</tbody></table></div></Card></>;
 
-  const complaints = <><PageHeader action={<Chip className="pending-count" size="sm">{complaintRows.filter((complaint) => complaint.status === 'pending').length} pending</Chip>} category="Operations" description="Resident-submitted missed collection reports" title="Complaint queue" />{complaintUpdateError ? <p className="feedback error-feedback">{complaintUpdateError}</p> : null}<div className="complaint-list">{complaintRows.map((complaint) => <Card className="complaint-card" key={complaint.id}><div className="complaint-art"><Icon name="alert" size={24} /></div><div className="complaint-main"><h3>{complaint.street}</h3><p>{complaint.bags} detected · {complaint.time}</p><button className="complaint-details-button" onClick={() => setSelectedComplaint(complaint)} type="button">View details <Icon name="arrow" size={14} /></button></div><div className="complaint-meta"><span>Date</span><strong>{complaint.date}</strong></div><div className="complaint-meta"><span>Reported by</span><strong>{complaint.reporter}</strong></div><select aria-label={`Update ${complaint.street} status`} className={`complaint-status status-${complaint.status}`} onChange={(event) => updateComplaintStatus(complaint.id, event.target.value)} value={complaint.status}><option value="pending">Pending</option><option value="verified">Scheduled</option><option value="resolved">Resolved</option><option value="rejected">Rejected</option></select></Card>)}</div>{selectedComplaint ? <ComplaintDetailsModal complaint={selectedComplaint} onClose={() => setSelectedComplaint(null)} /> : null}</>;
+  const complaints = <><PageHeader action={<Chip className="pending-count" size="sm">{complaintRows.filter((complaint) => complaint.status === 'pending').length} pending</Chip>} description="Resident-submitted missed collection reports" title="Complaint queue" />{complaintUpdateError ? <p className="feedback error-feedback">{complaintUpdateError}</p> : null}<div className="complaint-list">{complaintRows.map((complaint) => <Card className="complaint-card" key={complaint.id}><div className="complaint-art">{complaint.report?.photoUrl || complaint.photoUrl ? <img alt={`Submitted complaint for ${complaint.street}`} src={complaint.report?.photoUrl || complaint.photoUrl} /> : <Icon name="alert" size={24} />}</div><div className="complaint-main"><h3>{complaint.street}</h3><p>{complaint.bags} detected · {complaint.time}</p><button className="complaint-details-button" onClick={() => setSelectedComplaint(complaint)} type="button">View details <Icon name="arrow" size={14} /></button></div><div className="complaint-meta"><span>Date</span><strong>{complaint.date}</strong></div><div className="complaint-meta"><span>Reported by</span><strong>{complaint.reporter}</strong></div><select aria-label={`Update ${complaint.street} status`} className={`complaint-status status-${complaint.status}`} onChange={(event) => updateComplaintStatus(complaint.id, event.target.value)} value={complaint.status}><option value="pending">Pending</option><option value="verified">Scheduled</option><option value="resolved">Resolved</option><option value="rejected">Rejected</option></select></Card>)}</div>{selectedComplaint ? <ComplaintDetailsModal complaint={selectedComplaint} onClose={() => setSelectedComplaint(null)} /> : null}</>;
+
+  const complaintInbox = <><PageHeader action={<Chip className="pending-count" size="sm">{complaintRows.filter((complaint) => complaint.status === 'pending').length} pending</Chip>} title="Complaint queue" />{complaintUpdateError ? <p className="feedback error-feedback">{complaintUpdateError}</p> : null}<ComplaintInbox complaints={complaintRows} onSelect={setSelectedComplaint} onStatusChange={updateComplaintStatus} selectedComplaint={selectedComplaint} /></>;
 
   const activity = <>
-    <PageHeader action={<Button className="outline-button" isDisabled={isRefreshing} onPress={refreshDashboard} variant="secondary">{isRefreshing ? 'Refreshing…' : 'Refresh data'}</Button>} category="Landfill operations" description={apiData.usingPlaceholder ? 'Sample activity while the admin API is unavailable' : `${totalLoads} recorded truckload${totalLoads === 1 ? '' : 's'} · click a submission to view its audit photo`} title="Staff activity log" />
+    <PageHeader action={<Button className="outline-button" isDisabled={isRefreshing} onPress={refreshDashboard} variant="secondary">{isRefreshing ? 'Refreshing…' : 'Refresh data'}</Button>} description={apiData.usingPlaceholder ? 'Sample activity while the admin API is unavailable' : `${totalLoads} recorded truckload${totalLoads === 1 ? '' : 's'} · click a submission to view its audit photo`} title="Staff activity log" />
     <Card className="table-card staff-activity-card"><div className="table-scroll"><table><thead><tr><th>Area</th><th>Driver</th><th>L (m)</th><th>W (m)</th><th>H (m)</th><th>Slope</th><th>Tonnage</th><th>Time</th></tr></thead><tbody>{activityRows.map((row) => <tr aria-label={`View truckload from ${row.area}`} className="activity-row" key={row.id} onClick={() => row.photoUrl || row.notes ? setSelectedActivity(row) : null} onKeyDown={(event) => { if ((event.key === 'Enter' || event.key === ' ') && (row.photoUrl || row.notes)) { event.preventDefault(); setSelectedActivity(row); } }} tabIndex={row.photoUrl || row.notes ? 0 : undefined}><td>{row.area}</td><td><strong>{row.driver}</strong></td><td>{row.length}</td><td>{row.width}</td><td>{row.height}</td><td>{row.slope}</td><td className="tonnage-cell">{row.tonnage}</td><td>{row.time}</td></tr>)}</tbody></table></div></Card>
   </>;
 
-  const assignments = <><PageHeader action={<Chip className="active-count" size="sm">{routeRows.filter((route) => route.collector !== 'Unassigned').length} assigned</Chip>} category="Operations" description="Manage collectors assigned to SWMO areas" title="Collector assignments" /><Card className="table-card"><div className="table-scroll"><table><thead><tr><th>Collector</th><th>Currently assigned area</th><th>Last updated</th><th>Action</th></tr></thead><tbody>{routeRows.slice(0, 5).map((route) => <tr key={route.id}><td><AvatarName name={route.collector} /></td><td>{route.area}</td><td>Current schedule</td><td><Button className="reassign-button" variant="secondary">Reassign</Button></td></tr>)}</tbody></table></div></Card></>;
+  const assignments = <><PageHeader description="Assign each collection route to a driver" title="Collector assignments" /><RouteAssignmentPanel token={token} /></>;
 
-  const accounts = <><PageHeader action={<Button className="primary-button" onPress={() => { setSubmissionState({ loading: false, error: '', message: '' }); setShowAccountForm(true); }}><Icon name="plus" size={16} />Add account</Button>} category="Operations" description="Manage collector and staff accounts" title="Account management" />{submissionState.message ? <p className="feedback success-feedback">{submissionState.message}</p> : null}{submissionState.error ? <p className="feedback error-feedback">{submissionState.error}</p> : null}<Card className="table-card"><div className="table-scroll"><table><thead><tr><th>Name</th><th>Role</th><th>Assigned area</th><th>Contact</th><th>Email</th></tr></thead><tbody>{filteredAccounts.map((account) => <tr key={account.id}><td><AvatarName name={account.name} /></td><td><Chip className={`role-chip role-${account.role}`} size="sm">{titleCase(account.role)}</Chip></td><td>{account.area}</td><td>{account.contact}</td><td>{account.email}</td></tr>)}</tbody></table></div></Card></>;
+  const accounts = <><PageHeader action={<Button className="primary-button" onPress={() => { setSubmissionState({ loading: false, error: '', message: '' }); setShowAccountForm(true); }}><Icon name="plus" size={16} />Add account</Button>} description="Manage collector and staff accounts" title="Account management" />{submissionState.message ? <p className="feedback success-feedback">{submissionState.message}</p> : null}{submissionState.error ? <p className="feedback error-feedback">{submissionState.error}</p> : null}<Card className="table-card"><div className="table-scroll"><table><thead><tr><th>Name</th><th>Role</th><th>Assigned area</th><th>Contact</th><th>Email</th></tr></thead><tbody>{accountRows.map((account) => <tr key={account.id}><td><AvatarName name={account.name} photoUrl={account.profilePhotoUrl} /></td><td><Chip className={`role-chip role-${account.role}`} size="sm">{titleCase(account.role)}</Chip></td><td>{account.area}</td><td>{account.contact}</td><td>{account.email}</td></tr>)}</tbody></table></div></Card></>;
 
-  const trucks = <><PageHeader category="Operations" description="Register fleet vehicles and review their dimensions" title="Truck management" /><TruckManagementPanel token={token} /></>;
+  const trucks = <><PageHeader description="Register fleet vehicles and review their dimensions" title="Truck management" /><TruckManagementPanel token={token} /></>;
 
-  const pageContent = { overview, routes: routeHistory, complaints, activity, assignments, accounts, trucks }[activePage];
-  return <main className="admin-shell"><aside className="admin-sidebar"><div className="brand"><div className="brand-mark">R</div><div><strong>ResiKlean</strong><span>SWMO administrator</span></div></div><nav>{NAV_ITEMS.map((item) => <button aria-current={activePage === item.id ? 'page' : undefined} className={activePage === item.id ? 'nav-link active' : 'nav-link'} key={item.id} onClick={() => selectPage(item.id)}><Icon name={item.icon} />{item.label}</button>)}</nav><button className="signout-button" onClick={signOut}><Icon name="logout" />Sign out</button></aside><section className="admin-workspace"><header className="topbar"><div><p className="eyebrow">Naga City SWMO</p><p className="topbar-context">Administrator workspace</p></div><div className="topbar-actions"><Input aria-label="Search dashboard" className="search-input" onChange={(event) => setSearch(event.target.value)} placeholder="Search accounts or routes" startContent={<Icon name="search" size={16} />} value={search} /><div aria-live="polite" className={`socket-status socket-${socketStatus}`} role="status"><span className="socket-status-dot" />{socketStatusLabel(socketStatus)}</div><button aria-label="Notifications" className="notification-button"><Icon name="bell" size={19} /><i /></button><div className="topbar-avatar">{initials(storedUser.name || 'Admin')}</div><strong className="admin-name">{storedUser.name || 'Admin'}</strong></div></header><section className="dashboard-content">{apiData.usingPlaceholder ? <p className="data-note">Live dashboard data is unavailable. Sample records are shown for the tables; the tonnage chart intentionally stays empty.</p> : null}{pageContent}</section></section>{showAccountForm ? <div className="modal-layer" role="presentation"><div aria-modal="true" className="account-modal" role="dialog"><form onSubmit={createAccount}><div className="modal-header"><div><p className="eyebrow">Account management</p><h2>Add new account</h2></div><button aria-label="Close account form" onClick={() => setShowAccountForm(false)} type="button">×</button></div><div className="modal-body"><label>Full name<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. Juan dela Cruz" required value={newAccount.name} /></label><label>Contact number<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, contact: event.target.value }))} placeholder="09XXXXXXXXX" value={newAccount.contact} /></label><label>Email address<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, email: event.target.value }))} placeholder="user@nagacity.gov.ph" required type="email" value={newAccount.email} /></label><label>Temporary password<Input fullWidth minLength="6" onChange={(event) => setNewAccount((current) => ({ ...current, password: event.target.value }))} placeholder="At least 6 characters" required type="password" value={newAccount.password} /></label><label>Role<select onChange={(event) => setNewAccount((current) => ({ ...current, role: event.target.value }))} value={newAccount.role}><option value="collector">Collector</option><option value="staff">Staff</option></select></label><p className="field-note">Contact number is dashboard-only until the backend stores it.</p>{submissionState.error ? <p className="feedback error-feedback">{submissionState.error}</p> : null}</div><div className="modal-footer"><Button className="outline-button" onPress={() => setShowAccountForm(false)} type="button" variant="secondary">Cancel</Button><Button className="primary-button" isDisabled={submissionState.loading} type="submit">{submissionState.loading ? 'Creating…' : 'Create account'}</Button></div></form></div></div> : null}{selectedActivity ? <div className="modal-layer" onClick={() => setSelectedActivity(null)} role="presentation"><div aria-modal="true" className="activity-detail-modal" onClick={(event) => event.stopPropagation()} role="dialog"><div className="modal-header"><div><p className="eyebrow">Landfill operations</p><h2>Truckload submission</h2></div><button aria-label="Close truckload details" onClick={() => setSelectedActivity(null)} type="button">×</button></div><div className="activity-detail-body">{selectedActivity.photoUrl ? <img alt={`Audit photo for ${selectedActivity.area}`} className="activity-detail-photo" src={selectedActivity.photoUrl} /> : <div className="activity-photo-empty"><Icon name="image" size={28} /><p>No audit photo available</p></div>}<div className="activity-detail-grid"><div><span>Area</span><strong>{selectedActivity.area}</strong></div><div><span>Staff</span><strong>{selectedActivity.driver}</strong></div><div><span>Truck</span><strong>{selectedActivity.truckPlate}</strong></div><div><span>Submitted</span><strong>{selectedActivity.date} · {selectedActivity.time}</strong></div><div><span>Measurements</span><strong>{selectedActivity.length} m × {selectedActivity.width} m × {selectedActivity.height} m</strong></div><div><span>Slope</span><strong>{selectedActivity.slope}</strong></div><div><span>Estimated tonnage</span><strong className="tonnage-cell">{selectedActivity.tonnage}</strong></div></div>{selectedActivity.notes ? <div className="activity-detail-notes"><span>Notes</span><p>{selectedActivity.notes}</p></div> : null}</div><div className="modal-footer"><Button className="outline-button" onPress={() => setSelectedActivity(null)} type="button" variant="secondary">Close</Button></div></div></div> : null}</main>;
+  const pageContent = { overview, routes: routeHistory, complaints: complaintInbox, activity, assignments, accounts, trucks }[activePage];
+  return <main className="admin-shell"><aside className="admin-sidebar"><div className="brand"><img alt="ResiKlean logo" className="brand-logo" src="/swmo-resiklean-logo.svg" /></div><nav>{NAV_ITEMS.map((item) => <button aria-current={activePage === item.id ? 'page' : undefined} className={activePage === item.id ? 'nav-link active' : 'nav-link'} key={item.id} onClick={() => selectPage(item.id)}><Icon name={item.icon} />{item.label}</button>)}</nav><button className="signout-button" onClick={() => setShowLogoutConfirm(true)}><Icon name="logout" />Sign out</button></aside><section className="admin-workspace"><header className="topbar"><div className="topbar-actions"><button aria-label="Notifications" className="notification-button"><Icon name="bell" size={19} /><i /></button><div className="topbar-avatar">{initials(storedUser.name || 'Admin')}</div><strong className="admin-name">{storedUser.name || 'Admin'}</strong></div></header><section className="dashboard-content">{apiData.usingPlaceholder ? <p className="data-note">Live dashboard data is unavailable. Sample records are shown for the tables; the tonnage chart intentionally stays empty.</p> : null}{pageContent}</section></section>{showAccountForm ? <div className="modal-layer" role="presentation"><div aria-modal="true" className="account-modal" role="dialog"><form onSubmit={createAccount}><div className="modal-header"><div><p className="eyebrow">Account management</p><h2>Add new account</h2></div><button aria-label="Close account form" onClick={() => setShowAccountForm(false)} type="button">×</button></div><div className="modal-body"><label>Full name<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. Juan dela Cruz" required value={newAccount.name} /></label><label>Contact number<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, contact: event.target.value }))} placeholder="09XXXXXXXXX" value={newAccount.contact} /></label><label>Email address<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, email: event.target.value }))} placeholder="user@nagacity.gov.ph" value={newAccount.email} /></label><label>Temporary password<Input fullWidth minLength="6" onChange={(event) => setNewAccount((current) => ({ ...current, password: event.target.value }))} placeholder="At least 6 characters" required type="password" value={newAccount.password} /></label><label>Role<select onChange={(event) => setNewAccount((current) => ({ ...current, role: event.target.value }))} value={newAccount.role}><option value="collector">Collector</option><option value="staff">Staff</option></select></label><p className="field-note">Contact number is dashboard-only until the backend stores it.</p>{submissionState.error ? <p className="feedback error-feedback">{submissionState.error}</p> : null}</div><div className="modal-footer"><Button className="outline-button" onPress={() => setShowAccountForm(false)} type="button" variant="secondary">Cancel</Button><Button className="primary-button" isDisabled={submissionState.loading} type="submit">{submissionState.loading ? 'Creating…' : 'Create account'}</Button></div></form></div></div> : null}{selectedActivity ? <div className="modal-layer" onClick={() => setSelectedActivity(null)} role="presentation"><div aria-modal="true" className="activity-detail-modal" onClick={(event) => event.stopPropagation()} role="dialog"><div className="modal-header"><div><p className="eyebrow">Landfill operations</p><h2>Truckload submission</h2></div><button aria-label="Close truckload details" onClick={() => setSelectedActivity(null)} type="button">×</button></div><div className="activity-detail-body">{selectedActivity.photoUrl ? <img alt={`Audit photo for ${selectedActivity.area}`} className="activity-detail-photo" src={selectedActivity.photoUrl} /> : <div className="activity-photo-empty"><Icon name="image" size={28} /><p>No audit photo available</p></div>}<div className="activity-detail-grid"><div><span>Area</span><strong>{selectedActivity.area}</strong></div><div><span>Staff</span><strong>{selectedActivity.driver}</strong></div><div><span>Truck</span><strong>{selectedActivity.truckPlate}</strong></div><div><span>Submitted</span><strong>{selectedActivity.date} · {selectedActivity.time}</strong></div><div><span>Measurements</span><strong>{selectedActivity.length} m × {selectedActivity.width} m × {selectedActivity.height} m</strong></div><div><span>Slope</span><strong>{selectedActivity.slope}</strong></div><div><span>Estimated tonnage</span><strong className="tonnage-cell">{selectedActivity.tonnage}</strong></div></div>{selectedActivity.notes ? <div className="activity-detail-notes"><span>Notes</span><p>{selectedActivity.notes}</p></div> : null}</div><div className="modal-footer"><Button className="outline-button" onPress={() => setSelectedActivity(null)} type="button" variant="secondary">Close</Button></div></div></div> : null}{showLogoutConfirm ? <LogoutConfirmation onCancel={() => setShowLogoutConfirm(false)} onConfirm={confirmSignOut} /> : null}</main>;
 }

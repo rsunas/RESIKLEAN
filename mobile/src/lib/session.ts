@@ -14,6 +14,7 @@ export type AccountUser = {
   employeeId?: string;
   contact?: string;
   shift?: 'day' | 'night';
+  profilePhotoUrl?: string;
 };
 
 export type AuthSession = {

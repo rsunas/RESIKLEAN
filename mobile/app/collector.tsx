@@ -1,14 +1,19 @@
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
+import * as Location from 'expo-location';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { AppState, Image, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import Mapbox from '@rnmapbox/maps';
 import { useRouter } from 'expo-router';
+import { AppText as Text } from '@/components/app-text';
+import { SignOutConfirmModal } from '@/components/sign-out-confirm-modal';
 import { Card } from 'heroui-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { deleteOfflineRouteMap, downloadOfflineRouteMap, getOfflineRouteMapStatus, type OfflineRouteMapStatus } from '@/lib/driver-offline-map';
 import { enableDriverGeofencing, getDriverGeofencingStatus, stopDriverGeofencing, updateDriverGeofences } from '@/lib/driver-geofencing';
 import { getRouteLogQueueStats, subscribeToRouteLogSync, syncRouteLogQueue, type RouteLogSyncResult } from '@/lib/driver-route-log-queue';
+import { cacheAssignedRoute, clearCachedAssignedRoute, enableRouteProximityTracking, getCachedAssignedRoute, getRouteProximityEvents, getRouteProximityStatus, ROUTE_ENTER_TOLERANCE_METERS, ROUTE_EXIT_TOLERANCE_METERS, stopRouteProximityTracking, subscribeToRouteProximityStatus, updateRouteProximityTracking, type RoutePresenceEvent, type RoutePresenceStatus } from '@/lib/driver-route-proximity';
 import { clearSession, getSession, type AccountUser, type AuthSession } from '@/lib/session';
 
 type CollectorTab = 'map' | 'history' | 'profile';
@@ -30,12 +35,26 @@ type RouteStop = {
   order: number;
 };
 
+type RoutePath = {
+  type: 'LineString' | 'MultiLineString';
+  coordinates: unknown;
+};
+
+type RouteLineFeature = {
+  type: 'Feature';
+  properties: Record<string, never>;
+  geometry:
+    | { type: 'LineString'; coordinates: [number, number][] }
+    | { type: 'MultiLineString'; coordinates: [number, number][][] };
+};
+
 type DriverRoute = {
   _id: string;
   name: string;
-  barangay: string;
+  barangay: string | string[];
   schedule: number[];
   stops: RouteStop[];
+  routePath?: RoutePath;
 };
 
 type RouteLog = {
@@ -53,6 +72,13 @@ type RouteProgress = {
   completed: number;
   remaining: number;
   logs: RouteLog[];
+};
+
+type DriverLocation = {
+  latitude: number;
+  longitude: number;
+  accuracy?: number | null;
+  updatedAt: string;
 };
 
 type ApiResponse<T> = {
@@ -73,6 +99,55 @@ function displayShift(shift?: AccountUser['shift']) {
   return shift === 'night' ? 'Night Shift' : 'Day Shift';
 }
 
+function displayBarangay(barangay?: string | string[]) {
+  return Array.isArray(barangay) ? barangay.filter(Boolean).join(', ') : barangay || '';
+}
+
+function normalizeCoordinate(value: unknown): [number, number] | null {
+  if (!Array.isArray(value) || value.length < 2) return null;
+
+  const longitude = Number(value[0]);
+  const latitude = Number(value[1]);
+  if (!Number.isFinite(longitude) || !Number.isFinite(latitude) || Math.abs(longitude) > 180 || Math.abs(latitude) > 90) return null;
+
+  return [longitude, latitude];
+}
+
+function normalizeLineCoordinates(value: unknown): [number, number][] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map(normalizeCoordinate)
+    .filter((coordinate): coordinate is [number, number] => coordinate !== null);
+}
+
+function routeLineFeature(routePath?: RoutePath): RouteLineFeature | null {
+  if (!routePath || !Array.isArray(routePath.coordinates)) return null;
+
+  if (routePath.type === 'LineString') {
+    const coordinates = normalizeLineCoordinates(routePath.coordinates);
+    return coordinates.length >= 2
+      ? { type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates } }
+      : null;
+  }
+
+  if (routePath.type === 'MultiLineString') {
+    const coordinates = routePath.coordinates
+      .map(normalizeLineCoordinates)
+      .filter((line) => line.length >= 2);
+    return coordinates.length > 0
+      ? { type: 'Feature', properties: {}, geometry: { type: 'MultiLineString', coordinates } }
+      : null;
+  }
+
+  return null;
+}
+
+function firstRouteCoordinate(feature: RouteLineFeature | null): [number, number] | null {
+  if (!feature) return null;
+  if (feature.geometry.type === 'LineString') return feature.geometry.coordinates[0] || null;
+  return feature.geometry.coordinates[0]?.[0] || null;
+}
+
 function formatTime(date?: string) {
   if (!date) return '—';
 
@@ -80,6 +155,11 @@ function formatTime(date?: string) {
     hour: 'numeric',
     minute: '2-digit',
   }).format(new Date(date));
+}
+
+function formatStorage(bytes: number) {
+  if (bytes < 1_000_000) return `${Math.max(1, Math.round(bytes / 1_000))} KB`;
+  return `${(bytes / 1_000_000).toFixed(1)} MB`;
 }
 
 function ShiftPills({ hasRoute, shift }: { hasRoute: boolean; shift?: AccountUser['shift'] }) {
@@ -123,7 +203,7 @@ function HistoryHeader({ hasError, isLoading, route, shift }: { hasError: boolea
         <View>
           <Text style={styles.assignedLabel}>TODAY'S ROUTE</Text>
           <View style={styles.areaNameRow}><Feather color="#58dca2" name="map-pin" size={17} /><Text numberOfLines={1} style={styles.areaName}>{route?.name || 'No active route'}</Text></View>
-          <Text numberOfLines={1} style={styles.streetSubtitle}>{route?.barangay ? `${route.barangay} · ${stopNames}` : stopNames}</Text>
+          <Text numberOfLines={1} style={styles.streetSubtitle}>{route?.barangay ? `${displayBarangay(route.barangay)} · ${stopNames}` : stopNames}</Text>
         </View>
         <SyncBadge hasError={hasError} isLoading={isLoading} />
       </View>
@@ -191,20 +271,28 @@ function AccountDetail({ label, value }: { label: string; value: string }) {
 
 export default function CollectorScreen() {
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<CollectorTab>('map');
+  const [activeTab, setActiveTab] = useState<CollectorTab>('history');
   const [session, setSession] = useState<AuthSession | null>(null);
   const [driver, setDriver] = useState<AccountUser | null>(null);
   const [assignedRoute, setAssignedRoute] = useState<DriverRoute | null>(null);
+  const [driverLocation, setDriverLocation] = useState<DriverLocation | null>(null);
   const [progress, setProgress] = useState<RouteProgress | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isGeofencingEnabled, setIsGeofencingEnabled] = useState(false);
   const [isUpdatingGeofence, setIsUpdatingGeofence] = useState(false);
   const [geofencingMessage, setGeofencingMessage] = useState<string | null>(null);
+  const [routePresence, setRoutePresence] = useState<RoutePresenceStatus>({ enabled: false, state: 'unknown' });
+  const [routePresenceEvents, setRoutePresenceEvents] = useState<RoutePresenceEvent[]>([]);
+  const [offlineMap, setOfflineMap] = useState<OfflineRouteMapStatus>({ completedSizeBytes: 0, downloaded: false, downloading: false, percentage: 0 });
+  const [isUpdatingOfflineMap, setIsUpdatingOfflineMap] = useState(false);
+  const [offlineMapMessage, setOfflineMapMessage] = useState<string | null>(null);
+  const [isCapacityPanelExpanded, setIsCapacityPanelExpanded] = useState(true);
+  const [isSignOutConfirmVisible, setIsSignOutConfirmVisible] = useState(false);
   const [pendingRouteLogs, setPendingRouteLogs] = useState(0);
   const [failedRouteLogs, setFailedRouteLogs] = useState(0);
 
-  const loadDriverData = useCallback(async (token: string) => {
+  const loadDriverData = useCallback(async (token: string, cachedCollectorId?: string) => {
     if (!API_URL) {
       setLoadError('EXPO_PUBLIC_API_URL is not configured.');
       setIsLoading(false);
@@ -242,8 +330,10 @@ export default function CollectorScreen() {
       if (routeResult.response.status === 404) {
         setAssignedRoute(null);
         setProgress(null);
+        await clearCachedAssignedRoute(cachedCollectorId);
       } else if (routeResult.response.ok && routePayload.success && routePayload.data) {
         setAssignedRoute(routePayload.data);
+        if (cachedCollectorId) await cacheAssignedRoute(cachedCollectorId, routePayload.data);
         if (progressResult.response.ok && progressPayload.success && progressPayload.data) {
           setProgress(progressPayload.data);
         } else {
@@ -258,7 +348,19 @@ export default function CollectorScreen() {
 
       setLoadError(errors.length ? errors[0] : null);
     } catch {
-      setLoadError('Unable to reach the server. Check your connection and refresh.');
+      let cachedRoute: DriverRoute | null = null;
+      try {
+        cachedRoute = cachedCollectorId ? await getCachedAssignedRoute<DriverRoute>(cachedCollectorId) : null;
+      } catch {
+        // Keep the network error below if the local cache cannot be opened.
+      }
+      if (cachedRoute) {
+        setAssignedRoute(cachedRoute);
+        setProgress(null);
+        setLoadError('You are offline. Showing your last downloaded route.');
+      } else {
+        setLoadError('Unable to reach the server. Check your connection and refresh.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -273,26 +375,109 @@ export default function CollectorScreen() {
       }
       if (isMounted) {
         setSession(savedSession);
-        void loadDriverData(savedSession.token);
+        void loadDriverData(savedSession.token, savedSession.user._id || savedSession.user.id);
       }
     }).catch(() => router.replace('/login'));
     return () => { isMounted = false; };
   }, [loadDriverData, router]);
 
+  useEffect(() => {
+    if (!session?.token) return undefined;
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void loadDriverData(session.token, session.user._id || session.user.id);
+    });
+    return () => subscription.remove();
+  }, [loadDriverData, session?.token]);
+
+  useEffect(() => {
+    if (!assignedRoute || activeTab !== 'map' || Platform.OS === 'web') {
+      setDriverLocation(null);
+      return undefined;
+    }
+
+    let isMounted = true;
+    let isStarting = false;
+    let watcher: Location.LocationSubscription | null = null;
+
+    const updateLocation = (location: Location.LocationObject) => {
+      if (!isMounted) return;
+      setDriverLocation({
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude,
+        accuracy: location.coords.accuracy,
+        updatedAt: new Date().toISOString(),
+      });
+    };
+
+    const startWatching = async () => {
+      if (isStarting || !isMounted || AppState.currentState !== 'active') return;
+      isStarting = true;
+
+      try {
+        const existingPermission = await Location.getForegroundPermissionsAsync();
+        const permission = existingPermission.status === 'granted'
+          ? existingPermission
+          : await Location.requestForegroundPermissionsAsync();
+
+        if (!isMounted || permission.status !== 'granted' || AppState.currentState !== 'active') return;
+
+        const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+        updateLocation(current);
+
+        if (!isMounted || AppState.currentState !== 'active') return;
+        const nextWatcher = await Location.watchPositionAsync(
+          { accuracy: Location.Accuracy.High, distanceInterval: 5, timeInterval: 3_000 },
+          updateLocation,
+        );
+        if (!isMounted || AppState.currentState !== 'active') {
+          nextWatcher.remove();
+        } else {
+          watcher = nextWatcher;
+        }
+      } catch {
+        // Location is optional for rendering the assigned route. If permission
+        // or the device GPS is unavailable, keep the route map usable.
+      } finally {
+        isStarting = false;
+      }
+    };
+
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        void startWatching();
+      } else {
+        watcher?.remove();
+        watcher = null;
+      }
+    });
+
+    void startWatching();
+
+    return () => {
+      isMounted = false;
+      watcher?.remove();
+      appStateSubscription.remove();
+    };
+  }, [activeTab, assignedRoute?._id]);
+
   const profile = driver || session?.user || null;
   const collectorName = profile?.name?.trim() || 'Driver';
   const initial = collectorName.charAt(0).toUpperCase();
   const routeStops = assignedRoute?.stops || [];
+  const mapStops = useMemo(() => routeStops
+    .map((stop) => ({ ...stop, latitude: Number(stop.latitude), longitude: Number(stop.longitude) }))
+    .filter((stop) => Number.isFinite(stop.latitude) && Number.isFinite(stop.longitude) && Math.abs(stop.latitude) <= 90 && Math.abs(stop.longitude) <= 180), [routeStops]);
+  const mapRouteLine = useMemo(() => routeLineFeature(assignedRoute?.routePath), [assignedRoute?.routePath]);
   const completedStopIds = new Set((progress?.logs || []).filter((log) => log.status === 'collected').map((log) => log.stopId));
-  const geofenceStops = useMemo(() => (assignedRoute?.stops || [])
+  const geofenceStops = useMemo(() => mapStops
     .filter((stop) => !(progress?.logs || []).some((log) => log.stopId === stop._id && log.status === 'collected'))
-    .map((stop) => ({ id: stop._id, latitude: stop.latitude, longitude: stop.longitude })), [assignedRoute, progress]);
+    .map((stop) => ({ id: stop._id, latitude: stop.latitude, longitude: stop.longitude })), [mapStops, progress]);
   const todayStreets: Street[] = routeStops.map((stop) => {
     const log = progress?.logs.find((item) => item.stopId === stop._id && item.status === 'collected');
     return {
       id: stop._id,
       name: stop.name,
-      barangay: assignedRoute?.barangay || '',
+      barangay: displayBarangay(assignedRoute?.barangay),
       status: log ? 'Collected' : 'Pending',
       time: formatTime(log?.exitedAt || log?.collectedAt),
       flaggedForReview: log?.flaggedForReview,
@@ -303,10 +488,68 @@ export default function CollectorScreen() {
   const pending = Math.max(0, progress?.remaining ?? totalStops - completedStopIds.size);
   const reviewCount = (progress?.logs || []).filter((log) => log.flaggedForReview).length;
   const progressPercent = totalStops ? (completed / totalStops) * 100 : 0;
-  const firstStop = routeStops[0];
-  const mapCenter: [number, number] = firstStop ? [firstStop.longitude, firstStop.latitude] : MAP_CENTER;
-  const barangay = assignedRoute?.barangay || profile?.barangay || profile?.location || 'No route assigned';
+  const firstMapStop = mapStops[0];
+  const firstRoutePoint = firstRouteCoordinate(mapRouteLine);
+  const hasMapFocus = Boolean(firstMapStop || firstRoutePoint);
+  const mapCenter: [number, number] = firstMapStop ? [firstMapStop.longitude, firstMapStop.latitude] : firstRoutePoint || MAP_CENTER;
+  const cameraCenter: [number, number] = driverLocation ? [driverLocation.longitude, driverLocation.latitude] : mapCenter;
+  const barangay = displayBarangay(assignedRoute?.barangay) || profile?.barangay || profile?.location || 'No route assigned';
   const collectorId = session?.user._id || session?.user.id;
+
+  const refreshRoutePresence = useCallback(async () => {
+    if (!assignedRoute) {
+      setRoutePresence({ enabled: false, state: 'unknown' });
+      setRoutePresenceEvents([]);
+      setOfflineMap({ completedSizeBytes: 0, downloaded: false, downloading: false, percentage: 0 });
+      return;
+    }
+
+    try {
+      const [status, events, mapStatus] = await Promise.all([
+        getRouteProximityStatus(),
+        getRouteProximityEvents(assignedRoute._id),
+        getOfflineRouteMapStatus(assignedRoute._id),
+      ]);
+      setRoutePresence(status.routeId === assignedRoute._id ? status : { enabled: false, state: 'unknown' });
+      setRoutePresenceEvents(events);
+      setOfflineMap(mapStatus);
+    } catch {
+      // Route data remains usable even if a local map-pack status cannot be read.
+    }
+  }, [assignedRoute]);
+
+  useEffect(() => {
+    void refreshRoutePresence();
+    const unsubscribe = subscribeToRouteProximityStatus((status) => {
+      const routeId = assignedRoute?._id;
+      if (!routeId || status.routeId !== routeId) return;
+      setRoutePresence(status);
+      void getRouteProximityEvents(routeId).then(setRoutePresenceEvents).catch(() => undefined);
+    });
+    const refreshInterval = setInterval(() => { void refreshRoutePresence(); }, 20_000);
+
+    return () => {
+      unsubscribe();
+      clearInterval(refreshInterval);
+    };
+  }, [assignedRoute?._id, refreshRoutePresence]);
+
+  useEffect(() => {
+    const route = assignedRoute;
+    const routePath = route?.routePath;
+    if (!route || !routePath) return;
+
+    let isMounted = true;
+    const refreshTrackedRoute = async () => {
+      const status = await getRouteProximityStatus();
+      if (!status.enabled) return;
+      await updateRouteProximityTracking({ routeId: route._id, routeName: route.name, routePath });
+      if (isMounted) void refreshRoutePresence();
+    };
+
+    void refreshTrackedRoute();
+    return () => { isMounted = false; };
+  }, [assignedRoute?._id, assignedRoute?.name, assignedRoute?.routePath, refreshRoutePresence]);
 
   const applyQueueResult = useCallback((result: RouteLogSyncResult) => {
     setPendingRouteLogs(result.pending);
@@ -321,7 +564,7 @@ export default function CollectorScreen() {
     const handleSync = (result: RouteLogSyncResult) => {
       if (!isMounted) return;
       applyQueueResult(result);
-      if (result.synced) void loadDriverData(session.token);
+      if (result.synced) void loadDriverData(session.token, collectorId);
     };
 
     const unsubscribe = subscribeToRouteLogSync(context, handleSync);
@@ -366,37 +609,49 @@ export default function CollectorScreen() {
   }, [geofenceStops, isLoading, loadError, session]);
 
   const enableBackgroundGeofencing = useCallback(async () => {
-    if (!API_URL || !assignedRoute) {
+    if (!assignedRoute?.routePath || !mapRouteLine) {
       setGeofencingMessage('Load an assigned route before enabling background geofencing.');
-      return;
-    }
-    if (!geofenceStops.length) {
-      setGeofencingMessage('All assigned stops are already completed.');
       return;
     }
 
     setIsUpdatingGeofence(true);
     setGeofencingMessage(null);
     try {
-      const result = await enableDriverGeofencing({ apiUrl: API_URL, stops: geofenceStops });
-      setIsGeofencingEnabled(result.enabled);
-      setGeofencingMessage(result.message);
-      if (result.enabled && session?.token && collectorId) {
+      const routeResult = await enableRouteProximityTracking({
+        routeId: assignedRoute._id,
+        routeName: assignedRoute.name,
+        routePath: assignedRoute.routePath,
+      });
+      let stopMessage = '';
+      if (API_URL && geofenceStops.length) {
+        const stopResult = await enableDriverGeofencing({ apiUrl: API_URL, stops: geofenceStops });
+        setIsGeofencingEnabled(stopResult.enabled);
+        stopMessage = stopResult.enabled ? ` Also monitoring ${geofenceStops.length} stop zone${geofenceStops.length === 1 ? '' : 's'}.` : ` Stop zones: ${stopResult.message}`;
+      } else {
+        setIsGeofencingEnabled(false);
+      }
+      setGeofencingMessage(`${routeResult.message}${stopMessage}`);
+      if (routeResult.enabled && session?.token && collectorId && API_URL) {
         applyQueueResult(await syncRouteLogQueue({ apiUrl: API_URL, token: session.token, collectorId }));
       }
+      await refreshRoutePresence();
     } catch {
       setGeofencingMessage('Unable to enable background geofencing.');
     } finally {
       setIsUpdatingGeofence(false);
     }
-  }, [applyQueueResult, assignedRoute, collectorId, geofenceStops, session?.token]);
+  }, [API_URL, applyQueueResult, assignedRoute, collectorId, geofenceStops, mapRouteLine, refreshRoutePresence, session?.token]);
 
   const disableBackgroundGeofencing = useCallback(async () => {
     setIsUpdatingGeofence(true);
     try {
-      await stopDriverGeofencing({ forgetConfiguration: true });
+      await Promise.all([
+        stopDriverGeofencing({ forgetConfiguration: true }),
+        stopRouteProximityTracking({ forgetConfiguration: true }),
+      ]);
       setIsGeofencingEnabled(false);
-      setGeofencingMessage('Background geofencing is off. Queued route logs will still sync when you reconnect.');
+      setRoutePresence({ enabled: false, state: 'unknown' });
+      setGeofencingMessage('Route monitoring is off. Existing stop logs will still sync when you reconnect.');
     } catch {
       setGeofencingMessage('Unable to turn off background geofencing.');
     } finally {
@@ -404,9 +659,47 @@ export default function CollectorScreen() {
     }
   }, []);
 
-  const signOut = async () => {
+  const toggleOfflineMap = useCallback(async () => {
+    if (!assignedRoute?.routePath) {
+      setOfflineMapMessage('An assigned route with a valid road line is required before downloading a map.');
+      return;
+    }
+
+    setIsUpdatingOfflineMap(true);
+    setOfflineMapMessage(null);
     try {
-      await stopDriverGeofencing({ forgetConfiguration: true });
+      if (offlineMap.downloaded) {
+        await deleteOfflineRouteMap(assignedRoute._id);
+        setOfflineMap({ completedSizeBytes: 0, downloaded: false, downloading: false, percentage: 0 });
+        setOfflineMapMessage('Downloaded map removed from this phone.');
+      } else {
+        const result = await downloadOfflineRouteMap({
+          onError: setOfflineMapMessage,
+          onProgress: (status) => {
+            setOfflineMap(status);
+            if (status.downloaded) setOfflineMapMessage('Map downloaded and ready for offline use.');
+          },
+          routeId: assignedRoute._id,
+          routeName: assignedRoute.name,
+          routePath: assignedRoute.routePath,
+        });
+        setOfflineMap(result);
+        setOfflineMapMessage(result.downloaded ? 'Map is already downloaded.' : 'Downloading the route map for offline use.');
+      }
+    } catch (error) {
+      setOfflineMapMessage(error instanceof Error ? error.message : 'Unable to download the route map.');
+    } finally {
+      setIsUpdatingOfflineMap(false);
+    }
+  }, [assignedRoute, offlineMap.downloaded]);
+
+  const completeSignOut = async () => {
+    try {
+      await Promise.all([
+        stopDriverGeofencing({ forgetConfiguration: true }),
+        stopRouteProximityTracking({ forgetConfiguration: true }),
+        clearCachedAssignedRoute(collectorId),
+      ]);
     } finally {
       await clearSession();
       setSession(null);
@@ -414,14 +707,31 @@ export default function CollectorScreen() {
     }
   };
 
+  const signOut = () => setIsSignOutConfirmVisible(true);
+
   const mapScreen = (
     <View style={styles.mapScreen}>
-      <StandardHeader barangay={barangay} hasError={Boolean(loadError)} hasRoute={Boolean(assignedRoute)} isLoading={isLoading} shift={profile?.shift} />
       <View style={styles.mapPlaceholder}>
         {MAPBOX_ACCESS_TOKEN ? (
           <Mapbox.MapView style={styles.mapView} styleURL={Mapbox.StyleURL.Street}>
-            <Mapbox.Camera centerCoordinate={mapCenter} zoomLevel={firstStop ? 15 : 12} />
-            {routeStops.map((stop) => {
+            <Mapbox.Camera centerCoordinate={cameraCenter} zoomLevel={driverLocation ? 14 : hasMapFocus ? 14 : 12} />
+            {mapRouteLine ? (
+              <Mapbox.ShapeSource id="assigned-route-path" shape={mapRouteLine}>
+                <Mapbox.LineLayer id="assigned-route-corridor" style={{ lineCap: 'round', lineColor: '#14A87D', lineJoin: 'round', lineOpacity: 0.18, lineWidth: 18 }} />
+                <Mapbox.LineLayer id="assigned-route-line" style={{ lineCap: 'round', lineColor: '#14A87D', lineJoin: 'round', lineOpacity: 0.9, lineWidth: 5 }} />
+              </Mapbox.ShapeSource>
+            ) : null}
+            {driverLocation ? (
+              <Mapbox.PointAnnotation
+                coordinate={[driverLocation.longitude, driverLocation.latitude]}
+                id="driver-current-location"
+              >
+                <View style={styles.driverLocationMarker}>
+                  <Feather color="#ffffff" name="truck" size={20} />
+                </View>
+              </Mapbox.PointAnnotation>
+            ) : null}
+            {mapStops.map((stop) => {
               const isCollected = completedStopIds.has(stop._id);
               const needsReview = progress?.logs.some((log) => log.stopId === stop._id && log.flaggedForReview);
               return (
@@ -449,23 +759,35 @@ export default function CollectorScreen() {
           <View style={styles.geofenceCard}>
             <View style={styles.geofenceHeader}>
               <View style={styles.geofenceStatusRow}>
-                <Feather color={isGeofencingEnabled ? '#07815f' : '#68776e'} name={isGeofencingEnabled ? 'crosshair' : 'map-pin'} size={17} />
+                <Feather color={routePresence.enabled && routePresence.state === 'on_route' ? '#07815f' : routePresence.enabled ? '#c77d10' : '#68776e'} name={routePresence.enabled ? 'navigation' : 'map-pin'} size={17} />
                 <View style={styles.geofenceTextWrap}>
-                  <Text style={styles.geofenceTitle}>{isGeofencingEnabled ? 'Background geofencing on' : 'Background geofencing off'}</Text>
-                  <Text numberOfLines={2} style={styles.geofenceCaption}>{geofencingMessage || 'Enter and exit a stop zone to create one offline-safe collection log.'}</Text>
+                  <Text style={styles.geofenceTitle}>{routePresence.enabled ? routePresence.state === 'on_route' ? 'On assigned route' : routePresence.state === 'off_route' ? 'Away from assigned route' : 'Finding your route position' : 'Route monitoring off'}</Text>
+                  <Text numberOfLines={2} style={styles.geofenceCaption}>{geofencingMessage || (routePresence.enabled ? `${Math.round(routePresence.distanceMeters || 0)} m from the route - last checked ${formatTime(routePresence.lastCheckedAt)}` : `Enable to detect entry within ${ROUTE_ENTER_TOLERANCE_METERS} m and exit beyond ${ROUTE_EXIT_TOLERANCE_METERS} m.`)}</Text>
                 </View>
               </View>
-              <Pressable disabled={isUpdatingGeofence} onPress={() => void (isGeofencingEnabled ? disableBackgroundGeofencing() : enableBackgroundGeofencing())} style={[styles.geofenceButton, isGeofencingEnabled && styles.geofenceButtonEnabled, isUpdatingGeofence && styles.geofenceButtonDisabled]}>
-                <Text style={[styles.geofenceButtonText, isGeofencingEnabled && styles.geofenceButtonTextEnabled]}>{isUpdatingGeofence ? 'Working…' : isGeofencingEnabled ? 'Turn off' : 'Enable'}</Text>
+              <Pressable accessibilityLabel={routePresence.enabled ? 'Turn off route monitoring' : 'Enable route monitoring'} accessibilityRole="switch" accessibilityState={{ checked: routePresence.enabled, disabled: isUpdatingGeofence }} disabled={isUpdatingGeofence} onPress={() => void (routePresence.enabled ? disableBackgroundGeofencing() : enableBackgroundGeofencing())} style={[styles.monitoringSwitch, routePresence.enabled && styles.monitoringSwitchOn, isUpdatingGeofence && styles.geofenceButtonDisabled]}>
+                <View style={[styles.monitoringSwitchThumb, routePresence.enabled && styles.monitoringSwitchThumbOn]} />
               </Pressable>
             </View>
             {pendingRouteLogs > 0 && <Text style={styles.geofenceQueueText}>{pendingRouteLogs} route log{pendingRouteLogs === 1 ? '' : 's'} queued for sync{failedRouteLogs ? ` (${failedRouteLogs} need attention)` : ''}.</Text>}
           </View>
         )}
-        <Card style={styles.legendCard}>
-          <View style={styles.legendHeading}><Feather color="#d79d2f" name="flag" size={15} /><Text style={styles.legendTitle}>Priority</Text></View>
-          {[['#13b981', 'Collected'], ['#9ea7a1', 'Pending'], ['#8d53ce', 'For review']].map(([color, label]) => <View key={label} style={styles.legendRow}><View style={[styles.legendDot, { backgroundColor: color }]} /><Text style={styles.legendText}>{label}</Text></View>)}
-        </Card>
+        {assignedRoute && (
+          <View style={styles.capacityFloatingCard}>
+            <Pressable accessibilityRole="button" onPress={() => setIsCapacityPanelExpanded((expanded) => !expanded)} style={styles.capacityHeader}>
+              <View style={styles.capacityHeaderIcon}><Feather color="#ffffff" name="truck" size={13} /></View>
+              <View style={styles.capacityHeaderTextWrap}><Text style={styles.capacityTitle}>Predictive capacity</Text><Text style={styles.capacitySubtitle}>Route load estimate</Text></View>
+              <Feather color="#ffffff" name={isCapacityPanelExpanded ? 'chevron-up' : 'chevron-down'} size={15} />
+            </Pressable>
+            {isCapacityPanelExpanded && (
+              <View style={styles.capacityBody}>
+                <View style={styles.capacityMetric}><Text style={styles.capacityPercent}>65%</Text><Text style={styles.capacityMetricLabel}>Loaded space</Text></View>
+                <View style={styles.capacityProgressTrack}><View style={styles.capacityProgressFill} /></View>
+                <Text style={styles.capacityPlaceholder}>Predictive truck capacity will appear here.</Text>
+              </View>
+            )}
+          </View>
+        )}
       </View>
     </View>
   );
@@ -478,6 +800,28 @@ export default function CollectorScreen() {
           <View><Text style={styles.progressLabel}>TODAY'S PROGRESS</Text><Text style={styles.progressNumber}>{completed} <Text style={styles.progressTotal}>/ {totalStops} stops</Text></Text><Text style={styles.progressCaption}>{pending ? `${pending} stops remaining` : totalStops ? 'Route completed' : 'No route scheduled'}</Text></View>
           <ProgressRing percent={progressPercent} />
         </Card>
+        {assignedRoute && <Card style={styles.routePresenceHistoryCard}>
+          <View style={styles.routePresenceHistoryHeading}>
+            <View><Text style={styles.dateLabel}>ROUTE PRESENCE</Text><Text style={styles.routePresenceHistoryTitle}>Road-route entries and exits</Text></View>
+            <View style={[styles.routePresencePill, routePresence.state === 'on_route' ? styles.routePresencePillOn : routePresence.state === 'off_route' ? styles.routePresencePillOff : styles.routePresencePillUnknown]}><Text style={[styles.routePresencePillText, routePresence.state === 'on_route' ? styles.routePresencePillTextOn : routePresence.state === 'off_route' ? styles.routePresencePillTextOff : styles.routePresencePillTextUnknown]}>{routePresence.state === 'on_route' ? 'On route' : routePresence.state === 'off_route' ? 'Off route' : 'Waiting'}</Text></View>
+          </View>
+          {routePresenceEvents.length ? routePresenceEvents.map((event) => <View key={event.id} style={styles.routePresenceEvent}>
+            <View style={[styles.routePresenceEventDot, event.eventType === 'entered' ? styles.routePresenceEventEntered : styles.routePresenceEventLeft]} />
+            <View style={styles.routePresenceEventTextWrap}><Text style={styles.routePresenceEventTitle}>{event.eventType === 'entered' ? 'Entered assigned route' : 'Left assigned route'}</Text><Text style={styles.routePresenceEventCaption}>{formatTime(event.occurredAt)} - {Math.round(event.distanceMeters)} m from route{event.accuracyMeters ? ` - GPS ±${Math.round(event.accuracyMeters)} m` : ''}</Text></View>
+          </View>) : <Text style={styles.routePresenceEmpty}>Enable route monitoring to record timestamped route-entry and route-exit events, even while offline.</Text>}
+        </Card>}
+        {assignedRoute && <Card style={styles.offlineMapCard}>
+          <View style={styles.offlineMapRow}>
+            <View style={styles.offlineMapTextWrap}>
+              <Text style={styles.offlineMapTitle}>{offlineMap.downloaded ? 'Offline map ready' : offlineMap.downloading ? `Downloading map - ${offlineMap.percentage}%` : 'Download route map'}</Text>
+              <Text numberOfLines={2} style={styles.offlineMapCaption}>{offlineMapMessage || (offlineMap.downloaded ? `${formatStorage(offlineMap.completedSizeBytes)} stored on this phone.` : 'Save this assigned route map for use without mobile data.')}</Text>
+            </View>
+            <Pressable disabled={isUpdatingOfflineMap} onPress={() => void toggleOfflineMap()} style={[styles.offlineMapButton, offlineMap.downloaded && styles.offlineMapButtonDownloaded, isUpdatingOfflineMap && styles.geofenceButtonDisabled]}>
+              <Feather color={offlineMap.downloaded ? '#9d3139' : '#286349'} name={offlineMap.downloaded ? 'trash-2' : 'download'} size={14} />
+              <Text style={[styles.offlineMapButtonText, offlineMap.downloaded && styles.offlineMapButtonTextDownloaded]}>{isUpdatingOfflineMap ? 'Working…' : offlineMap.downloaded ? 'Remove' : 'Download'}</Text>
+            </Pressable>
+          </View>
+        </Card>}
         <View style={styles.historyGroup}>
           <Text style={styles.dateLabel}>TODAY'S STOPS</Text>
           {todayStreets.length ? todayStreets.map((street) => <StreetRow key={street.id} street={street} />) : <Text style={styles.emptyStateText}>{isLoading ? 'Loading assigned route…' : loadError || 'No stops are assigned for today.'}</Text>}
@@ -491,7 +835,7 @@ export default function CollectorScreen() {
       <StandardHeader barangay={barangay} hasError={Boolean(loadError)} hasRoute={Boolean(assignedRoute)} isLoading={isLoading} shift={profile?.shift} />
       <ScrollView contentContainerStyle={styles.profileScrollContent} showsVerticalScrollIndicator={false}>
         <Card style={styles.collectorProfileCard}>
-          <View style={styles.avatar}><Text style={styles.avatarText}>{initial}</Text></View>
+          <View style={styles.avatar}>{profile?.profilePhotoUrl ? <Image accessibilityLabel="Profile picture" source={{ uri: profile.profilePhotoUrl }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{initial}</Text>}</View>
           <Text style={styles.collectorName}>{collectorName}</Text>
           <Text style={styles.collectorRole}>Collector · Route Driver</Text>
           <Text style={styles.collectorBarangay}>{barangay}</Text>
@@ -516,7 +860,7 @@ export default function CollectorScreen() {
           <Text style={styles.signOutText}>Sign Out</Text>
         </Pressable>
       </ScrollView>
-      <View style={styles.syncBottomBar}><View style={styles.syncBottomTextWrap}><Feather color={loadError ? '#c05d36' : '#07815f'} name={loadError ? 'alert-circle' : 'wifi'} size={15} /><Text style={styles.syncBottomText}>{loadError || (isLoading ? 'Refreshing driver data…' : 'Driver data is up to date')}</Text></View><Pressable disabled={!session || isLoading} onPress={() => session && void loadDriverData(session.token)} style={[styles.syncButton, (!session || isLoading) && styles.syncButtonDisabled]}><Text style={styles.syncButtonText}>{isLoading ? 'Refreshing' : 'Refresh'}</Text></Pressable></View>
+      <View style={styles.syncBottomBar}><View style={styles.syncBottomTextWrap}><Feather color={loadError ? '#c05d36' : '#07815f'} name={loadError ? 'alert-circle' : 'wifi'} size={15} /><Text style={styles.syncBottomText}>{loadError || (isLoading ? 'Refreshing driver data…' : 'Driver data is up to date')}</Text></View><Pressable disabled={!session || isLoading} onPress={() => session && void loadDriverData(session.token, collectorId)} style={[styles.syncButton, (!session || isLoading) && styles.syncButtonDisabled]}><Text style={styles.syncButtonText}>{isLoading ? 'Refreshing' : 'Refresh'}</Text></Pressable></View>
     </View>
   );
 
@@ -525,6 +869,7 @@ export default function CollectorScreen() {
       <StatusBar backgroundColor="transparent" style="light" translucent />
       <View style={styles.content}>{activeTab === 'map' ? mapScreen : activeTab === 'history' ? historyScreen : profileScreen}</View>
       <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
+      <SignOutConfirmModal visible={isSignOutConfirmVisible} onCancel={() => setIsSignOutConfirmVisible(false)} onConfirm={completeSignOut} />
     </SafeAreaView>
   );
 }
@@ -551,6 +896,7 @@ const styles = StyleSheet.create({
   mapMarkerPending: { backgroundColor: '#7f8b84' },
   mapMarkerReview: { backgroundColor: '#8d53ce' },
   mapMarkerText: { color: '#ffffff', fontSize: 10, fontWeight: '800' },
+  driverLocationMarker: { alignItems: 'center', backgroundColor: '#1976e8', borderColor: '#ffffff', borderRadius: 24, borderWidth: 3, height: 48, justifyContent: 'center', shadowColor: '#0d3c79', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.3, shadowRadius: 5, width: 48 },
   mapPlaceholderLabel: { alignItems: 'center', backgroundColor: 'rgba(248,252,249,0.88)', borderColor: '#c2d3c9', borderRadius: 12, borderWidth: 1, flexDirection: 'row', gap: 7, left: 20, paddingHorizontal: 12, paddingVertical: 9, position: 'absolute', right: 20, top: '47%' },
   mapPlaceholderText: { color: '#45685a', fontSize: 11, fontWeight: '700' },
   geofenceCard: { backgroundColor: 'rgba(255,255,255,0.96)', borderColor: '#cfe2d8', borderRadius: 13, borderWidth: 1, bottom: 12, left: 12, padding: 10, position: 'absolute', right: 12, shadowColor: '#234837', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.12, shadowRadius: 8 },
@@ -564,13 +910,33 @@ const styles = StyleSheet.create({
   geofenceButtonDisabled: { opacity: 0.62 },
   geofenceButtonText: { color: '#ffffff', fontSize: 10, fontWeight: '800' },
   geofenceButtonTextEnabled: { color: '#286349' },
+  monitoringSwitch: { backgroundColor: '#d7e1db', borderRadius: 14, height: 27, justifyContent: 'center', paddingHorizontal: 3, width: 48 },
+  monitoringSwitchOn: { backgroundColor: '#14a87d' },
+  monitoringSwitchThumb: { backgroundColor: '#ffffff', borderRadius: 11, height: 21, shadowColor: '#244738', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.16, shadowRadius: 2, width: 21 },
+  monitoringSwitchThumbOn: { alignSelf: 'flex-end' },
   geofenceQueueText: { color: '#9b6816', fontSize: 9, fontWeight: '700', marginTop: 7 },
-  legendCard: { backgroundColor: '#ffffff', borderRadius: 11, padding: 10, position: 'absolute', right: 12, shadowColor: '#234837', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.12, shadowRadius: 8, top: 12, width: 137 },
-  legendHeading: { alignItems: 'center', borderBottomColor: '#edf1ef', borderBottomWidth: 1, flexDirection: 'row', gap: 5, paddingBottom: 7 },
-  legendTitle: { color: '#99630c', fontSize: 10, fontWeight: '800' },
-  legendRow: { alignItems: 'center', flexDirection: 'row', gap: 6, marginTop: 7 },
-  legendDot: { borderRadius: 5, height: 8, width: 8 },
-  legendText: { color: '#5d6d64', fontSize: 10, fontWeight: '600' },
+  capacityFloatingCard: { backgroundColor: 'rgba(255,255,255,0.96)', borderColor: '#d4e3db', borderRadius: 13, overflow: 'hidden', position: 'absolute', right: 12, shadowColor: '#234837', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.16, shadowRadius: 8, top: 82, width: 190 },
+  capacityHeader: { alignItems: 'center', backgroundColor: '#07815f', flexDirection: 'row', gap: 7, paddingHorizontal: 9, paddingVertical: 8 },
+  capacityHeaderIcon: { alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 10, height: 21, justifyContent: 'center', width: 21 },
+  capacityHeaderTextWrap: { flex: 1 },
+  capacityTitle: { color: '#ffffff', fontSize: 12, fontWeight: '800' },
+  capacitySubtitle: { color: '#c6f0dc', fontSize: 9, marginTop: 2 },
+  capacityBody: { padding: 11 },
+  capacityMetric: { alignItems: 'baseline', flexDirection: 'row', gap: 5 },
+  capacityPercent: { color: '#263f33', fontSize: 25, fontWeight: '800' },
+  capacityMetricLabel: { color: '#718279', fontSize: 10 },
+  capacityProgressTrack: { backgroundColor: '#e4eee9', borderRadius: 4, height: 8, marginTop: 7, overflow: 'hidden' },
+  capacityProgressFill: { backgroundColor: '#14a87d', borderRadius: 4, height: '100%', width: '65%' },
+  capacityPlaceholder: { color: '#87948d', fontSize: 10, lineHeight: 14, marginTop: 7 },
+  offlineMapCard: { backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 15, borderWidth: 1, marginTop: 12, padding: 13, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 7 },
+  offlineMapRow: { alignItems: 'center', borderTopColor: '#e3ece6', borderTopWidth: 1, flexDirection: 'row', gap: 8, marginTop: 9, paddingTop: 9 },
+  offlineMapTextWrap: { flex: 1 },
+  offlineMapTitle: { color: '#345345', fontSize: 10, fontWeight: '800' },
+  offlineMapCaption: { color: '#78877f', fontSize: 9, marginTop: 2 },
+  offlineMapButton: { alignItems: 'center', backgroundColor: '#edf6f1', borderColor: '#b6d6c5', borderRadius: 8, borderWidth: 1, flexDirection: 'row', gap: 4, paddingHorizontal: 8, paddingVertical: 6 },
+  offlineMapButtonDownloaded: { backgroundColor: '#fff3f4', borderColor: '#f0c7cb' },
+  offlineMapButtonText: { color: '#286349', fontSize: 9, fontWeight: '800' },
+  offlineMapButtonTextDownloaded: { color: '#9d3139' },
   historyHeader: { backgroundColor: '#176b3a', paddingBottom: 11, paddingHorizontal: 16, paddingTop: 10 },
   historyHeaderTop: { flexDirection: 'row', justifyContent: 'space-between' },
   assignedLabel: { color: '#9bc6ad', fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
@@ -585,6 +951,25 @@ const styles = StyleSheet.create({
   progressCaption: { color: '#abd1bc', fontSize: 10, marginTop: 2 },
   progressRing: { alignItems: 'center', height: 59, justifyContent: 'center', width: 59 },
   progressPercent: { color: '#ffffff', fontSize: 11, fontWeight: '800', position: 'absolute' },
+  routePresenceHistoryCard: { backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 15, borderWidth: 1, marginTop: 12, padding: 13, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 7 },
+  routePresenceHistoryHeading: { alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between' },
+  routePresenceHistoryTitle: { color: '#3d5246', fontSize: 12, fontWeight: '800', marginTop: -4 },
+  routePresencePill: { borderRadius: 9, paddingHorizontal: 8, paddingVertical: 4 },
+  routePresencePillOn: { backgroundColor: '#e8fbf1' },
+  routePresencePillOff: { backgroundColor: '#fff3df' },
+  routePresencePillUnknown: { backgroundColor: '#f0f3f1' },
+  routePresencePillText: { fontSize: 9, fontWeight: '800' },
+  routePresencePillTextOn: { color: '#07815f' },
+  routePresencePillTextOff: { color: '#b66d08' },
+  routePresencePillTextUnknown: { color: '#68776e' },
+  routePresenceEvent: { alignItems: 'flex-start', borderTopColor: '#eef3f0', borderTopWidth: 1, flexDirection: 'row', gap: 8, marginTop: 10, paddingTop: 10 },
+  routePresenceEventDot: { borderRadius: 4, height: 8, marginTop: 3, width: 8 },
+  routePresenceEventEntered: { backgroundColor: '#13b981' },
+  routePresenceEventLeft: { backgroundColor: '#e5a42f' },
+  routePresenceEventTextWrap: { flex: 1 },
+  routePresenceEventTitle: { color: '#405147', fontSize: 10, fontWeight: '800' },
+  routePresenceEventCaption: { color: '#86938c', fontSize: 9, marginTop: 3 },
+  routePresenceEmpty: { color: '#7f8e85', fontSize: 10, lineHeight: 15, marginTop: 11 },
   historyGroup: { marginTop: 16 },
   dateLabel: { color: '#65766c', fontSize: 11, fontWeight: '800', letterSpacing: 0.3, marginBottom: 8 },
   emptyStateText: { color: '#7f8e85', fontSize: 12, lineHeight: 18, paddingVertical: 16, textAlign: 'center' },
@@ -606,6 +991,7 @@ const styles = StyleSheet.create({
   profileScrollContent: { padding: 13, paddingBottom: 100 },
   collectorProfileCard: { alignItems: 'center', backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 16, borderWidth: 1, padding: 18, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 8 },
   avatar: { alignItems: 'center', backgroundColor: '#07815f', borderRadius: 27, height: 54, justifyContent: 'center', width: 54 },
+  avatarImage: { borderRadius: 27, height: 54, width: 54 },
   avatarText: { color: '#ffffff', fontSize: 23, fontWeight: '800' },
   collectorName: { color: '#2a4033', fontSize: 16, fontWeight: '800', marginTop: 9 },
   collectorRole: { color: '#75857b', fontSize: 10, marginTop: 4 },

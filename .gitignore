@@ -76,5 +76,9 @@ Thumbs.db
 .idea/
 *.swp
 
+# AI tools
+.codex/
+.kilo/
+
 # Testing
 coverage/

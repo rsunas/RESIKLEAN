@@ -2,6 +2,7 @@ import { Feather, MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-
 import { useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -12,6 +13,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { SvgUri } from 'react-native-svg';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { saveSession, type AccountUser } from '@/lib/session';
@@ -28,6 +30,7 @@ type LoginResponse = {
 };
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
+const RESIKLEAN_LOGO_URI = Image.resolveAssetSource(require('@/assets/images/swmo-resiklean-logo.svg')).uri;
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -86,10 +89,7 @@ export default function LoginScreen() {
             <View style={styles.innerCanvas}>
               <View style={styles.brandArea}>
                 <View style={styles.logoRow}>
-                  <View style={styles.logoIcon}>
-                    <MaterialCommunityIcons color="#ffffff" name="recycle" size={22} />
-                  </View>
-                  <Text style={styles.wordmark}>ResiKlean</Text>
+                  <View style={styles.logoCrop}><SvgUri height={76} uri={RESIKLEAN_LOGO_URI} width={118} /></View>
                 </View>
               </View>
 
@@ -183,9 +183,8 @@ const styles = StyleSheet.create({
   },
   innerCanvas: { minHeight: 640 },
   brandArea: { paddingHorizontal: 24, paddingTop: 28 },
-  logoRow: { alignItems: 'center', flexDirection: 'row', gap: 9 },
-  logoIcon: { alignItems: 'center', backgroundColor: '#176b3a', borderRadius: 20, height: 39, justifyContent: 'center', width: 39 },
-  wordmark: { color: '#0f5f32', fontSize: 23, fontWeight: '800', letterSpacing: -0.5 },
+  logoRow: { alignItems: 'flex-start', flexDirection: 'row' },
+  logoCrop: { height: 76, overflow: 'hidden', width: 76 },
   formCard: {
     backgroundColor: '#ffffff',
     borderRadius: 24,

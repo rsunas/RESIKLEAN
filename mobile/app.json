@@ -60,7 +60,7 @@
           "locationWhenInUsePermission": "Allow ResiKlean to access your location while you collect your assigned route.",
           "locationAlwaysAndWhenInUsePermission": "Allow ResiKlean to monitor assigned collection stops while the app is in the background.",
           "isAndroidBackgroundLocationEnabled": true,
-          "isAndroidForegroundServiceEnabled": false,
+          "isAndroidForegroundServiceEnabled": true,
           "isIosBackgroundLocationEnabled": true
         }
       ],
@@ -71,7 +71,15 @@
           "RNMapboxMapsVersion": "11.20.1"
         }
       ],
-      "expo-sqlite"
+      "expo-sqlite",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

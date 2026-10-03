@@ -11,11 +11,12 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   TextInput,
   View,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { AppText as Text } from '@/components/app-text';
+import { SignOutConfirmModal } from '@/components/sign-out-confirm-modal';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Card } from 'heroui-native';
 import { BarangayPicker } from '@/components/barangay-picker';
@@ -436,6 +437,7 @@ export default function ResidentScreen() {
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<ResidentTab>(tab === 'schedule' ? 'schedule' : 'home');
   const [showBanner, setShowBanner] = useState(true);
+  const [isSignOutConfirmVisible, setIsSignOutConfirmVisible] = useState(false);
   const [showAllUpcoming, setShowAllUpcoming] = useState(false);
   const [session, setSession] = useState<AuthSession | null>(null);
   const [schedule, setSchedule] = useState<ScheduleData | null>(null);
@@ -786,7 +788,7 @@ export default function ResidentScreen() {
     }
   };
 
-  const signOut = async () => {
+  const completeSignOut = async () => {
     socketRef.current?.disconnect();
     socketRef.current = null;
     try {
@@ -805,6 +807,8 @@ export default function ResidentScreen() {
     setProfileMessage('');
     router.replace('/login');
   };
+
+  const signOut = () => setIsSignOutConfirmVisible(true);
 
   const currentWeekDates = getCurrentWeekDates();
   const upcomingByDate = new Map((schedule?.upcomingCollections || []).map((collection) => [dateKey(collection.date), collection]));
@@ -949,6 +953,7 @@ export default function ResidentScreen() {
       <View style={styles.content}>{tabScreen}</View>
       <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
       {renderReportDetails()}
+      <SignOutConfirmModal visible={isSignOutConfirmVisible} onCancel={() => setIsSignOutConfirmVisible(false)} onConfirm={completeSignOut} />
     </SafeAreaView>
   );
 }

@@ -9,11 +9,12 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
   TextInput,
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { AppText as Text } from '@/components/app-text';
+import { SignOutConfirmModal } from '@/components/sign-out-confirm-modal';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { clearSession, getSession } from '@/lib/session';
 
@@ -112,7 +113,23 @@ const SLOPES = ['0.5 - Moderate Slope', '0.0 - Level Surface', '1.0 - Steep Slop
 
 const formatTonnage = (tonnes: number) => `${tonnes.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} t`;
 const formatFileSize = (size: number) => `${(size / (1024 * 1024)).toFixed(1)} MB`;
-const areaLabel = (area: AreaOption) => area.name ? `${area.barangay} · ${area.name}` : area.barangay;
+const areaLabel = (area: AreaOption) => {
+  const match = area.name?.match(/\bArea\s+(\d+)\s*([A-Za-z]?)/i);
+  if (match) return `Area ${match[1]}${match[2].toUpperCase()}`;
+  return area.name?.replace(/\s+Collection Route\s*$/i, '').trim() || 'Unnamed area';
+};
+const compareAreas = (first: AreaOption, second: AreaOption) => {
+  const firstLabel = areaLabel(first);
+  const secondLabel = areaLabel(second);
+  const firstMatch = firstLabel.match(/^Area\s+(\d+)\s*([A-Za-z]*)$/i);
+  const secondMatch = secondLabel.match(/^Area\s+(\d+)\s*([A-Za-z]*)$/i);
+  if (firstMatch && secondMatch) {
+    const numberDifference = Number(firstMatch[1]) - Number(secondMatch[1]);
+    if (numberDifference !== 0) return numberDifference;
+    return firstMatch[2].localeCompare(secondMatch[2], undefined, { sensitivity: 'base' });
+  }
+  return firstLabel.localeCompare(secondLabel, undefined, { numeric: true, sensitivity: 'base' });
+};
 const slopeValue = (selection: string) => {
   const value = Number.parseFloat(selection);
   return Number.isFinite(value) ? value : 0;
@@ -261,6 +278,7 @@ export default function StaffScreen() {
   const [profile, setProfile] = useState<StaffProfile | null>(null);
   const [profileLoading, setProfileLoading] = useState(true);
   const [profileError, setProfileError] = useState('');
+  const [isSignOutConfirmVisible, setIsSignOutConfirmVisible] = useState(false);
   const pendingSync = 0;
 
   useEffect(() => {
@@ -335,7 +353,7 @@ export default function StaffScreen() {
 
         const availableAreas = [...(((result.data || {}) as AreasResponse).areas || [])]
           .filter((item) => item?._id && item.barangay)
-          .sort((first, second) => areaLabel(first).localeCompare(areaLabel(second), undefined, { numeric: true, sensitivity: 'base' }));
+          .sort(compareAreas);
         if (!cancelled) {
           setAreas(availableAreas);
           setArea((current) => current || (availableAreas[0] ? areaLabel(availableAreas[0]) : ''));
@@ -545,10 +563,12 @@ export default function StaffScreen() {
     setMessage('');
   };
 
-  const signOut = async () => {
+  const completeSignOut = async () => {
     await clearSession();
     router.replace('/login');
   };
+
+  const signOut = () => setIsSignOutConfirmVisible(true);
 
   const captureAuditPhoto = async () => {
     if (isSubmitting) return;
@@ -813,7 +833,7 @@ export default function StaffScreen() {
     return (
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <Card style={styles.profileCard}>
-          <View style={styles.avatar}><Text style={styles.avatarText}>{initials(profile?.name)}</Text></View>
+          <View style={styles.avatar}>{profile?.profilePhotoUrl ? <Image accessibilityLabel="Profile picture" source={{ uri: profile.profilePhotoUrl }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{initials(profile?.name)}</Text>}</View>
           <Text style={styles.profileName}>{profileName}</Text>
           <Text style={styles.profileRole}>{profile ? `${formatRole(profile.role)} · Volumetric Auditor` : 'Loading profile…'}</Text>
           <Text style={styles.profileArea}>{profileArea}</Text>
@@ -983,6 +1003,7 @@ export default function StaffScreen() {
         </Pressable>
       </Modal>
       {renderSubmissionDetails()}
+      <SignOutConfirmModal visible={isSignOutConfirmVisible} onCancel={() => setIsSignOutConfirmVisible(false)} onConfirm={completeSignOut} />
     </SafeAreaView>
   );
 }
@@ -1078,6 +1099,7 @@ const styles = StyleSheet.create({
   pendingPill: { color: '#a56300', fontSize: 10, fontWeight: '800' },
   profileCard: { alignItems: 'center', backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 18, borderWidth: 1, padding: 22 },
   avatar: { alignItems: 'center', backgroundColor: '#07815f', borderRadius: 29, height: 58, justifyContent: 'center', width: 58 },
+  avatarImage: { borderRadius: 29, height: 58, width: 58 },
   avatarText: { color: '#ffffff', fontSize: 25, fontWeight: '700' },
   profileName: { color: '#26382e', fontSize: 17, fontWeight: '800', marginTop: 12 },
   profileRole: { color: '#718077', fontSize: 12, marginTop: 5 },

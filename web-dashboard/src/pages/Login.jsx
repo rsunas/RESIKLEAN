@@ -64,8 +64,7 @@ export default function Login() {
     <main className="auth-page">
       <form className="auth-card" onSubmit={handleSubmit}>
         <div className="auth-brand">
-          <div className="auth-brand-mark">R</div>
-          <div><strong>ResiKlean</strong><span>SWMO administrator</span></div>
+          <img alt="ResiKlean logo" className="auth-brand-logo" src="/swmo-resiklean-logo.svg" />
         </div>
         <div className="auth-heading">
           <p className="eyebrow">ADMIN PORTAL</p>
