@@ -20,6 +20,7 @@ const {
   createCycleLog,
   getCycleLogs,
 } = require('../controllers/admin.controller');
+const { getMessages, sendMessage } = require('../controllers/message.controller');
 
 router.use(protect, authorize('admin'));
 
@@ -39,6 +40,10 @@ router.get('/compliance', getComplianceReport);
 // Missed Reports
 router.get('/reports', getAllReports);
 router.patch('/reports/:reportId', updateReportStatus);
+
+// Report messaging
+router.get('/reports/:reportId/messages', getMessages);
+router.post('/reports/:reportId/messages', sendMessage);
 
 // Tonnage
 router.get('/tonnage', getTonnageSummary);
