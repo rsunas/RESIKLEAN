@@ -192,18 +192,49 @@ const getSchedule = async (req, res) => {
 // ── POST /api/resident/reports ────────────────────────────────────────────────
 // Resident submits a missed collection report with an optional photo.
 // If a photo is attached (via multer), it is uploaded to Cloudinary.
+// Accepts optional photoMetadata from the mobile client (GPS, dimensions, etc.)
 const submitReport = async (req, res) => {
   try {
-    const { description } = req.body;
+    let { description, capturedAt, latitude, longitude, accuracy, width, height, photoMetadata: rawMetadata } = req.body;
     const { _id: residentId, barangay } = req.user;
 
     if (!barangay) return sendError(res, 'Your profile has no barangay set', 400);
+
+    // If mobile sends metadata as a stringified JSON object
+    if (rawMetadata) {
+      try {
+        const parsed = JSON.parse(rawMetadata);
+        capturedAt = parsed.capturedAt || capturedAt;
+        latitude = parsed.latitude || latitude;
+        longitude = parsed.longitude || longitude;
+        accuracy = parsed.accuracy || accuracy;
+        width = parsed.width || width;
+        height = parsed.height || height;
+      } catch (err) {
+        // Ignore parse errors, fallback to flat fields
+      }
+    }
+
+    // ── Validate numeric metadata (if provided) ──────────────────────────
+    const numericFields = { latitude, longitude, accuracy, width, height };
+    for (const [key, val] of Object.entries(numericFields)) {
+      if (val !== undefined && val !== null && val !== '' && val !== 'null' && val !== 'undefined') {
+        if (isNaN(Number(val))) {
+          return sendError(res, `${key} must be a number`, 400);
+        }
+      }
+    }
+
+    if (capturedAt && capturedAt !== 'null' && capturedAt !== 'undefined' && isNaN(new Date(capturedAt).getTime())) {
+      return sendError(res, 'capturedAt must be a valid date', 400);
+    }
 
     // Upload photo to Cloudinary if one was attached
     let photoUrl = null;
     let aiVerified = false;
     let aiConfidence = 0;
     let detectedBagCount = 0;
+    let photoMetadata = undefined;
 
     if (req.file) {
       const result = await uploadPhoto(req.file.buffer);
@@ -214,6 +245,24 @@ const submitReport = async (req, res) => {
       aiVerified = aiResult.verified;
       aiConfidence = aiResult.confidence;
       detectedBagCount = aiResult.detectedBagCount;
+
+      // Build photoMetadata from the request body + multer file info
+      photoMetadata = {
+        fileSize: req.file.size,
+        mimeType: req.file.mimetype,
+      };
+
+      if (capturedAt && capturedAt !== 'null' && capturedAt !== 'undefined') {
+        photoMetadata.capturedAt = new Date(capturedAt);
+      }
+      
+      const parseNum = (val) => (val != null && val !== '' && val !== 'null' && val !== 'undefined') ? Number(val) : undefined;
+
+      if (parseNum(latitude) !== undefined)  photoMetadata.latitude  = parseNum(latitude);
+      if (parseNum(longitude) !== undefined) photoMetadata.longitude = parseNum(longitude);
+      if (parseNum(accuracy) !== undefined)  photoMetadata.accuracy  = parseNum(accuracy);
+      if (parseNum(width) !== undefined)     photoMetadata.width     = parseNum(width);
+      if (parseNum(height) !== undefined)    photoMetadata.height    = parseNum(height);
     }
 
     const report = await MissedReport.create({
@@ -221,6 +270,7 @@ const submitReport = async (req, res) => {
       barangay,
       description: description || '',
       photoUrl,
+      photoMetadata,
       aiVerified,
       aiConfidence,
       detectedBagCount,
