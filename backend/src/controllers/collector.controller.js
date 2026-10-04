@@ -330,8 +330,8 @@ const resolveComplaint = async (req, res) => {
       return sendSuccess(res, report, 200);
     }
 
-    if (report.status === 'resolved') {
-      return sendError(res, 'This complaint is already resolved', 400);
+    if (report.status !== 'verified') {
+      return sendError(res, 'Only administrator-approved complaints can be resolved', 400);
     }
 
     // Must belong to driver's active route (by barangay area)
@@ -340,7 +340,7 @@ const resolveComplaint = async (req, res) => {
       isActive: true,
     });
     if (!route) return sendError(res, 'No active route assigned to you', 404);
-    if (route.barangay !== report.barangay) {
+    if (!route.barangay.includes(report.barangay)) {
       return sendError(res, 'Complaint does not belong to your assigned area', 403);
     }
 
@@ -357,7 +357,7 @@ const resolveComplaint = async (req, res) => {
         // Ignore parse error
       }
     }
-    
+
     // Validate lat/lng
     const { latitude, longitude } = parsedMetadata;
     if (latitude && isNaN(Number(latitude))) return sendError(res, 'latitude must be a number', 400);
@@ -405,8 +405,8 @@ const getComplaints = async (req, res) => {
     if (!route) return sendError(res, 'No active route assigned to you', 404);
 
     const complaints = await MissedReport.find({
-      barangay: route.barangay,
-      status: { $nin: ['resolved', 'rejected'] },
+      barangay: { $in: route.barangay },
+      status: 'verified',
       'photoMetadata.latitude': { $exists: true, $type: 'number' },
       'photoMetadata.longitude': { $exists: true, $type: 'number' },
     })

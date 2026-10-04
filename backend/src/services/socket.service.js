@@ -53,6 +53,8 @@ const init = (httpServer) => {
       socket.join('admins');
     } else if (socket.user.role === 'resident') {
       socket.join(`resident:${socket.user._id.toString()}`);
+    } else if (socket.user.role === 'collector') {
+      socket.join('collectors');
     }
 
     socket.on('disconnect', () => console.log(`🔌 Socket disconnected: ${socket.id}`));
@@ -66,10 +68,11 @@ const emit = (event, data) => {
   if (_io) _io.emit(event, data);
 };
 
-/** Emit an event securely to admins and the specific resident */
+/** Emit an event securely to admins, collectors, and the specific resident */
 const emitToComplaint = (event, residentId, data) => {
   if (_io) {
     _io.to('admins').emit(event, data);
+    _io.to('collectors').emit(event, data);
     if (residentId) {
       _io.to(`resident:${residentId.toString()}`).emit(event, data);
     }
