@@ -1,5 +1,8 @@
 const Route = require('../models/Route');
 const RouteLog = require('../models/RouteLog');
+const MissedReport = require('../models/MissedReport');
+const socketService = require('../services/socket.service');
+const { uploadPhoto } = require('../services/cloudinary.service');
 const { sendSuccess, sendError } = require('../utils/response');
 
 // ── GET /api/collector/route ──────────────────────────────────────────────────
@@ -312,4 +315,81 @@ const getRouteHistory = async (req, res) => {
   }
 };
 
-module.exports = { getAssignedRoute, markStop, batchSyncLogs, getTodayProgress, getRouteHistory };
+// ── POST /api/collector/complaints/:reportId/resolve ────────────────────────
+// Drivers resolve a missed report in their area with a proof photo.
+const resolveComplaint = async (req, res) => {
+  try {
+    const { reportId } = req.params;
+    const { clientId, resolutionNote, photoMetadata } = req.body;
+
+    const report = await MissedReport.findById(reportId);
+    if (!report) return sendError(res, 'Report not found', 404);
+
+    // Offline idempotency: If already resolved by this exact client request
+    if (clientId && report.status === 'resolved' && report.resolutionClientId === clientId) {
+      return sendSuccess(res, report, 200);
+    }
+
+    if (report.status === 'resolved') {
+      return sendError(res, 'This complaint is already resolved', 400);
+    }
+
+    // Must belong to driver's active route (by barangay area)
+    const route = await Route.findOne({
+      collectorId: req.user._id,
+      isActive: true,
+    });
+    if (!route) return sendError(res, 'No active route assigned to you', 404);
+    if (route.barangay !== report.barangay) {
+      return sendError(res, 'Complaint does not belong to your assigned area', 403);
+    }
+
+    if (!req.file) {
+      return sendError(res, 'A proof photo is required to resolve a complaint', 400);
+    }
+
+    // Parse photo metadata
+    let parsedMetadata = {};
+    if (photoMetadata) {
+      try {
+        parsedMetadata = JSON.parse(photoMetadata);
+      } catch (e) {
+        // Ignore parse error
+      }
+    }
+    
+    // Validate lat/lng
+    const { latitude, longitude } = parsedMetadata;
+    if (latitude && isNaN(Number(latitude))) return sendError(res, 'latitude must be a number', 400);
+    if (longitude && isNaN(Number(longitude))) return sendError(res, 'longitude must be a number', 400);
+
+    // Upload to Cloudinary
+    const result = await uploadPhoto(req.file.buffer, 'resiklean/resolutions');
+
+    // Update Report
+    report.status = 'resolved';
+    report.resolutionPhotoUrl = result.url;
+    report.resolutionNote = resolutionNote || '';
+    report.resolvedBy = req.user._id;
+    report.resolvedAt = new Date();
+    report.resolutionClientId = clientId || undefined;
+    report.resolutionPhotoMetadata = parsedMetadata;
+
+    await report.save();
+
+    // Socket: Update admins and resident
+    if (socketService.emitToComplaint) {
+      socketService.emitToComplaint('complaint:status-updated', report.residentId._id || report.residentId, {
+        reportId: report._id,
+        status: report.status,
+        report,
+      });
+    }
+
+    sendSuccess(res, report, 201);
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
+module.exports = { getAssignedRoute, markStop, batchSyncLogs, getTodayProgress, getRouteHistory, resolveComplaint };

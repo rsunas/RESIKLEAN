@@ -28,6 +28,20 @@ const missedReportSchema = new mongoose.Schema(
       enum: ['pending', 'verified', 'scheduled', 'rejected', 'resolved'],
       default: 'pending',
     },
+    resolutionPhotoUrl: { type: String }, // Cloudinary URL for proof photo
+    resolutionPhotoMetadata: {
+      capturedAt: { type: Date },
+      latitude:   { type: Number },
+      longitude:  { type: Number },
+      accuracy:   { type: Number },
+      width:      { type: Number },
+      height:     { type: Number },
+      fileSize:   { type: Number },
+      mimeType:   { type: String },
+    },
+    resolutionNote: { type: String },
+    resolutionClientId: { type: String }, // For idempotent offline retries
+    resolvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     resolvedAt: { type: Date },
   },
   { timestamps: true }
