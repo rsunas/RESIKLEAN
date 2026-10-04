@@ -247,11 +247,19 @@ const updateReportStatus = async (req, res) => {
     if (!report) return sendError(res, 'Report not found', 404);
 
     // Emit real-time event for connected clients
-    socketService.emit('complaint:status-updated', {
-      reportId: report._id,
-      status: report.status,
-      report,
-    });
+    if (socketService.emitToComplaint) {
+      socketService.emitToComplaint('complaint:status-updated', report.residentId._id || report.residentId, {
+        reportId: report._id,
+        status: report.status,
+        report,
+      });
+    } else {
+      socketService.emit('complaint:status-updated', {
+        reportId: report._id,
+        status: report.status,
+        report,
+      });
+    }
 
     sendSuccess(res, report);
   } catch (err) {

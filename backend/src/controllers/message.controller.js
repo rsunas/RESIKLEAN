@@ -70,10 +70,20 @@ const sendMessage = async (req, res) => {
       .lean();
 
     // ── Real-time Socket.IO event ──────────────────────────────────────────
-    socketService.emit('complaint:message-created', {
-      reportId,
-      message: populated,
-    });
+    // Update the report's updatedAt timestamp so the conversation bubbles up in lists
+    await MissedReport.findByIdAndUpdate(reportId, { updatedAt: new Date() });
+
+    if (socketService.emitToComplaint) {
+      socketService.emitToComplaint('complaint:message-created', report.residentId, {
+        reportId,
+        message: populated,
+      });
+    } else {
+      socketService.emit('complaint:message-created', {
+        reportId,
+        message: populated,
+      });
+    }
 
     sendSuccess(res, populated, 201);
   } catch (err) {

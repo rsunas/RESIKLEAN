@@ -277,11 +277,19 @@ const submitReport = async (req, res) => {
     });
 
     // Emit real-time event for connected clients (admin dashboard, etc.)
-    socketService.emit('complaint:created', {
-      reportId: report._id,
-      status: report.status,
-      report,
-    });
+    if (socketService.emitToComplaint) {
+      socketService.emitToComplaint('complaint:created', report.residentId, {
+        reportId: report._id,
+        status: report.status,
+        report,
+      });
+    } else {
+      socketService.emit('complaint:created', {
+        reportId: report._id,
+        status: report.status,
+        report,
+      });
+    }
 
     sendSuccess(res, report, 201);
   } catch (err) {

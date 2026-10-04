@@ -47,15 +47,33 @@ const init = (httpServer) => {
 
   _io.on('connection', (socket) => {
     console.log(`🔌 Socket connected: ${socket.id} (${socket.user.name})`);
+    
+    // Join appropriate rooms for access control
+    if (['admin', 'staff'].includes(socket.user.role)) {
+      socket.join('admins');
+    } else if (socket.user.role === 'resident') {
+      socket.join(`resident:${socket.user._id.toString()}`);
+    }
+
     socket.on('disconnect', () => console.log(`🔌 Socket disconnected: ${socket.id}`));
   });
 
   return _io;
 };
 
-/** Emit an event from anywhere in the app */
+/** Emit an event globally */
 const emit = (event, data) => {
   if (_io) _io.emit(event, data);
 };
 
-module.exports = { init, emit };
+/** Emit an event securely to admins and the specific resident */
+const emitToComplaint = (event, residentId, data) => {
+  if (_io) {
+    _io.to('admins').emit(event, data);
+    if (residentId) {
+      _io.to(`resident:${residentId.toString()}`).emit(event, data);
+    }
+  }
+};
+
+module.exports = { init, emit, emitToComplaint };
