@@ -49,7 +49,7 @@ const init = (httpServer) => {
     console.log(`🔌 Socket connected: ${socket.id} (${socket.user.name})`);
     
     // Join appropriate rooms for access control
-    if (['admin', 'staff'].includes(socket.user.role)) {
+    if (socket.user.role === 'admin') {
       socket.join('admins');
     } else if (socket.user.role === 'resident') {
       socket.join(`resident:${socket.user._id.toString()}`);
