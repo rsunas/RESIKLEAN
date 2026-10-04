@@ -3,7 +3,7 @@ const router   = express.Router();
 const { protect }   = require('../middlewares/auth');
 const { authorize } = require('../middlewares/authorize');
 const upload = require('../middlewares/upload');
-const { getAssignedRoute, markStop, batchSyncLogs, getTodayProgress, getRouteHistory, resolveComplaint } = require('../controllers/collector.controller');
+const { getAssignedRoute, markStop, batchSyncLogs, getTodayProgress, getRouteHistory, resolveComplaint, getComplaints } = require('../controllers/collector.controller');
 
 router.use(protect, authorize('collector'));
 
@@ -13,7 +13,8 @@ router.get('/route-history',            getRouteHistory);
 router.post('/route/logs/batch',        batchSyncLogs);    // batch must come before :stopId
 router.patch('/route/logs/:stopId',     markStop);
 
-// Resolve complaint endpoint with photo upload
+// Complaints
+router.get('/complaints',                        getComplaints);
 router.post('/complaints/:reportId/resolve', upload.single('photo'), resolveComplaint);
 
 module.exports = router;

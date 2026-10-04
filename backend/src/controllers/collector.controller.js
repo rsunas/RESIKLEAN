@@ -392,4 +392,33 @@ const resolveComplaint = async (req, res) => {
   }
 };
 
-module.exports = { getAssignedRoute, markStop, batchSyncLogs, getTodayProgress, getRouteHistory, resolveComplaint };
+// ── GET /api/collector/complaints ───────────────────────────────────────────
+// Returns unresolved complaints in the collector's assigned barangay
+// that have valid GPS coordinates (for map markers).
+const getComplaints = async (req, res) => {
+  try {
+    const route = await Route.findOne({
+      collectorId: req.user._id,
+      isActive: true,
+    }).lean();
+
+    if (!route) return sendError(res, 'No active route assigned to you', 404);
+
+    const complaints = await MissedReport.find({
+      barangay: route.barangay,
+      status: { $nin: ['resolved', 'rejected'] },
+      'photoMetadata.latitude': { $exists: true, $type: 'number' },
+      'photoMetadata.longitude': { $exists: true, $type: 'number' },
+    })
+      .populate('residentId', 'name')
+      .select('barangay description photoUrl status createdAt photoMetadata residentId')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    sendSuccess(res, complaints);
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
+module.exports = { getAssignedRoute, markStop, batchSyncLogs, getTodayProgress, getRouteHistory, resolveComplaint, getComplaints };
