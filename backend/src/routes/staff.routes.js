@@ -10,7 +10,7 @@ router.use(protect, authorize('staff'));
 router.get('/areas', getAreas);
 router.get('/drivers', getDrivers);
 router.get('/drivers/by-truck/:truckId', getDriverByTruck);
-router.post('/truckloads', upload.single('photo'), submitTruckLoad);
+router.post('/truckloads', upload.fields([{ name: 'sidePhoto', maxCount: 1 }, { name: 'backPhoto', maxCount: 1 }, { name: 'photo', maxCount: 1 }]), submitTruckLoad);
 router.get('/truckloads', getMyTruckLoads);
 
 module.exports = router;

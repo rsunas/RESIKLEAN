@@ -25,7 +25,11 @@ const truckLoadSchema = new mongoose.Schema(
     densityFactor: { type: Number, default: DEFAULT_DENSITY_FACTOR },
     arrivedAt: { type: Date, default: Date.now },
     notes: { type: String, default: '' },
-    photoUrl: { type: String, required: true },         // Cloudinary URL for audit photo
+    photoUrl: { type: String },                         // Legacy: single Cloudinary URL for audit photo
+    sidePhotoUrl: { type: String },                     // Cloudinary URL for side photo
+    backPhotoUrl: { type: String },                     // Cloudinary URL for back photo
+    sidePhotoMetadata: { type: Object, default: {} },   // Metadata for side photo
+    backPhotoMetadata: { type: Object, default: {} },   // Metadata for back photo
   },
   { timestamps: true }
 );

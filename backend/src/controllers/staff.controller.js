@@ -18,8 +18,8 @@ const submitTruckLoad = async (req, res) => {
       return sendError(res, 'truckPlate, length, width, and height are required', 400);
     }
 
-    if (!req.file) {
-      return sendError(res, 'Audit photo is required', 400);
+    if (!req.files || (!req.files['sidePhoto'] && !req.files['backPhoto'] && !req.files['photo'])) {
+      return sendError(res, 'Proof photos are required', 400);
     }
 
     // Validate routeId if provided
@@ -35,9 +35,29 @@ const submitTruckLoad = async (req, res) => {
       validatedRouteId = route._id;
     }
 
-    // Upload audit photo to Cloudinary
-    const result = await uploadPhoto(req.file.buffer, 'resiklean/truckloads');
-    const photoUrl = result.url;
+    let photoUrl, sidePhotoUrl, backPhotoUrl;
+    let sidePhotoMetadata = {};
+    let backPhotoMetadata = {};
+
+    // Upload side and back photos if they exist
+    if (req.files['sidePhoto'] && req.files['backPhoto']) {
+      const [sideResult, backResult] = await Promise.all([
+        uploadPhoto(req.files['sidePhoto'][0].buffer, 'resiklean/truckloads'),
+        uploadPhoto(req.files['backPhoto'][0].buffer, 'resiklean/truckloads')
+      ]);
+      sidePhotoUrl = sideResult.url;
+      backPhotoUrl = backResult.url;
+
+      try { if (req.body.sidePhotoMetadata) sidePhotoMetadata = JSON.parse(req.body.sidePhotoMetadata); } catch (e) {}
+      try { if (req.body.backPhotoMetadata) backPhotoMetadata = JSON.parse(req.body.backPhotoMetadata); } catch (e) {}
+    } 
+    // Legacy support
+    else if (req.files['photo']) {
+      const result = await uploadPhoto(req.files['photo'][0].buffer, 'resiklean/truckloads');
+      photoUrl = result.url;
+    } else {
+      return sendError(res, 'Both side and back photos are required', 400);
+    }
 
     const load = await TruckLoad.create({
       staffId: req.user._id,
@@ -49,6 +69,10 @@ const submitTruckLoad = async (req, res) => {
       slope: slope ? Number(slope) : 0,
       notes: notes || '',
       photoUrl,
+      sidePhotoUrl,
+      backPhotoUrl,
+      sidePhotoMetadata,
+      backPhotoMetadata
     });
 
     sendSuccess(res, load, 201);
