@@ -57,10 +57,13 @@ const googleLogin = async (req, res) => {
   try {
     const { idToken } = req.body;
 
-    // Verify token with Google
+    // Verify token with Google (Accepts Web AND Android Client IDs)
     const ticket = await client.verifyIdToken({
       idToken,
-      audience: process.env.GOOGLE_CLIENT_ID,
+      audience: [
+        process.env.GOOGLE_CLIENT_ID,
+        process.env.GOOGLE_ANDROID_CLIENT_ID
+      ].filter(Boolean), // Safely handles if one is missing in .env
     });
 
     const payload = ticket.getPayload();
