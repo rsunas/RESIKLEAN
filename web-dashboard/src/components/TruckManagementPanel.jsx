@@ -1,5 +1,6 @@
 import { Button, Card } from '@heroui/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import AppSelect from './AppSelect.jsx';
 
 const API_URL = import.meta.env.VITE_API_URL;
 const EMPTY_TRUCK = { truckNumber: '', plateNumber: '', color: '', availability: 'available', length: '', width: '', height: '' };
@@ -217,7 +218,6 @@ export default function TruckManagementPanel({ token }) {
     <Card className="truck-directory-card">
       <div className="truck-filter-row">
         <label className="truck-search-control"><FleetIcon name="search" size={17} /><input aria-label="Search trucks" onChange={(event) => setQuery(event.target.value)} placeholder="Search truck no. or plate no." value={query} /></label>
-        <Button className="outline-button truck-refresh-button" isDisabled={isLoading} onPress={loadTrucks} variant="secondary">Refresh</Button>
         <Button className="primary-button truck-add-button" onPress={openCreateEditor} startContent={<FleetIcon name="plus" size={16} />}>Add truck</Button>
       </div>
 
@@ -252,7 +252,7 @@ export default function TruckManagementPanel({ token }) {
       <div className="modal-header"><div><p className="eyebrow">Fleet registry</p><h2>{editingId ? 'Edit truck' : 'Add truck'}</h2></div><button aria-label="Close truck form" onClick={closeEditor} type="button"><FleetIcon name="close" size={20} /></button></div>
       <div className="truck-editor-body">
         <div className="truck-editor-grid"><label>Truck no.<input autoCapitalize="characters" onChange={(event) => updateForm('truckNumber', event.target.value)} placeholder="TR-101" required value={form.truckNumber} /></label><label>Plate no.<input autoCapitalize="characters" onChange={(event) => updateForm('plateNumber', event.target.value)} placeholder="ABC-1234" required value={form.plateNumber} /></label></div>
-        <div className="truck-editor-grid"><label>Color<input onChange={(event) => updateForm('color', event.target.value)} placeholder="e.g. Blue or White" required value={form.color} /></label><label>Availability<select onChange={(event) => updateForm('availability', event.target.value)} value={form.availability}><option value="available">Available</option><option value="unavailable">Unavailable</option></select></label></div>
+        <div className="truck-editor-grid"><label>Color<input onChange={(event) => updateForm('color', event.target.value)} placeholder="e.g. Blue or White" required value={form.color} /></label><label>Availability<AppSelect aria-label="Truck availability" className="truck-availability-select" onChange={(availability) => updateForm('availability', availability)} options={[{ label: 'Available', value: 'available' }, { label: 'Unavailable', value: 'unavailable' }]} value={form.availability} /></label></div>
         <div className="truck-editor-grid truck-dimension-inputs"><label>Length (m)<input min="0" onChange={(event) => updateForm('length', event.target.value)} placeholder="3.80" required step="0.01" type="number" value={form.length} /></label><label>Width (m)<input min="0" onChange={(event) => updateForm('width', event.target.value)} placeholder="1.10" required step="0.01" type="number" value={form.width} /></label><label>Height (m)<input min="0" onChange={(event) => updateForm('height', event.target.value)} placeholder="2.40" required step="0.01" type="number" value={form.height} /></label></div>
         <div className="capacity-preview"><span>Capacity (cu.m)</span><strong>{liveCapacity ? liveCapacity.toFixed(2) : '0.00'}</strong><p>Calculated automatically from length × width × height. This value cannot be edited.</p></div>
       </div>

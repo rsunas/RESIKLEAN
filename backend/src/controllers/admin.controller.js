@@ -47,7 +47,8 @@ const createUser = async (req, res) => {
 
     let profilePhotoUrl;
     if (req.file) {
-      profilePhotoUrl = await uploadPhoto(req.file.buffer, 'resiklean/profiles');
+      const uploadedPhoto = await uploadPhoto(req.file.buffer, 'resiklean/profiles');
+      profilePhotoUrl = uploadedPhoto.url;
     }
 
     const user = await User.create({

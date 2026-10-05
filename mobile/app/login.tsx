@@ -2,7 +2,6 @@ import { Feather, MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-
 import { useState } from 'react';
 import {
   ActivityIndicator,
-  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -13,9 +12,9 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { SvgUri } from 'react-native-svg';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { BrandMark } from '@/components/brand-mark';
 import { saveSession, type AccountUser } from '@/lib/session';
 
 type Role = 'resident' | 'collector' | 'staff';
@@ -30,8 +29,6 @@ type LoginResponse = {
 };
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
-const RESIKLEAN_LOGO_URI = Image.resolveAssetSource(require('@/assets/images/swmo-resiklean-logo.svg')).uri;
-
 export default function LoginScreen() {
   const router = useRouter();
   const [email, setEmail] = useState('');
@@ -82,14 +79,14 @@ export default function LoginScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar backgroundColor="#eaf6f3" barStyle="dark-content" />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.keyboardView}>
         <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
           <View style={styles.phoneFrame}>
             <View style={styles.innerCanvas}>
               <View style={styles.brandArea}>
                 <View style={styles.logoRow}>
-                  <View style={styles.logoCrop}><SvgUri height={76} uri={RESIKLEAN_LOGO_URI} width={118} /></View>
+                  <BrandMark height={104} width={190} />
                 </View>
               </View>
 
@@ -184,7 +181,6 @@ const styles = StyleSheet.create({
   innerCanvas: { minHeight: 640 },
   brandArea: { paddingHorizontal: 24, paddingTop: 28 },
   logoRow: { alignItems: 'flex-start', flexDirection: 'row' },
-  logoCrop: { height: 76, overflow: 'hidden', width: 76 },
   formCard: {
     backgroundColor: '#ffffff',
     borderRadius: 24,

@@ -1,12 +1,18 @@
 import { Button, Card } from '@heroui/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import AppSelect from './AppSelect.jsx';
 
 const API_URL = import.meta.env.VITE_API_URL;
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-function routeArea(route) {
+function routeStreetList(route) {
   if (Array.isArray(route.barangay)) return route.barangay.filter(Boolean).join(', ') || 'No area set';
   return route.barangay || 'No area set';
+}
+
+function routeAreaCode(route) {
+  const match = String(route?.name || route?.routeName || route?.area || '').match(/\barea\s+(\d+[a-z]?)\b/i);
+  return match ? `Area ${match[1].toUpperCase()}` : route?.name || 'Unnamed area';
 }
 
 function routeSchedule(route) {
@@ -22,7 +28,7 @@ function collectorId(route) {
 }
 
 function routeLabel(route) {
-  return route.name || 'Unnamed route';
+  return routeAreaCode(route);
 }
 
 export default function RouteAssignmentPanel({ token }) {
@@ -107,12 +113,11 @@ export default function RouteAssignmentPanel({ token }) {
   return <Card className="route-assignment-card">
     <div className="route-assignment-toolbar">
       <p>{isLoading ? 'Loading drivers…' : `${assignedCount} of ${collectors.length} drivers assigned`}</p>
-      <Button className="outline-button" isDisabled={isLoading} onPress={loadAssignments} variant="secondary">Refresh</Button>
     </div>
     {success ? <p className="feedback success-feedback" role="status">{success}</p> : null}
     {error ? <p className="feedback error-feedback" role="alert">{error}</p> : null}
     <div className="table-scroll">
-      <table className="route-assignment-table">
+      <table className="standard-data-table route-assignment-table">
         <thead><tr><th>Driver</th><th>Assigned route</th><th>Area</th><th>Schedule</th><th>Action</th></tr></thead>
         <tbody>
           {isLoading ? <tr><td className="route-assignment-message" colSpan="5">Loading current assignments…</td></tr> : null}
@@ -124,16 +129,15 @@ export default function RouteAssignmentPanel({ token }) {
             return <tr key={collector._id}>
               <td><strong>{collector.name || 'Unnamed driver'}</strong><span className="route-stop-count">{collector.email || 'Collector'}</span></td>
               <td>
-                <select
+                <AppSelect
                   aria-label={`Assign a route to ${collector.name || 'this driver'}`}
-                  onChange={(event) => setSelections((current) => ({ ...current, [collector._id]: event.target.value }))}
-                  value={selections[collector._id] || ''}
-                >
-                  <option value="">Unassigned</option>
-                  {[...routes].sort((left, right) => (left.name || '').localeCompare(right.name || '')).map((route) => <option key={route._id} value={route._id}>{routeLabel(route)}</option>)}
-                </select>
+                  className="route-assignment-select"
+                  onChange={(routeId) => setSelections((current) => ({ ...current, [collector._id]: routeId === 'unassigned' ? '' : routeId }))}
+                  options={[{ label: 'Unassigned', value: 'unassigned' }, ...[...routes].sort((left, right) => routeLabel(left).localeCompare(routeLabel(right), undefined, { numeric: true, sensitivity: 'base' })).map((route) => ({ label: routeLabel(route), value: route._id }))]}
+                  value={selections[collector._id] || 'unassigned'}
+                />
               </td>
-              <td>{selectedRoute ? routeArea(selectedRoute) : '—'}</td>
+              <td>{selectedRoute ? routeStreetList(selectedRoute) : '—'}</td>
               <td>{selectedRoute ? routeSchedule(selectedRoute) : '—'}</td>
               <td><Button className="reassign-button" isDisabled={!selections[collector._id] || isSaving === collector._id} onPress={() => assignRoute(collector)} variant="secondary">{isSaving === collector._id ? 'Saving…' : hasExistingAssignment ? 'Update' : 'Assign'}</Button></td>
             </tr>;

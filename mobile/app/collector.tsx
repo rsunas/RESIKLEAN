@@ -1,8 +1,10 @@
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
+import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AppState, Image, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, AppState, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { io } from 'socket.io-client';
 import Svg, { Circle } from 'react-native-svg';
 import Mapbox from '@rnmapbox/maps';
 import { useRouter } from 'expo-router';
@@ -81,13 +83,38 @@ type DriverLocation = {
   updatedAt: string;
 };
 
+type ComplaintMarker = {
+  _id: string;
+  barangay: string;
+  description: string;
+  photoUrl?: string | null;
+  status: string;
+  createdAt: string;
+  residentId?: { name?: string } | string;
+  photoMetadata?: {
+    capturedAt?: string;
+    latitude?: number;
+    longitude?: number;
+    accuracy?: number;
+    width?: number;
+    height?: number;
+    fileSize?: number;
+    mimeType?: string;
+  };
+};
+
 type ApiResponse<T> = {
   success: boolean;
   data?: T;
   error?: string;
 };
 
+function isUsableProofAsset(asset?: ImagePicker.ImagePickerAsset | null): asset is ImagePicker.ImagePickerAsset {
+  return Boolean(asset?.uri && (!asset.mimeType || asset.mimeType.startsWith('image/')));
+}
+
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
+const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL?.replace(/\/$/, '') || API_URL?.replace(/\/api\/?$/, '');
 const MAPBOX_ACCESS_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN?.trim();
 const MAP_CENTER: [number, number] = [123.1815, 13.6192];
 
@@ -291,6 +318,33 @@ export default function CollectorScreen() {
   const [isSignOutConfirmVisible, setIsSignOutConfirmVisible] = useState(false);
   const [pendingRouteLogs, setPendingRouteLogs] = useState(0);
   const [failedRouteLogs, setFailedRouteLogs] = useState(0);
+  const [complaints, setComplaints] = useState<ComplaintMarker[]>([]);
+  const [selectedComplaint, setSelectedComplaint] = useState<ComplaintMarker | null>(null);
+  const [pendingProofAsset, setPendingProofAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [isOpeningProofCamera, setIsOpeningProofCamera] = useState(false);
+  const [isResolvingComplaint, setIsResolvingComplaint] = useState(false);
+  const [complaintMessage, setComplaintMessage] = useState<string | null>(null);
+  const [isResolutionSuccessVisible, setIsResolutionSuccessVisible] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const restorePendingProofPhoto = async () => {
+      try {
+        const pendingResult = await ImagePicker.getPendingResultAsync();
+        if (cancelled || !pendingResult || 'code' in pendingResult || pendingResult.canceled) return;
+        const recoveredAsset = pendingResult.assets?.[0];
+        if (!isUsableProofAsset(recoveredAsset)) return;
+        setPendingProofAsset(recoveredAsset);
+        setComplaintMessage('Proof photo recovered after returning from the camera.');
+      } catch {
+        // The camera result is optional until the driver taps resolve again.
+      }
+    };
+
+    void restorePendingProofPhoto();
+    return () => { cancelled = true; };
+  }, []);
 
   const loadDriverData = useCallback(async (token: string, cachedCollectorId?: string) => {
     if (!API_URL) {
@@ -365,6 +419,56 @@ export default function CollectorScreen() {
       setIsLoading(false);
     }
   }, []);
+
+  const loadComplaints = useCallback(async (token: string) => {
+    if (!API_URL) return;
+
+    try {
+      const response = await fetch(`${API_URL}/collector/complaints`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const payload = await response.json().catch(() => ({ success: false, data: [] }));
+      if (!response.ok || !payload.success) {
+        // A missing route or an older deployed API should not prevent the
+        // assigned route itself from rendering on the driver's map.
+        if (response.status === 404) setComplaints([]);
+        return;
+      }
+
+      const nextComplaints = (Array.isArray(payload.data) ? payload.data : []) as ComplaintMarker[];
+      setComplaints(nextComplaints.filter((complaint) => {
+        const latitude = Number(complaint.photoMetadata?.latitude);
+        const longitude = Number(complaint.photoMetadata?.longitude);
+        return Number.isFinite(latitude) && Number.isFinite(longitude) && Math.abs(latitude) <= 90 && Math.abs(longitude) <= 180;
+      }));
+    } catch {
+      // Complaint markers are optional. Keep the route map usable offline.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!session?.token || !assignedRoute) {
+      setComplaints([]);
+      return undefined;
+    }
+
+    void loadComplaints(session.token);
+    const refreshInterval = setInterval(() => { void loadComplaints(session.token); }, 30_000);
+    return () => clearInterval(refreshInterval);
+  }, [assignedRoute?._id, loadComplaints, session?.token]);
+
+  useEffect(() => {
+    if (!session?.token || !assignedRoute || !SOCKET_URL) return undefined;
+
+    const socket = io(SOCKET_URL, { auth: { token: session.token } });
+    const refreshComplaints = () => { void loadComplaints(session.token); };
+    socket.on('complaint:status-updated', refreshComplaints);
+
+    return () => {
+      socket.off('complaint:status-updated', refreshComplaints);
+      socket.disconnect();
+    };
+  }, [assignedRoute?._id, loadComplaints, session?.token]);
 
   useEffect(() => {
     let isMounted = true;
@@ -709,6 +813,99 @@ export default function CollectorScreen() {
 
   const signOut = () => setIsSignOutConfirmVisible(true);
 
+  const resolveSelectedComplaint = async () => {
+    try {
+      if (!selectedComplaint || !session?.token || !API_URL || isResolvingComplaint || isOpeningProofCamera) return;
+
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Camera permission needed', 'Take a proof photo before marking this resident request as resolved.');
+        return;
+      }
+
+      let asset = pendingProofAsset;
+      if (!asset) {
+        if (AppState.currentState !== 'active') {
+          setComplaintMessage('Keep the app open while taking the proof photo, then try again.');
+          return;
+        }
+
+        setIsOpeningProofCamera(true);
+        try {
+          const result = await ImagePicker.launchCameraAsync({
+            allowsEditing: false,
+            mediaTypes: ['images'],
+            quality: 0.65,
+          });
+          if (result.canceled) return;
+          const capturedAsset = result.assets?.[0];
+          if (!isUsableProofAsset(capturedAsset)) {
+            throw new Error('The camera did not return a usable photo. Please try again.');
+          }
+          asset = capturedAsset;
+        } finally {
+          setIsOpeningProofCamera(false);
+        }
+      }
+      if (!isUsableProofAsset(asset)) throw new Error('The proof photo is unavailable. Please take it again.');
+      setPendingProofAsset(null);
+      let proofCoordinates: { latitude: number; longitude: number; accuracy?: number } | undefined;
+      try {
+        const locationPermission = await Location.requestForegroundPermissionsAsync();
+        if (locationPermission.granted) {
+          const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          proofCoordinates = {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracy: position.coords.accuracy || undefined,
+          };
+        }
+      } catch {
+        // The proof photo remains valid if GPS is temporarily unavailable.
+      }
+
+      setIsResolvingComplaint(true);
+      setComplaintMessage(null);
+      const formData = new FormData();
+      formData.append('clientId', `mobile-resolution-${selectedComplaint._id}-${Date.now()}`);
+      formData.append('resolutionNote', 'Collected by driver');
+      formData.append('photoMetadata', JSON.stringify({
+        capturedAt: new Date().toISOString(),
+        latitude: proofCoordinates?.latitude,
+        longitude: proofCoordinates?.longitude,
+        accuracy: proofCoordinates?.accuracy,
+        width: asset.width,
+        height: asset.height,
+        fileSize: asset.fileSize,
+        mimeType: asset.mimeType || 'image/jpeg',
+      }));
+      formData.append('photo', {
+        uri: asset.uri,
+        name: asset.fileName || `complaint-proof-${selectedComplaint._id}.jpg`,
+        type: asset.mimeType || 'image/jpeg',
+      } as unknown as Blob);
+
+      const response = await fetch(`${API_URL}/collector/complaints/${selectedComplaint._id}/resolve`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.token}` },
+        body: formData,
+      });
+      const payload = (await response.json().catch(() => ({ success: false }))) as ApiResponse<ComplaintMarker>;
+      if (!response.ok || !payload.success) throw new Error(payload.error || 'Unable to resolve this request.');
+
+      setComplaints((current) => current.filter((complaint) => complaint._id !== selectedComplaint._id));
+      setSelectedComplaint(null);
+      setComplaintMessage(null);
+      setIsResolutionSuccessVisible(true);
+    } catch (error) {
+      setIsOpeningProofCamera(false);
+      setComplaintMessage(error instanceof Error ? error.message : 'Unable to capture or upload the proof photo.');
+    } finally {
+      setIsOpeningProofCamera(false);
+      setIsResolvingComplaint(false);
+    }
+  };
+
   const mapScreen = (
     <View style={styles.mapScreen}>
       <View style={styles.mapPlaceholder}>
@@ -738,6 +935,22 @@ export default function CollectorScreen() {
                 <Mapbox.PointAnnotation coordinate={[stop.longitude, stop.latitude]} id={stop._id} key={stop._id}>
                   <View style={[styles.mapMarker, needsReview ? styles.mapMarkerReview : isCollected ? styles.mapMarkerCollected : styles.mapMarkerPending]}>
                     <Text style={styles.mapMarkerText}>{stop.order}</Text>
+                  </View>
+                </Mapbox.PointAnnotation>
+              );
+            })}
+            {complaints.map((complaint) => {
+              const latitude = Number(complaint.photoMetadata?.latitude);
+              const longitude = Number(complaint.photoMetadata?.longitude);
+              return (
+                <Mapbox.PointAnnotation
+                  coordinate={[longitude, latitude]}
+                  id={`complaint-${complaint._id}`}
+                  key={`complaint-${complaint._id}`}
+                  onSelected={() => setSelectedComplaint(complaint)}
+                >
+                  <View style={styles.complaintMarker}>
+                    <Feather color="#ffffff" name="alert-circle" size={17} />
                   </View>
                 </Mapbox.PointAnnotation>
               );
@@ -788,6 +1001,60 @@ export default function CollectorScreen() {
             )}
           </View>
         )}
+        {complaintMessage ? (
+          <View style={styles.complaintToast}>
+            <Feather color="#07815f" name="check-circle" size={15} />
+            <Text style={styles.complaintToastText}>{complaintMessage}</Text>
+          </View>
+        ) : null}
+        <Modal animationType="slide" onRequestClose={() => setSelectedComplaint(null)} transparent visible={Boolean(selectedComplaint)}>
+          <View style={styles.complaintModalBackdrop}>
+            <Pressable accessibilityLabel="Close complaint" onPress={() => setSelectedComplaint(null)} style={styles.complaintModalDismissArea} />
+            {selectedComplaint ? (
+              <View style={styles.complaintSheet}>
+                <View style={styles.complaintSheetHeader}>
+                  <View style={styles.complaintSheetTitleWrap}>
+                    <Text style={styles.complaintSheetEyebrow}>APPROVED RESIDENT REQUEST</Text>
+                    <Text style={styles.complaintSheetTitle}>Collection request</Text>
+                  </View>
+                  <Pressable accessibilityLabel="Close complaint" onPress={() => setSelectedComplaint(null)} style={styles.complaintCloseButton}>
+                    <Feather color="#314238" name="x" size={20} />
+                  </Pressable>
+                </View>
+                <ScrollView contentContainerStyle={styles.complaintSheetContent} showsVerticalScrollIndicator={false}>
+                  {selectedComplaint.photoUrl ? <Image accessibilityLabel="Resident complaint photo" source={{ uri: selectedComplaint.photoUrl }} style={styles.complaintPhoto} /> : null}
+                  <Text style={styles.complaintDescription}>{selectedComplaint.description || 'Resident requested collection at this location.'}</Text>
+                  <View style={styles.complaintDetailRow}><Feather color="#07815f" name="map-pin" size={16} /><View style={styles.complaintDetailText}><Text style={styles.complaintDetailLabel}>Exact request location</Text><Text style={styles.complaintDetailValue}>{Number(selectedComplaint.photoMetadata?.latitude).toFixed(6)}, {Number(selectedComplaint.photoMetadata?.longitude).toFixed(6)}</Text><Text style={styles.complaintDetailCaption}>{selectedComplaint.barangay || 'Location captured from resident photo'}</Text></View></View>
+                  <View style={styles.complaintDetailRow}><Feather color="#07815f" name="clock" size={16} /><View style={styles.complaintDetailText}><Text style={styles.complaintDetailLabel}>Submitted</Text><Text style={styles.complaintDetailValue}>{formatTime(selectedComplaint.createdAt)}</Text><Text style={styles.complaintDetailCaption}>{selectedComplaint.photoMetadata?.capturedAt ? `Photo captured ${formatTime(selectedComplaint.photoMetadata.capturedAt)}` : 'Photo capture time unavailable'}</Text></View></View>
+                  <Pressable disabled={isResolvingComplaint} onPress={() => void resolveSelectedComplaint()} style={[styles.resolveComplaintButton, isResolvingComplaint && styles.geofenceButtonDisabled]}>
+                    <Feather color="#ffffff" name="camera" size={17} />
+                    <Text style={styles.resolveComplaintButtonText}>{isResolvingComplaint ? 'Uploading proof...' : 'Take proof photo & resolve'}</Text>
+                  </Pressable>
+                </ScrollView>
+              </View>
+            ) : null}
+          </View>
+        </Modal>
+        <Modal
+          animationType="fade"
+          onRequestClose={() => setIsResolutionSuccessVisible(false)}
+          statusBarTranslucent
+          transparent
+          visible={isResolutionSuccessVisible}
+        >
+          <View style={styles.resolveSuccessBackdrop}>
+            <View style={styles.resolveSuccessCard}>
+              <View style={styles.resolveSuccessIcon}>
+                <Feather color="#07815f" name="check" size={25} />
+              </View>
+              <Text style={styles.resolveSuccessTitle}>Request resolved</Text>
+              <Text style={styles.resolveSuccessMessage}>The proof photo was uploaded successfully.</Text>
+              <Pressable onPress={() => setIsResolutionSuccessVisible(false)} style={styles.resolveSuccessButton}>
+                <Text style={styles.resolveSuccessButtonText}>Done</Text>
+              </Pressable>
+            </View>
+          </View>
+        </Modal>
       </View>
     </View>
   );
@@ -897,6 +1164,7 @@ const styles = StyleSheet.create({
   mapMarkerReview: { backgroundColor: '#8d53ce' },
   mapMarkerText: { color: '#ffffff', fontSize: 10, fontWeight: '800' },
   driverLocationMarker: { alignItems: 'center', backgroundColor: '#1976e8', borderColor: '#ffffff', borderRadius: 24, borderWidth: 3, height: 48, justifyContent: 'center', shadowColor: '#0d3c79', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.3, shadowRadius: 5, width: 48 },
+  complaintMarker: { alignItems: 'center', backgroundColor: '#d44859', borderColor: '#ffffff', borderRadius: 20, borderWidth: 3, height: 38, justifyContent: 'center', shadowColor: '#7a1f2e', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, width: 38 },
   mapPlaceholderLabel: { alignItems: 'center', backgroundColor: 'rgba(248,252,249,0.88)', borderColor: '#c2d3c9', borderRadius: 12, borderWidth: 1, flexDirection: 'row', gap: 7, left: 20, paddingHorizontal: 12, paddingVertical: 9, position: 'absolute', right: 20, top: '47%' },
   mapPlaceholderText: { color: '#45685a', fontSize: 11, fontWeight: '700' },
   geofenceCard: { backgroundColor: 'rgba(255,255,255,0.96)', borderColor: '#cfe2d8', borderRadius: 13, borderWidth: 1, bottom: 12, left: 12, padding: 10, position: 'absolute', right: 12, shadowColor: '#234837', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.12, shadowRadius: 8 },
@@ -928,6 +1196,33 @@ const styles = StyleSheet.create({
   capacityProgressTrack: { backgroundColor: '#e4eee9', borderRadius: 4, height: 8, marginTop: 7, overflow: 'hidden' },
   capacityProgressFill: { backgroundColor: '#14a87d', borderRadius: 4, height: '100%', width: '65%' },
   capacityPlaceholder: { color: '#87948d', fontSize: 10, lineHeight: 14, marginTop: 7 },
+  complaintToast: { alignItems: 'center', backgroundColor: '#e8fbf1', borderColor: '#b9dfca', borderRadius: 12, borderWidth: 1, bottom: 102, flexDirection: 'row', gap: 7, left: 14, maxWidth: '78%', paddingHorizontal: 11, paddingVertical: 9, position: 'absolute', shadowColor: '#234837', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.14, shadowRadius: 6 },
+  complaintToastText: { color: '#286349', flex: 1, fontSize: 10, fontWeight: '800' },
+  complaintModalBackdrop: { backgroundColor: 'rgba(20, 42, 31, 0.3)', flex: 1, justifyContent: 'flex-end' },
+  complaintModalDismissArea: { flex: 1 },
+  complaintSheet: { backgroundColor: '#ffffff', borderTopLeftRadius: 22, borderTopRightRadius: 22, maxHeight: '76%', overflow: 'hidden', paddingHorizontal: 16, paddingTop: 16 },
+  complaintSheetHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  complaintSheetTitleWrap: { flex: 1 },
+  complaintSheetEyebrow: { color: '#07815f', fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
+  complaintSheetTitle: { color: '#243f31', fontSize: 18, fontWeight: '800', marginTop: 3 },
+  complaintCloseButton: { alignItems: 'center', height: 36, justifyContent: 'center', width: 36 },
+  complaintSheetContent: { paddingBottom: 26, paddingTop: 14 },
+  complaintPhoto: { backgroundColor: '#eef4f0', borderRadius: 14, height: 180, width: '100%' },
+  complaintDescription: { color: '#294236', fontSize: 14, lineHeight: 21, marginTop: 13 },
+  complaintDetailRow: { alignItems: 'flex-start', borderTopColor: '#e5eee8', borderTopWidth: 1, flexDirection: 'row', gap: 10, marginTop: 13, paddingTop: 12 },
+  complaintDetailText: { flex: 1 },
+  complaintDetailLabel: { color: '#667970', fontSize: 10, fontWeight: '800' },
+  complaintDetailValue: { color: '#294236', fontSize: 12, fontWeight: '700', marginTop: 2 },
+  complaintDetailCaption: { color: '#89978f', fontSize: 10, marginTop: 2 },
+  resolveComplaintButton: { alignItems: 'center', backgroundColor: '#07815f', borderRadius: 12, flexDirection: 'row', gap: 8, justifyContent: 'center', marginTop: 18, minHeight: 48, paddingHorizontal: 14 },
+  resolveComplaintButtonText: { color: '#ffffff', fontSize: 12, fontWeight: '800' },
+  resolveSuccessBackdrop: { alignItems: 'center', backgroundColor: 'rgba(10, 31, 22, 0.48)', flex: 1, justifyContent: 'center', padding: 24 },
+  resolveSuccessCard: { alignItems: 'center', backgroundColor: '#ffffff', borderRadius: 22, maxWidth: 340, paddingHorizontal: 24, paddingVertical: 25, shadowColor: '#123b2b', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.2, shadowRadius: 18, width: '100%' },
+  resolveSuccessIcon: { alignItems: 'center', backgroundColor: '#e5f7ef', borderRadius: 32, height: 58, justifyContent: 'center', width: 58 },
+  resolveSuccessTitle: { color: '#173b2d', fontSize: 19, fontWeight: '800', marginTop: 14 },
+  resolveSuccessMessage: { color: '#668075', fontSize: 13, lineHeight: 19, marginTop: 7, textAlign: 'center' },
+  resolveSuccessButton: { alignItems: 'center', backgroundColor: '#07815f', borderRadius: 12, marginTop: 20, minHeight: 44, justifyContent: 'center', paddingHorizontal: 30, width: '100%' },
+  resolveSuccessButtonText: { color: '#ffffff', fontSize: 13, fontWeight: '800' },
   offlineMapCard: { backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 15, borderWidth: 1, marginTop: 12, padding: 13, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 7 },
   offlineMapRow: { alignItems: 'center', borderTopColor: '#e3ece6', borderTopWidth: 1, flexDirection: 'row', gap: 8, marginTop: 9, paddingTop: 9 },
   offlineMapTextWrap: { flex: 1 },

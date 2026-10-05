@@ -395,7 +395,10 @@ const resolveComplaint = async (req, res) => {
         status: report.status,
         report,
       });
-      socketService.emitToComplaint('complaint:message-created', report.residentId._id || report.residentId, message);
+      socketService.emitToComplaint('complaint:message-created', report.residentId._id || report.residentId, {
+        reportId: report._id,
+        message,
+      });
     }
 
     sendSuccess(res, { report, message }, 201);

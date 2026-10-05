@@ -12,7 +12,7 @@ export function AppText({ style, ...props }: TextProps) {
     <NativeText
       {...props}
       style={[
-        { fontFamily: 'PlusJakartaSans-Regular' },
+        { fontFamily: 'Roboto-Regular' },
         style,
         scaledFontSize ? { fontSize: scaledFontSize } : undefined,
       ]}

@@ -13,7 +13,9 @@ import {
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { AppSelect, type AppSelectOption } from '@/components/app-select';
 import { AppText as Text } from '@/components/app-text';
+import { BrandMark } from '@/components/brand-mark';
 import { SignOutConfirmModal } from '@/components/sign-out-confirm-modal';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { clearSession, getSession } from '@/lib/session';
@@ -24,8 +26,6 @@ const ALLOWED_AUDIT_PHOTO_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const DENSITY_FACTOR = 0.294;
 
 type Tab = 'input' | 'history' | 'profile';
-type PickerKind = 'truck' | 'area' | 'driver' | 'slope' | null;
-
 type Truck = {
   plate: string;
   length: string;
@@ -60,6 +60,7 @@ type StaffProfile = {
   email?: string;
   role?: string;
   barangay?: string;
+  profilePhotoUrl?: string;
   employeeId?: string;
   contact?: string;
   shift?: string;
@@ -77,13 +78,22 @@ type TruckLoadResponse = {
   arrivedAt?: string;
   notes?: string;
   photoUrl?: string;
+  sidePhotoUrl?: string;
+  backPhotoUrl?: string;
+  sidePhotoMetadata?: Record<string, unknown>;
+  backPhotoMetadata?: Record<string, unknown>;
 };
+
+type AuditPhotoSlot = 'side' | 'back';
 
 type AuditPhoto = {
   uri: string;
   fileName: string;
   mimeType: string;
   size: number;
+  width: number;
+  height: number;
+  capturedAt: string;
   webFile?: unknown;
 };
 
@@ -101,6 +111,8 @@ type Submission = {
   status: 'Synced' | 'Pending';
   notes: string;
   photoUrl?: string;
+  sidePhotoUrl?: string;
+  backPhotoUrl?: string;
 };
 
 type TonnagePreview = {
@@ -160,6 +172,8 @@ function mapTruckLoad(load: TruckLoadResponse, staffName = 'You', fallbackArea =
     status: 'Synced',
     notes: load.notes || '',
     photoUrl: load.photoUrl,
+    sidePhotoUrl: load.sidePhotoUrl,
+    backPhotoUrl: load.backPhotoUrl,
   };
 }
 
@@ -187,20 +201,61 @@ async function prepareAuditPhoto(asset: ImagePicker.ImagePickerAsset): Promise<A
     fileName: asset.fileName || `truckload-audit-${Date.now()}.${extension}`,
     mimeType,
     size,
+    width: asset.width,
+    height: asset.height,
+    capturedAt: new Date().toISOString(),
     webFile: asset.file,
   };
 }
 
-function SelectField({ label, value, onPress }: { label: string; value: string; onPress: () => void }) {
+function appendAuditPhoto(formData: FormData, fieldName: string, photo: AuditPhoto) {
+  if (photo.webFile) {
+    formData.append(fieldName, photo.webFile as Blob);
+    return;
+  }
+
+  formData.append(fieldName, {
+    uri: photo.uri,
+    name: photo.fileName,
+    type: photo.mimeType,
+  } as unknown as Blob);
+}
+
+function auditPhotoMetadata(photo: AuditPhoto) {
+  return JSON.stringify({
+    capturedAt: photo.capturedAt,
+    width: photo.width,
+    height: photo.height,
+    fileSize: photo.size,
+    mimeType: photo.mimeType,
+  });
+}
+
+function AuditPhotoField({ disabled, label, onPress, photo }: { disabled: boolean; label: string; onPress: () => void; photo: AuditPhoto | null }) {
   return (
-    <View style={styles.fieldGroup}>
-      <Text style={styles.label}>{label}</Text>
-      <Pressable accessibilityRole="button" onPress={onPress} style={styles.selectField}>
-        <Text numberOfLines={1} style={styles.selectText}>{value}</Text>
-        <Feather color="#304a3e" name="chevron-down" size={20} />
+    <View style={styles.photoSlot}>
+      <Text style={styles.label}>{label} photo <Text style={styles.required}>*</Text></Text>
+      <Pressable
+        accessibilityLabel={`${label} proof photo`}
+        accessibilityRole="button"
+        disabled={disabled}
+        onPress={onPress}
+        style={[styles.photoField, photo && styles.photoFieldAttached, disabled && styles.photoFieldDisabled]}>
+        {photo ? <Image accessibilityLabel={`${label} proof photo attached`} resizeMode="contain" source={{ uri: photo.uri }} style={styles.photoPreview} /> : null}
+        <View style={[styles.photoOverlay, photo && styles.photoOverlayAttached]}>
+          <View style={[styles.cameraBadge, photo && styles.cameraBadgeAttached]}>
+            <Feather color={photo ? '#ffffff' : '#07815f'} name={photo ? 'check' : 'camera'} size={21} />
+          </View>
+          <Text style={[styles.photoTitle, photo && styles.photoOverlayTitle]}>{photo ? `${label} photo attached` : `Capture ${label} photo`}</Text>
+          <Text style={[styles.photoCaption, photo && styles.photoCaptionAttached]}>{photo ? `${formatFileSize(photo.size)} · Ready` : 'Original image · 5 MB maximum'}</Text>
+        </View>
       </Pressable>
     </View>
   );
+}
+
+function SelectField({ disabled = false, label, onChange, options, placeholder, value }: { disabled?: boolean; label: string; onChange: (value: string) => void; options: AppSelectOption[]; placeholder: string; value: string }) {
+  return <AppSelect disabled={disabled} label={label} onChange={onChange} options={options} placeholder={placeholder} value={value} />;
 }
 
 function MeasurementField({ label, value }: { label: string; value: string }) {
@@ -248,7 +303,6 @@ export default function StaffScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<Tab>('input');
-  const [pickerKind, setPickerKind] = useState<PickerKind>(null);
   const [trucks, setTrucks] = useState<Truck[]>([]);
   const [isLoadingTrucks, setIsLoadingTrucks] = useState(true);
   const [truckLoadError, setTruckLoadError] = useState('');
@@ -267,7 +321,9 @@ export default function StaffScreen() {
   const [width, setWidth] = useState('');
   const [height, setHeight] = useState('');
   const [notes, setNotes] = useState('');
-  const [auditPhoto, setAuditPhoto] = useState<AuditPhoto | null>(null);
+  const [sidePhoto, setSidePhoto] = useState<AuditPhoto | null>(null);
+  const [backPhoto, setBackPhoto] = useState<AuditPhoto | null>(null);
+  const [isOpeningAuditCamera, setIsOpeningAuditCamera] = useState(false);
   const [tonnagePreview, setTonnagePreview] = useState<TonnagePreview | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState('');
@@ -481,12 +537,16 @@ export default function StaffScreen() {
 
         const photo = await prepareAuditPhoto(pendingResult.assets[0]);
         if (!cancelled) {
-          setAuditPhoto(photo);
-          setMessage(`Audit photo recovered after returning from the camera (${formatFileSize(photo.size)}).`);
+          if (!sidePhoto) {
+            setSidePhoto(photo);
+            setMessage(`Side photo recovered after returning from the camera (${formatFileSize(photo.size)}).`);
+          } else if (!backPhoto) {
+            setBackPhoto(photo);
+            setMessage(`Back photo recovered after returning from the camera (${formatFileSize(photo.size)}).`);
+          }
         }
       } catch (error) {
         if (!cancelled) {
-          setAuditPhoto(null);
           setMessage(error instanceof Error ? error.message : 'The camera returned, but the photo could not be recovered.');
         }
       }
@@ -494,52 +554,10 @@ export default function StaffScreen() {
 
     restorePendingCameraResult();
     return () => { cancelled = true; };
-  }, []);
+  }, [backPhoto, sidePhoto]);
 
   const totalTonnage = useMemo(() => history.reduce((total, submission) => total + submission.tonnes, 0), [history]);
   const selectedTruck = trucks.find((truck) => truck.plate === truckPlate);
-
-  const pickerOptions = pickerKind === 'truck'
-    ? trucks.map((truck) => truck.plate)
-    : pickerKind === 'area'
-      ? areas.map(areaLabel)
-      : pickerKind === 'driver'
-        ? drivers
-        : pickerKind === 'slope'
-          ? SLOPES
-          : [];
-
-  const pickerTitle = pickerKind === 'truck'
-    ? 'Select truck'
-    : pickerKind === 'area'
-      ? 'Select area'
-      : pickerKind === 'driver'
-        ? 'Select driver'
-        : 'Select slope';
-
-  const chooseOption = (option: string) => {
-    if (pickerKind === 'truck') {
-      const truck = trucks.find((item) => item.plate === option);
-      if (truck) {
-        setTruckPlate(truck.plate);
-        setLength(truck.length);
-        setWidth(truck.width);
-        setHeight(truck.height);
-        setTonnagePreview(null);
-      }
-    }
-    if (pickerKind === 'area') {
-      const selectedArea = areas.find((item) => areaLabel(item) === option);
-      setArea(option);
-      setRouteId(selectedArea?._id || '');
-    }
-    if (pickerKind === 'driver') setDriver(option);
-    if (pickerKind === 'slope') {
-      setSlope(option);
-      setTonnagePreview(null);
-    }
-    setPickerKind(null);
-  };
 
   const previewTonnage = () => {
     const numericLength = Number(length);
@@ -570,8 +588,8 @@ export default function StaffScreen() {
 
   const signOut = () => setIsSignOutConfirmVisible(true);
 
-  const captureAuditPhoto = async () => {
-    if (isSubmitting) return;
+  const captureAuditPhoto = async (slot: AuditPhotoSlot) => {
+    if (isSubmitting || isOpeningAuditCamera) return;
 
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
@@ -580,20 +598,24 @@ export default function StaffScreen() {
         return;
       }
 
+      setIsOpeningAuditCamera(true);
       const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: true,
-        aspect: [4, 3],
+        allowsEditing: false,
         cameraType: ImagePicker.CameraType.back,
         mediaTypes: ['images'],
-        quality: 0.7,
+        quality: 0.65,
       });
-      if (result.canceled) return;
+      setIsOpeningAuditCamera(false);
+      if (result.canceled || !result.assets?.[0]?.uri) return;
 
       const photo = await prepareAuditPhoto(result.assets[0]);
-      setAuditPhoto(photo);
-      setMessage(`Audit photo attached (${formatFileSize(photo.size)}).`);
+      if (slot === 'side') setSidePhoto(photo);
+      else setBackPhoto(photo);
+      setMessage(`${slot === 'side' ? 'Side' : 'Back'} photo attached (${formatFileSize(photo.size)}).`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Unable to capture the audit photo.');
+    } finally {
+      setIsOpeningAuditCamera(false);
     }
   };
 
@@ -612,8 +634,8 @@ export default function StaffScreen() {
       return;
     }
 
-    if (!auditPhoto) {
-      setMessage('Capture an audit photo before submitting.');
+    if (!sidePhoto || !backPhoto) {
+      setMessage('Capture both a Side photo and a Back photo before submitting.');
       return;
     }
 
@@ -642,15 +664,10 @@ export default function StaffScreen() {
       formData.append('slope', String(slopeValue(slope)));
       formData.append('notes', notes.trim());
 
-      if (auditPhoto.webFile) {
-        formData.append('photo', auditPhoto.webFile as Blob);
-      } else {
-        formData.append('photo', {
-          uri: auditPhoto.uri,
-          name: auditPhoto.fileName,
-          type: auditPhoto.mimeType,
-        } as unknown as Blob);
-      }
+      appendAuditPhoto(formData, 'sidePhoto', sidePhoto);
+      appendAuditPhoto(formData, 'backPhoto', backPhoto);
+      formData.append('sidePhotoMetadata', auditPhotoMetadata(sidePhoto));
+      formData.append('backPhotoMetadata', auditPhotoMetadata(backPhoto));
 
       const response = await fetch(`${API_URL}/staff/truckloads`, {
         method: 'POST',
@@ -664,7 +681,8 @@ export default function StaffScreen() {
       setHistory((current) => [mapTruckLoad(savedLoad, profile?.name || 'You', area), ...current]);
       setHistoryError('');
       setHistoryLoading(false);
-      setAuditPhoto(null);
+      setSidePhoto(null);
+      setBackPhoto(null);
       setNotes('');
       setMessage('Measurement saved and audit photo uploaded to Cloudinary.');
       setActiveTab('history');
@@ -680,14 +698,44 @@ export default function StaffScreen() {
       <Text style={styles.sectionEyebrow}>NEW MEASUREMENT</Text>
       <Card style={styles.formCard}>
         <SelectField
+          disabled={isLoadingTrucks || Boolean(truckLoadError) || trucks.length === 0}
           label="Truck"
-          onPress={() => setPickerKind('truck')}
-          value={selectedTruck ? `${truckPlate} · ${selectedTruck.length}×${selectedTruck.width}×${selectedTruck.height} cm` : isLoadingTrucks ? 'Loading registered trucks…' : 'No registered trucks available'}
+          onChange={(option) => {
+            const truck = trucks.find((item) => item.plate === option);
+            if (truck) {
+              setTruckPlate(truck.plate);
+              setLength(truck.length);
+              setWidth(truck.width);
+              setHeight(truck.height);
+              setTonnagePreview(null);
+            }
+          }}
+          options={trucks.map((truck) => ({ label: `${truck.plate} · ${truck.length}×${truck.width}×${truck.height} cm`, value: truck.plate }))}
+          placeholder={isLoadingTrucks ? 'Loading registered trucks…' : trucks.length ? 'Select truck' : 'No registered trucks available'}
+          value={truckPlate}
         />
         {truckLoadError ? <Text style={styles.truckLoadError}>{truckLoadError}</Text> : null}
-        <SelectField label="Area" onPress={() => setPickerKind('area')} value={area || (isLoadingAreas ? 'Loading areas…' : 'No areas available')} />
+        <SelectField
+          disabled={isLoadingAreas || Boolean(areaLoadError) || areas.length === 0}
+          label="Area"
+          onChange={(option) => {
+            const selectedArea = areas.find((item) => areaLabel(item) === option);
+            setArea(option);
+            setRouteId(selectedArea?._id || '');
+          }}
+          options={areas.map((item) => ({ label: areaLabel(item), value: areaLabel(item) }))}
+          placeholder={isLoadingAreas ? 'Loading areas…' : areas.length ? 'Select area' : 'No areas available'}
+          value={area}
+        />
         {areaLoadError ? <Text style={styles.truckLoadError}>{areaLoadError}</Text> : null}
-        <SelectField label="Driver" onPress={() => setPickerKind('driver')} value={driver || (isLoadingDrivers ? 'Loading drivers…' : 'No drivers available')} />
+        <SelectField
+          disabled={isLoadingDrivers || Boolean(driverLoadError) || drivers.length === 0}
+          label="Driver"
+          onChange={setDriver}
+          options={drivers.map((item) => ({ label: item, value: item }))}
+          placeholder={isLoadingDrivers ? 'Loading drivers…' : drivers.length ? 'Select driver' : 'No drivers available'}
+          value={driver}
+        />
         {driverLoadError ? <Text style={styles.truckLoadError}>{driverLoadError}</Text> : null}
 
         <View style={styles.measurementRow}>
@@ -697,7 +745,7 @@ export default function StaffScreen() {
         </View>
         <Text style={styles.helperText}>{selectedTruck ? `Dimensions are locked to the admin registration for ${truckPlate}.` : 'Register a truck in the dashboard, then reopen this screen to select it.'}</Text>
 
-        <SelectField label="Slope (m³)" onPress={() => setPickerKind('slope')} value={slope} />
+        <SelectField label="Slope (m³)" onChange={(option) => { setSlope(option); setTonnagePreview(null); }} options={SLOPES.map((option) => ({ label: option, value: option }))} placeholder="Select slope" value={slope} />
 
         <Pressable
           accessibilityLabel="Calculate estimated tonnage"
@@ -722,21 +770,23 @@ export default function StaffScreen() {
         ) : null}
 
         <View style={styles.fieldGroup}>
-          <Text style={styles.label}>Audit Photo <Text style={styles.required}>*</Text></Text>
+          <Text style={styles.label}>Proof photos <Text style={styles.required}>*</Text></Text>
+          <Text style={styles.photoInstruction}>Submit the original images. They will not be cropped before upload.</Text>
           <Pressable
             accessibilityRole="button"
-            disabled={isSubmitting}
-            onPress={captureAuditPhoto}
-            style={[styles.photoField, auditPhoto && styles.photoFieldAttached, isSubmitting && styles.photoFieldDisabled]}>
-            {auditPhoto ? <Image accessibilityLabel="Captured audit photo" resizeMode="cover" source={{ uri: auditPhoto.uri }} style={styles.photoPreview} /> : null}
-            <View style={[styles.photoOverlay, auditPhoto && styles.photoOverlayAttached]}>
-              <View style={[styles.cameraBadge, auditPhoto && styles.cameraBadgeAttached]}>
-                <Feather color={auditPhoto ? '#ffffff' : '#07815f'} name={auditPhoto ? 'check' : 'camera'} size={21} />
+            disabled={isSubmitting || isOpeningAuditCamera}
+            onPress={() => captureAuditPhoto('side')}
+            style={[styles.photoField, sidePhoto && styles.photoFieldAttached, isSubmitting && styles.photoFieldDisabled]}>
+            {sidePhoto ? <Image accessibilityLabel="Captured side proof photo" resizeMode="contain" source={{ uri: sidePhoto.uri }} style={styles.photoPreview} /> : null}
+            <View style={[styles.photoOverlay, sidePhoto && styles.photoOverlayAttached]}>
+              <View style={[styles.cameraBadge, sidePhoto && styles.cameraBadgeAttached]}>
+                <Feather color={sidePhoto ? '#ffffff' : '#07815f'} name={sidePhoto ? 'check' : 'camera'} size={21} />
               </View>
-              <Text style={[styles.photoTitle, auditPhoto && styles.photoOverlayTitle]}>{auditPhoto ? 'Audit photo attached' : 'Capture Audit Photo'}</Text>
-              <Text style={[styles.photoCaption, auditPhoto && styles.photoCaptionAttached]}>{auditPhoto ? `${formatFileSize(auditPhoto.size)} · Ready to upload` : 'JPEG, PNG, or WebP · 5 MB maximum'}</Text>
+              <Text style={[styles.photoTitle, sidePhoto && styles.photoOverlayTitle]}>{sidePhoto ? 'Side photo attached' : 'Capture Side photo'}</Text>
+              <Text style={[styles.photoCaption, sidePhoto && styles.photoCaptionAttached]}>{sidePhoto ? `${formatFileSize(sidePhoto.size)} · Ready to upload` : 'JPEG, PNG, or WebP · 5 MB maximum'}</Text>
             </View>
           </Pressable>
+          <AuditPhotoField disabled={isSubmitting || isOpeningAuditCamera} label="Back" onPress={() => captureAuditPhoto('back')} photo={backPhoto} />
         </View>
 
         <View style={styles.fieldGroup}>
@@ -900,8 +950,12 @@ export default function StaffScreen() {
               nestedScrollEnabled
               showsVerticalScrollIndicator
               style={styles.detailsScroll}>
-              {selectedSubmission.photoUrl ? (
-                <Image accessibilityLabel="Audit submission photo" resizeMode="cover" source={{ uri: selectedSubmission.photoUrl }} style={styles.detailsPhoto} />
+              {selectedSubmission.sidePhotoUrl || selectedSubmission.backPhotoUrl || selectedSubmission.photoUrl ? (
+                <View style={styles.detailsPhotoGrid}>
+                  {selectedSubmission.sidePhotoUrl ? <View style={styles.detailsPhotoItem}><Text style={styles.detailsPhotoLabel}>Side photo</Text><Image accessibilityLabel="Side audit submission photo" resizeMode="contain" source={{ uri: selectedSubmission.sidePhotoUrl }} style={styles.detailsPhoto} /></View> : null}
+                  {selectedSubmission.backPhotoUrl ? <View style={styles.detailsPhotoItem}><Text style={styles.detailsPhotoLabel}>Back photo</Text><Image accessibilityLabel="Back audit submission photo" resizeMode="contain" source={{ uri: selectedSubmission.backPhotoUrl }} style={styles.detailsPhoto} /></View> : null}
+                  {!selectedSubmission.sidePhotoUrl && !selectedSubmission.backPhotoUrl && selectedSubmission.photoUrl ? <View style={styles.detailsPhotoItem}><Text style={styles.detailsPhotoLabel}>Audit photo</Text><Image accessibilityLabel="Audit submission photo" resizeMode="contain" source={{ uri: selectedSubmission.photoUrl }} style={styles.detailsPhoto} /></View> : null}
+                </View>
               ) : (
                 <View style={styles.noPhotoCard}>
                   <MaterialCommunityIcons color="#07815f" name="image-off-outline" size={28} />
@@ -955,9 +1009,10 @@ export default function StaffScreen() {
 
   return (
     <SafeAreaView edges={['left', 'right']} style={styles.safeArea}>
-      <StatusBar backgroundColor="transparent" style="light" translucent />
-      <View style={[styles.header, { paddingTop: 10 + insets.top }]}>
-        <View>
+      <StatusBar backgroundColor="#eaf6f3" style="dark" translucent={false} />
+      <View style={[styles.header, { paddingTop: 8 + insets.top }]}>
+        <BrandMark height={70} width={150} />
+        <View style={styles.headerCopy}>
           <Text style={styles.headerTitle}>Volumetric Input</Text>
           <Text style={styles.headerSubtitle}>Staff · Tonnage Audit</Text>
         </View>
@@ -974,34 +1029,6 @@ export default function StaffScreen() {
       </View>
       <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
 
-      <Modal animationType="slide" onRequestClose={() => setPickerKind(null)} transparent visible={pickerKind !== null}>
-        <Pressable onPress={() => setPickerKind(null)} style={styles.modalBackdrop}>
-          <Pressable onPress={(event) => event.stopPropagation()} style={styles.pickerSheet}>
-            <View style={styles.sheetHandle} />
-            <Text style={styles.pickerTitle}>{pickerTitle}</Text>
-            <ScrollView
-              contentContainerStyle={styles.pickerOptionsContent}
-              showsVerticalScrollIndicator
-              style={styles.pickerOptionsScroll}>
-              {pickerKind === 'truck' && isLoadingTrucks ? <Text style={styles.pickerStatus}>Loading registered trucks…</Text> : null}
-              {pickerKind === 'truck' && truckLoadError ? <Text style={styles.pickerStatus}>{truckLoadError}</Text> : null}
-              {pickerKind === 'truck' && !isLoadingTrucks && !truckLoadError && pickerOptions.length === 0 ? <Text style={styles.pickerStatus}>No trucks are registered yet.</Text> : null}
-              {pickerKind === 'area' && isLoadingAreas ? <Text style={styles.pickerStatus}>Loading available areas…</Text> : null}
-              {pickerKind === 'area' && areaLoadError ? <Text style={styles.pickerStatus}>{areaLoadError}</Text> : null}
-              {pickerKind === 'area' && !isLoadingAreas && !areaLoadError && pickerOptions.length === 0 ? <Text style={styles.pickerStatus}>No active areas are available.</Text> : null}
-              {pickerKind === 'driver' && isLoadingDrivers ? <Text style={styles.pickerStatus}>Loading available drivers…</Text> : null}
-              {pickerKind === 'driver' && driverLoadError ? <Text style={styles.pickerStatus}>{driverLoadError}</Text> : null}
-              {pickerKind === 'driver' && !isLoadingDrivers && !driverLoadError && pickerOptions.length === 0 ? <Text style={styles.pickerStatus}>No drivers are available.</Text> : null}
-              {pickerOptions.map((option) => (
-                <Pressable key={option} onPress={() => chooseOption(option)} style={styles.pickerOption}>
-                  <Text style={styles.pickerOptionText}>{option}</Text>
-                  <Feather color="#07815f" name="chevron-right" size={19} />
-                </Pressable>
-              ))}
-            </ScrollView>
-          </Pressable>
-        </Pressable>
-      </Modal>
       {renderSubmissionDetails()}
       <SignOutConfirmModal visible={isSignOutConfirmVisible} onCancel={() => setIsSignOutConfirmVisible(false)} onConfirm={completeSignOut} />
     </SafeAreaView>
@@ -1019,9 +1046,10 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#f4f7f5' },
-  header: { alignItems: 'center', backgroundColor: '#064b37', flexDirection: 'row', justifyContent: 'space-between', paddingBottom: 16, paddingHorizontal: 17, paddingTop: 10 },
-  headerTitle: { color: '#ffffff', fontSize: 16, fontWeight: '800' },
-  headerSubtitle: { color: '#a8c2b7', fontSize: 12, marginTop: 3 },
+  header: { alignItems: 'center', backgroundColor: '#eaf6f3', flexDirection: 'row', gap: 10, justifyContent: 'space-between', paddingBottom: 14, paddingHorizontal: 17, paddingTop: 10 },
+  headerCopy: { flex: 1 },
+  headerTitle: { color: '#17382c', fontSize: 16, fontWeight: '800' },
+  headerSubtitle: { color: '#61786d', fontSize: 12, marginTop: 3 },
   syncBadge: { alignItems: 'center', backgroundColor: '#4d4b18', borderColor: '#81742a', borderRadius: 18, borderWidth: 1, flexDirection: 'row', gap: 5, paddingHorizontal: 10, paddingVertical: 6 },
   syncText: { color: '#e7d768', fontSize: 11, fontWeight: '700' },
   content: { flex: 1 },
@@ -1052,6 +1080,8 @@ const styles = StyleSheet.create({
   photoField: { alignItems: 'center', backgroundColor: '#fbfdfc', borderColor: '#d7e3dc', borderRadius: 16, borderStyle: 'dashed', borderWidth: 1.5, paddingVertical: 20 },
   photoFieldAttached: { backgroundColor: '#f0faf5', borderColor: '#39a17e' },
   photoFieldDisabled: { opacity: 0.65 },
+  photoSlot: { marginTop: 12 },
+  photoInstruction: { color: '#718078', fontSize: 11, lineHeight: 16, marginTop: 4 },
   photoPreview: { borderRadius: 14, height: 180, width: '100%' },
   photoOverlay: { alignItems: 'center' },
   photoOverlayAttached: { backgroundColor: 'rgba(10, 28, 19, 0.52)', bottom: 0, justifyContent: 'center', left: 0, position: 'absolute', right: 0, top: 0 },
@@ -1132,6 +1162,9 @@ const styles = StyleSheet.create({
   detailsClose: { alignItems: 'center', backgroundColor: '#f1f5f2', borderRadius: 18, height: 36, justifyContent: 'center', width: 36 },
   detailsScroll: { flexShrink: 1 },
   detailsContent: { paddingBottom: 30, paddingTop: 16 },
+  detailsPhotoGrid: { gap: 12 },
+  detailsPhotoItem: { gap: 6 },
+  detailsPhotoLabel: { color: '#65756c', fontSize: 11, fontWeight: '800' },
   detailsPhoto: { backgroundColor: '#edf3ef', borderRadius: 16, height: 220, width: '100%' },
   noPhotoCard: { alignItems: 'center', backgroundColor: '#f1f5f2', borderRadius: 16, height: 150, justifyContent: 'center' },
   noPhotoText: { color: '#718077', fontSize: 12, fontWeight: '700', marginTop: 8 },

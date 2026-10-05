@@ -54,6 +54,7 @@
           "color": "#07815f"
         }
       ],
+      "@react-native-google-signin/google-signin",
       [
         "expo-location",
         {

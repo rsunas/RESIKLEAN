@@ -1,11 +1,14 @@
 import { Feather, MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
 import { StatusBar } from 'expo-status-bar';
 import { io } from 'socket.io-client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Easing,
   Image,
   Modal,
   Pressable,
@@ -19,7 +22,9 @@ import { AppText as Text } from '@/components/app-text';
 import { SignOutConfirmModal } from '@/components/sign-out-confirm-modal';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Card } from 'heroui-native';
+import { House, MessageCircleWarning, Newspaper, UserRound } from 'lucide-react-native';
 import { BarangayPicker } from '@/components/barangay-picker';
+import { BrandMark } from '@/components/brand-mark';
 import { cancelScheduledCollectionReminders, scheduleCollectionReminders } from '@/lib/notifications';
 import { clearSession, getSession, saveSession, type AuthSession } from '@/lib/session';
 import { type ApiWasteType, type LegacyScheduleData, type ScheduleData, type UpcomingCollection } from '@/types/resident-schedule';
@@ -37,6 +42,16 @@ type ApiReport = {
   barangay: string;
   description: string;
   photoUrl?: string | null;
+  photoMetadata?: {
+    capturedAt?: string;
+    latitude?: number;
+    longitude?: number;
+    accuracy?: number;
+    width?: number;
+    height?: number;
+    fileSize?: number;
+    mimeType?: string;
+  };
   bagCount?: number | null;
   detectedBagCount?: number | null;
   aiResult?: {
@@ -53,6 +68,14 @@ type ApiResponse<T> = {
   error?: string;
 };
 
+type ApiReportMessage = {
+  _id: string;
+  body: string;
+  senderRole: 'resident' | 'admin';
+  senderId?: string | ResidentReference & { name?: string };
+  createdAt: string;
+};
+
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL?.replace(/\/$/, '') || API_URL?.replace(/\/api\/?$/, '');
 const CITY = 'Naga City';
@@ -63,6 +86,7 @@ type ComplaintSocketPayload = {
   reportId?: string;
   status?: ApiReport['status'];
   report?: Partial<ApiReport>;
+  message?: ApiReportMessage;
 };
 
 type WasteLabel = 'Biodegradable' | 'Non-Biodegradable';
@@ -156,6 +180,12 @@ function mergeRealtimeReport(reports: ApiReport[], payload: ComplaintSocketPaylo
   return reports.map((report, index) => index === existingIndex ? { ...report, ...nextReport } : report);
 }
 
+function mergeReportMessages(messages: ApiReportMessage[], incoming?: ApiReportMessage | null): ApiReportMessage[] {
+  if (!incoming?._id) return messages;
+  if (messages.some((message) => normalizeId(message._id) === normalizeId(incoming._id))) return messages;
+  return [...messages, incoming].sort((left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime());
+}
+
 function realtimeStatusText(status: SocketStatus) {
   return status === 'connected'
     ? 'Live updates connected'
@@ -206,13 +236,13 @@ function CollectionBanner({
 }) {
   return (
     <View style={styles.collectionBanner}>
-      <View style={styles.bannerCheck}><Feather color="#ffffff" name="check" size={12} /></View>
+      <View style={styles.bannerCheck}><Feather color="#ffffff" name="check" size={18} strokeWidth={3} /></View>
       <View style={styles.bannerTextWrap}>
         <Text style={styles.bannerTitle}>Collection scheduled today</Text>
         <Text style={styles.bannerSubtitle}>{barangay} · {toWasteLabel(collection.wasteType)}</Text>
       </View>
       <Pressable accessibilityLabel="Dismiss collection update" hitSlop={10} onPress={onDismiss}>
-        <Feather color="#dcfff0" name="x" size={16} />
+        <Feather color="#dcfff0" name="x" size={22} strokeWidth={2.5} />
       </Pressable>
     </View>
   );
@@ -376,20 +406,21 @@ function ReportStatusTracker({ status }: { status: ApiReport['status'] }) {
 
 function BottomNavigation({ activeTab, onChange }: { activeTab: ResidentTab; onChange: (tab: ResidentTab) => void }) {
   const insets = useSafeAreaInsets();
-  const tabs: Array<{ key: ResidentTab; label: string; icon: 'home' | 'calendar' | 'camera' | 'user' }> = [
-    { key: 'home', label: 'Home', icon: 'home' },
-    { key: 'schedule', label: 'Schedule', icon: 'calendar' },
-    { key: 'report', label: 'Report', icon: 'camera' },
-    { key: 'profile', label: 'Profile', icon: 'user' },
+  const tabs = [
+    { key: 'home' as const, label: 'Home', icon: House },
+    { key: 'schedule' as const, label: 'Schedule', icon: Newspaper },
+    { key: 'report' as const, label: 'Report', icon: MessageCircleWarning },
+    { key: 'profile' as const, label: 'Profile', icon: UserRound },
   ];
 
   return (
-    <View style={[styles.bottomNav, { height: 70 + insets.bottom, paddingBottom: insets.bottom }]}>
+    <View style={[styles.bottomNav, { height: 78 + insets.bottom, paddingBottom: insets.bottom }]}>
       {tabs.map((tab) => {
         const active = activeTab === tab.key;
+        const Icon = tab.icon;
         return (
           <Pressable accessibilityRole="tab" accessibilityState={{ selected: active }} key={tab.key} onPress={() => onChange(tab.key)} style={styles.navItem}>
-            <Feather color={active ? '#008c68' : '#9aa8a0'} name={tab.icon} size={18} />
+            <Icon color={active ? '#008c68' : '#9aa8a0'} size={25} />
             <Text style={[styles.navText, active && styles.navTextActive]}>{tab.label}</Text>
             {active ? <View style={styles.navIndicator} /> : <View style={styles.navIndicatorPlaceholder} />}
           </Pressable>
@@ -448,6 +479,7 @@ export default function ResidentScreen() {
   const [isLoadingReports, setIsLoadingReports] = useState(false);
   const [reportError, setReportError] = useState('');
   const [selectedPhoto, setSelectedPhoto] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [photoMetadata, setPhotoMetadata] = useState<ApiReport['photoMetadata'] | null>(null);
   const [description, setDescription] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [reportMessage, setReportMessage] = useState('');
@@ -459,6 +491,12 @@ export default function ResidentScreen() {
   const [profileMessage, setProfileMessage] = useState('');
   const [socketStatus, setSocketStatus] = useState<SocketStatus>('unavailable');
   const socketRef = useRef<ReturnType<typeof io> | null>(null);
+  const selectedReportIdRef = useRef('');
+  const [reportMessages, setReportMessages] = useState<ApiReportMessage[]>([]);
+  const [messageDraft, setMessageDraft] = useState('');
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [messageError, setMessageError] = useState('');
 
   const loadSchedule = useCallback(async (token: string, residentLocation?: string) => {
     if (!residentLocation) {
@@ -537,8 +575,41 @@ export default function ResidentScreen() {
   }, [loadReports, loadSchedule, session?.token, session?.user.barangay, session?.user.location]);
 
   useEffect(() => {
+    const reportId = selectedReport?._id;
+    if (!session?.token || !reportId || !API_URL) {
+      setReportMessages([]);
+      setMessageError('');
+      return undefined;
+    }
+
+    let cancelled = false;
+    setIsLoadingMessages(true);
+    setMessageError('');
+    fetch(`${API_URL}/resident/reports/${encodeURIComponent(reportId)}/messages`, {
+      headers: { Authorization: `Bearer ${session.token}` },
+    })
+      .then(async (response) => {
+        const result = (await response.json()) as ApiResponse<ApiReportMessage[]>;
+        if (!response.ok || !result.success) throw new Error(result.error || 'Unable to load conversation.');
+        if (!cancelled) setReportMessages(result.data || []);
+      })
+      .catch((error) => {
+        if (!cancelled) setMessageError(error instanceof Error ? error.message : 'Unable to load conversation.');
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingMessages(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [selectedReport?._id, session?.token]);
+
+  useEffect(() => {
     if (tab === 'schedule') setActiveTab('schedule');
   }, [tab]);
+
+  useEffect(() => {
+    selectedReportIdRef.current = normalizeId(selectedReport?._id);
+  }, [selectedReport?._id]);
 
   useEffect(() => {
     const token = session?.token;
@@ -583,12 +654,19 @@ export default function ResidentScreen() {
         } as ApiReport;
       });
     };
+    const handleMessageEvent = (payload: ComplaintSocketPayload) => {
+      const reportId = normalizeId(payload.reportId);
+      const selectedId = selectedReportIdRef.current;
+      if (!reportId || !selectedId || reportId !== selectedId || !payload.message) return;
+      setReportMessages((current) => mergeReportMessages(current, payload.message));
+    };
 
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
     socket.on('connect_error', handleConnectError);
     socket.on('complaint:created', handleComplaintEvent);
     socket.on('complaint:status-updated', handleComplaintEvent);
+    socket.on('complaint:message-created', handleMessageEvent);
 
     return () => {
       socket.off('connect', handleConnect);
@@ -596,6 +674,7 @@ export default function ResidentScreen() {
       socket.off('connect_error', handleConnectError);
       socket.off('complaint:created', handleComplaintEvent);
       socket.off('complaint:status-updated', handleComplaintEvent);
+      socket.off('complaint:message-created', handleMessageEvent);
       socket.disconnect();
       if (socketRef.current === socket) socketRef.current = null;
     };
@@ -611,6 +690,29 @@ export default function ResidentScreen() {
   const firstInitial = displayName.charAt(0).toUpperCase();
   const location = session?.user.location || session?.user.barangay || 'Location not set';
   const phone = session?.user.phone || 'Phone number not set';
+
+  const sendReportMessage = async () => {
+    const body = messageDraft.trim();
+    if (!body || !selectedReport?._id || !session?.token || !API_URL || isSendingMessage) return;
+
+    setIsSendingMessage(true);
+    setMessageError('');
+    try {
+      const response = await fetch(`${API_URL}/resident/reports/${encodeURIComponent(selectedReport._id)}/messages`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body }),
+      });
+      const result = (await response.json()) as ApiResponse<ApiReportMessage>;
+      if (!response.ok || !result.success || !result.data) throw new Error(result.error || 'Unable to send message.');
+      setReportMessages((current) => mergeReportMessages(current, result.data));
+      setMessageDraft('');
+    } catch (error) {
+      setMessageError(error instanceof Error ? error.message : 'Unable to send message.');
+    } finally {
+      setIsSendingMessage(false);
+    }
+  };
 
   const renderReportDetails = () => {
     if (!selectedReport) return null;
@@ -669,6 +771,25 @@ export default function ResidentScreen() {
                   <Text style={styles.reportDescriptionDetail}>{selectedReport.description}</Text>
                 </View>
               ) : null}
+
+              {selectedReport.photoMetadata ? (
+                <View style={styles.reportDescriptionCard}>
+                  <Text style={styles.reportDetailLabel}>Photo metadata</Text>
+                  <Text style={styles.reportDescriptionDetail}>{selectedReport.photoMetadata.capturedAt ? `Captured ${formatDate(selectedReport.photoMetadata.capturedAt, { dateStyle: 'medium', timeStyle: 'short' })}` : 'Capture time unavailable'}{selectedReport.photoMetadata.latitude != null && selectedReport.photoMetadata.longitude != null ? ` · GPS ${selectedReport.photoMetadata.latitude.toFixed(5)}, ${selectedReport.photoMetadata.longitude.toFixed(5)}` : ''}{selectedReport.photoMetadata.width && selectedReport.photoMetadata.height ? ` · ${selectedReport.photoMetadata.width} × ${selectedReport.photoMetadata.height}px` : ''}</Text>
+                </View>
+              ) : null}
+
+              <Text style={styles.reportDetailsSectionTitle}>CONVERSATION</Text>
+              <View style={styles.reportChatCard}>
+                {isLoadingMessages ? <ActivityIndicator color="#07815f" style={styles.reportChatLoader} /> : null}
+                {!isLoadingMessages && !reportMessages.length ? <Text style={styles.reportChatEmpty}>No messages yet. Send a message to the collection team.</Text> : null}
+                {reportMessages.map((message) => {
+                  const sender = typeof message.senderId === 'object' ? message.senderId.name || 'Collection team' : message.senderRole === 'resident' ? 'You' : 'Collection team';
+                  return <View key={message._id} style={[styles.reportChatMessage, message.senderRole === 'resident' ? styles.reportChatMessageResident : styles.reportChatMessageAdmin]}><Text style={styles.reportChatSender}>{sender}</Text><Text style={styles.reportChatBody}>{message.body}</Text><Text style={styles.reportChatTime}>{formatDate(message.createdAt, { dateStyle: 'medium', timeStyle: 'short' })}</Text></View>;
+                })}
+                {messageError ? <Text style={styles.errorMessage}>{messageError}</Text> : null}
+                <View style={styles.reportChatComposer}><TextInput maxLength={1000} onChangeText={setMessageDraft} placeholder="Write a message..." placeholderTextColor="#9aa69f" style={styles.reportChatInput} value={messageDraft} /><Pressable disabled={isSendingMessage || !messageDraft.trim()} onPress={sendReportMessage} style={[styles.reportChatSend, (isSendingMessage || !messageDraft.trim()) && styles.disabledButton]}><Text style={styles.reportChatSendText}>{isSendingMessage ? '...' : 'Send'}</Text></Pressable></View>
+              </View>
             </ScrollView>
           </View>
         </View>
@@ -685,7 +806,21 @@ export default function ResidentScreen() {
     }
 
     const result = await ImagePicker.launchCameraAsync({ allowsEditing: true, aspect: [4, 3], mediaTypes: 'images', quality: 0.8 });
-    if (!result.canceled) setSelectedPhoto(result.assets[0]);
+    if (!result.canceled) {
+      const asset = result.assets[0];
+      let coordinates: { latitude: number; longitude: number; accuracy?: number } | undefined;
+      try {
+        const locationPermission = await Location.requestForegroundPermissionsAsync();
+        if (locationPermission.granted) {
+          const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          coordinates = { latitude: position.coords.latitude, longitude: position.coords.longitude, accuracy: position.coords.accuracy || undefined };
+        }
+      } catch {
+        // Photo submission still works when location permission is denied or unavailable.
+      }
+      setSelectedPhoto(asset);
+      setPhotoMetadata({ capturedAt: new Date().toISOString(), ...coordinates, width: asset.width, height: asset.height, fileSize: asset.fileSize, mimeType: asset.mimeType || 'image/jpeg' });
+    }
   };
 
   const submitReport = async () => {
@@ -720,6 +855,13 @@ export default function ResidentScreen() {
         name: selectedPhoto.fileName || 'missed-collection.jpg',
         type: selectedPhoto.mimeType || 'image/jpeg',
       } as unknown as Blob);
+      formData.append('photoMetadata', JSON.stringify(photoMetadata || {
+        capturedAt: new Date().toISOString(),
+        width: selectedPhoto.width,
+        height: selectedPhoto.height,
+        fileSize: selectedPhoto.fileSize,
+        mimeType: selectedPhoto.mimeType || 'image/jpeg',
+      }));
 
       const response = await fetch(`${API_URL}/resident/reports`, {
         method: 'POST',
@@ -730,6 +872,7 @@ export default function ResidentScreen() {
       if (!response.ok || !result.success) throw new Error(result.error || 'Unable to submit your report.');
 
       setSelectedPhoto(null);
+      setPhotoMetadata(null);
       setDescription('');
       setReportMessage('Report submitted. We will review it shortly.');
       await loadReports(session.token);
@@ -801,6 +944,7 @@ export default function ResidentScreen() {
     setSchedule(null);
     setPastReports([]);
     setSelectedPhoto(null);
+    setPhotoMetadata(null);
     setDescription('');
     setReportMessage('');
     setIsEditingProfile(false);
@@ -821,6 +965,17 @@ export default function ResidentScreen() {
     return date >= currentWeekStart && date <= currentWeekEnd;
   });
   const todayCollection = upcomingByDate.get(dateKey(new Date()));
+  const bannerSlide = useRef(new Animated.Value(-90)).current;
+
+  useEffect(() => {
+    Animated.timing(bannerSlide, {
+      toValue: showBanner && todayCollection ? 0 : -90,
+      duration: 280,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [bannerSlide, showBanner, todayCollection]);
+
   const upcomingCollections = useMemo(() => schedule?.upcomingCollections || [], [schedule?.upcomingCollections]);
   useEffect(() => {
     if (!session?.token || session.user.role !== 'resident' || !schedule) return;
@@ -840,10 +995,6 @@ export default function ResidentScreen() {
 
   const homeScreen = (
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-      <Text style={styles.greeting}>Good morning,</Text>
-      <Text style={styles.name}>{displayName}</Text>
-      <Text style={styles.location}>{location} · {CITY}</Text>
-
       <Card style={styles.nextCollectionCard}>
         <Text style={styles.darkCardEyebrow}>NEXT COLLECTION</Text>
         {isLoadingSchedule ? <ActivityIndicator color="#ffffff" style={styles.scheduleLoader} /> : schedule?.nextCollection ? <>
@@ -883,24 +1034,32 @@ export default function ResidentScreen() {
 
   const reportScreen = (
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-      <Text style={styles.screenTitle}>Report Issue</Text>
-      <Text style={styles.screenSubtitle}>Photo-verified uncollected waste reports</Text>
+      <Text style={styles.screenTitle}>Report center</Text>
+      <Text style={styles.screenSubtitle}>Message the collection team about uncollected waste</Text>
       <RealtimeStatus status={socketStatus} />
 
-      <Card style={styles.reportCard}>
-        <Text style={styles.cardHeading}>PREVIEW &amp; SUBMIT</Text>
-        <Pressable accessibilityRole="button" onPress={capturePhoto} style={[styles.photoPreview, !selectedPhoto && styles.photoEmpty]}>
-          {selectedPhoto ? <Image source={{ uri: selectedPhoto.uri }} style={styles.photoImage} /> : <View style={styles.photoEmptyContent}><View style={styles.cameraIcon}><Feather color="#07815f" name="camera" size={24} /></View><Text style={styles.photoEmptyTitle}>Take a photo of the waste</Text><Text style={styles.photoEmptySubtext}>This photo is used to verify your report.</Text></View>}
-          {selectedPhoto ? <View style={styles.locationTag}><Feather color="#ffffff" name="map-pin" size={12} /><Text style={styles.locationTagText}>{location}</Text></View> : null}
+      <Card style={styles.reportChatComposerCard}>
+        <View style={styles.reportChatComposerHeading}>
+          <View style={styles.reportChatComposerIcon}><Feather color="#07815f" name="message-circle" size={20} /></View>
+          <View style={styles.reportChatComposerHeadingText}>
+            <Text style={styles.reportChatComposerTitle}>Start a report</Text>
+            <Text style={styles.reportChatComposerSubtitle}>Send a message and photo to SWMO.</Text>
+          </View>
+        </View>
+
+        <Pressable accessibilityRole="button" onPress={capturePhoto} style={[styles.reportAttachment, !selectedPhoto && styles.reportAttachmentEmpty]}>
+          {selectedPhoto ? <Image source={{ uri: selectedPhoto.uri }} style={styles.reportAttachmentImage} /> : <><View style={styles.reportAttachmentIcon}><Feather color="#07815f" name="camera" size={18} /></View><View style={styles.reportAttachmentCopy}><Text style={styles.reportAttachmentTitle}>Add a photo</Text><Text style={styles.reportAttachmentSubtitle}>A photo helps verify your report.</Text></View><Feather color="#8a9b92" name="plus" size={18} /></>}
+          {selectedPhoto ? <View style={styles.reportAttachmentOverlay}><Feather color="#ffffff" name="check-circle" size={15} /><Text style={styles.reportAttachmentOverlayText}>Photo attached · Tap to retake</Text></View> : null}
         </Pressable>
-        <Text style={styles.fieldLabel}>Brief note (optional)</Text>
-        <TextInput multiline onChangeText={setDescription} placeholder="Add details for the collection team" placeholderTextColor="#9aa69f" style={styles.descriptionInput} value={description} />
+
+        <TextInput multiline onChangeText={setDescription} placeholder="What happened? Write a message..." placeholderTextColor="#9aa69f" style={styles.reportChatDraftInput} value={description} />
+        {selectedPhoto ? <View style={styles.photoMetadataHint}><Feather color="#07815f" name="info" size={14} /><Text style={styles.photoMetadataHintText}>Capture time, location, size, and file type will be included.</Text></View> : null}
         {reportMessage ? <Text accessibilityRole="alert" style={reportMessage.includes('submitted') ? styles.successMessage : styles.errorMessage}>{reportMessage}</Text> : null}
-        <View style={styles.reportButtonRow}><Pressable onPress={capturePhoto} style={styles.retakeButton}><Text style={styles.retakeText}>{selectedPhoto ? 'Retake' : 'Take Photo'}</Text></Pressable><Pressable disabled={isSubmitting} onPress={submitReport} style={[styles.submitButton, isSubmitting && styles.disabledButton]}>{isSubmitting ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.submitButtonText}>Submit Report</Text>}</Pressable></View>
+        <View style={styles.reportChatComposerActions}><Pressable onPress={capturePhoto} style={styles.retakeButton}><Feather color="#07815f" name="camera" size={15} /><Text style={styles.retakeText}>{selectedPhoto ? 'Retake photo' : 'Take photo'}</Text></Pressable><Pressable disabled={isSubmitting} onPress={submitReport} style={[styles.submitButton, isSubmitting && styles.disabledButton]}>{isSubmitting ? <ActivityIndicator color="#ffffff" /> : <><Feather color="#ffffff" name="send" size={15} /><Text style={styles.submitButtonText}>Send report</Text></>}</Pressable></View>
       </Card>
 
       <Card style={styles.card}>
-        <Text style={styles.cardHeading}>PAST REPORTS</Text>
+        <View style={styles.cardTopRow}><Text style={styles.cardHeading}>YOUR REPORT CONVERSATIONS</Text>{pastReports.length ? <Text style={styles.reportCount}>{pastReports.length}</Text> : null}</View>
         {isLoadingReports ? <ActivityIndicator color="#07815f" style={styles.loadingReports} /> : null}
         {reportError ? <Text style={styles.errorMessage}>{reportError}</Text> : null}
         {!isLoadingReports && !reportError ? <ReportList onSelect={setSelectedReport} reports={pastReports} /> : null}
@@ -946,11 +1105,18 @@ export default function ResidentScreen() {
 
   return (
     <SafeAreaView edges={['left', 'right']} style={styles.safeArea}>
-      <StatusBar backgroundColor="transparent" style="light" translucent />
-      <View style={[styles.residentHeader, { paddingTop: insets.top }]}>
-        {showBanner && todayCollection ? <View style={styles.bannerWrap}><CollectionBanner barangay={location} collection={todayCollection} onDismiss={() => setShowBanner(false)} /></View> : null}
+      <StatusBar backgroundColor="#eaf6f3" style="dark" translucent={false} />
+      <View style={styles.residentHeader}>
+        <View style={[styles.brandHeader, { paddingTop: insets.top + 8 }]}>
+          <BrandMark height={116} width={206} />
+          <View style={styles.headerGreeting}>
+            <Text style={styles.headerGreetingText}>Good morning,</Text>
+            <Text numberOfLines={1} style={styles.headerName}>{displayName}</Text>
+          </View>
+        </View>
       </View>
       <View style={styles.content}>{tabScreen}</View>
+      {showBanner && todayCollection ? <Animated.View pointerEvents="box-none" style={[styles.floatingBannerLayer, { top: insets.top + 42 }, { transform: [{ translateY: bannerSlide }] }]}><View style={styles.bannerWrap}><CollectionBanner barangay={location} collection={todayCollection} onDismiss={() => setShowBanner(false)} /></View></Animated.View> : null}
       <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
       {renderReportDetails()}
       <SignOutConfirmModal visible={isSignOutConfirmVisible} onCancel={() => setIsSignOutConfirmVisible(false)} onConfirm={completeSignOut} />
@@ -960,11 +1126,16 @@ export default function ResidentScreen() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#f4f7f5' },
-  residentHeader: { backgroundColor: '#064b37' },
-  bannerWrap: { paddingHorizontal: 12, paddingVertical: 6 },
-  collectionBanner: { alignItems: 'center', backgroundColor: '#06a86c', borderRadius: 13, flexDirection: 'row', minHeight: 53, paddingHorizontal: 13, shadowColor: '#075b3d', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.18, shadowRadius: 10 },
-  bannerCheck: { alignItems: 'center', borderColor: '#c7ffe6', borderRadius: 10, borderWidth: 1, height: 18, justifyContent: 'center', width: 18 },
-  bannerTextWrap: { flex: 1, marginLeft: 9 },
+  residentHeader: { backgroundColor: '#eaf6f3' },
+  brandHeader: { alignItems: 'center', flexDirection: 'row', minHeight: 124, paddingHorizontal: 18 },
+  headerGreeting: { alignItems: 'flex-end', flex: 1, marginLeft: 8 },
+  headerGreetingText: { color: '#5d7066', fontSize: 11, textAlign: 'right' },
+  headerName: { color: '#20372a', fontSize: 17, fontWeight: '800', marginTop: 2, textAlign: 'right' },
+  floatingBannerLayer: { left: 0, position: 'absolute', right: 0, zIndex: 20 },
+  bannerWrap: { paddingHorizontal: 24 },
+  collectionBanner: { alignItems: 'center', backgroundColor: '#06a86c', borderRadius: 13, flexDirection: 'row', minHeight: 52, paddingHorizontal: 12, shadowColor: '#075b3d', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.2, shadowRadius: 10, elevation: 8 },
+  bannerCheck: { alignItems: 'center', borderColor: '#c7ffe6', borderRadius: 12, borderWidth: 1.5, height: 24, justifyContent: 'center', width: 24 },
+  bannerTextWrap: { flex: 1, marginLeft: 8 },
   bannerTitle: { color: '#ffffff', fontSize: 12, fontWeight: '800' },
   bannerSubtitle: { color: '#d9ffec', fontSize: 10, marginTop: 2 },
   content: { flex: 1 },
@@ -1053,6 +1224,26 @@ const styles = StyleSheet.create({
   collectionDate: { color: '#2d4538', fontSize: 12, fontWeight: '800' },
   collectionTime: { color: '#9aa69f', fontSize: 10, marginTop: 4 },
   reportCard: { backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 16, borderWidth: 1, marginTop: 13, padding: 13, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 8 },
+  reportChatComposerCard: { backgroundColor: '#ffffff', borderColor: '#dce9e1', borderRadius: 18, borderWidth: 1, marginTop: 13, padding: 14, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 8 },
+  reportChatComposerHeading: { alignItems: 'center', flexDirection: 'row' },
+  reportChatComposerIcon: { alignItems: 'center', backgroundColor: '#dff7e9', borderRadius: 20, height: 40, justifyContent: 'center', width: 40 },
+  reportChatComposerHeadingText: { flex: 1, marginLeft: 10 },
+  reportChatComposerTitle: { color: '#203d2f', fontSize: 14, fontWeight: '800' },
+  reportChatComposerSubtitle: { color: '#829087', fontSize: 10, marginTop: 3 },
+  reportAttachment: { borderRadius: 12, height: 92, marginTop: 13, overflow: 'hidden', position: 'relative' },
+  reportAttachmentEmpty: { alignItems: 'center', backgroundColor: '#f5fbf7', borderColor: '#c8e9d5', borderStyle: 'dashed', borderWidth: 1.5, flexDirection: 'row', paddingHorizontal: 12 },
+  reportAttachmentIcon: { alignItems: 'center', backgroundColor: '#dff7e9', borderRadius: 17, height: 34, justifyContent: 'center', width: 34 },
+  reportAttachmentCopy: { flex: 1, marginLeft: 10 },
+  reportAttachmentTitle: { color: '#315043', fontSize: 12, fontWeight: '800' },
+  reportAttachmentSubtitle: { color: '#829087', fontSize: 9, marginTop: 3 },
+  reportAttachmentImage: { height: '100%', width: '100%' },
+  reportAttachmentOverlay: { alignItems: 'center', backgroundColor: 'rgba(18,50,36,0.76)', bottom: 0, flexDirection: 'row', gap: 6, left: 0, paddingHorizontal: 10, paddingVertical: 7, position: 'absolute', right: 0 },
+  reportAttachmentOverlayText: { color: '#ffffff', fontSize: 10, fontWeight: '700' },
+  reportChatDraftInput: { backgroundColor: '#f9fbfa', borderColor: '#dbe5df', borderRadius: 12, borderWidth: 1, color: '#243f31', fontSize: 12, marginTop: 11, minHeight: 64, padding: 11, textAlignVertical: 'top' },
+  photoMetadataHint: { alignItems: 'center', flexDirection: 'row', gap: 6, marginTop: 8 },
+  photoMetadataHintText: { color: '#6f8277', flex: 1, fontSize: 9, lineHeight: 13 },
+  reportChatComposerActions: { flexDirection: 'row', gap: 9, marginTop: 11 },
+  reportCount: { color: '#07815f', fontSize: 10, fontWeight: '800' },
   photoPreview: { borderRadius: 12, height: 176, marginTop: 10, overflow: 'hidden', position: 'relative' },
   photoEmpty: { alignItems: 'center', backgroundColor: '#f3faf6', borderColor: '#bfe8d0', borderStyle: 'dashed', borderWidth: 1.5, justifyContent: 'center' },
   photoImage: { height: '100%', width: '100%' },
@@ -1132,10 +1323,23 @@ const styles = StyleSheet.create({
   reportDetailValue: { color: '#2d4538', fontSize: 13, fontWeight: '700', marginTop: 3 },
   reportDescriptionCard: { backgroundColor: '#f8fbf9', borderRadius: 12, marginTop: 8, padding: 11 },
   reportDescriptionDetail: { color: '#3f5549', fontSize: 12, lineHeight: 18, marginTop: 5 },
-  bottomNav: { backgroundColor: '#ffffff', borderTopColor: '#e2e9e5', borderTopWidth: 1, flexDirection: 'row', height: 70, paddingTop: 8 },
+  reportChatCard: { backgroundColor: '#f8fbf9', borderColor: '#e0e9e3', borderRadius: 13, borderWidth: 1, marginTop: 10, padding: 10 },
+  reportChatLoader: { marginVertical: 12 },
+  reportChatEmpty: { color: '#89978f', fontSize: 11, lineHeight: 16, paddingVertical: 8 },
+  reportChatMessage: { borderRadius: 11, marginTop: 8, maxWidth: '88%', padding: 9 },
+  reportChatMessageResident: { alignSelf: 'flex-end', backgroundColor: '#dff7e9' },
+  reportChatMessageAdmin: { alignSelf: 'flex-start', backgroundColor: '#edf2ef' },
+  reportChatSender: { color: '#496255', fontSize: 9, fontWeight: '800' },
+  reportChatBody: { color: '#294236', fontSize: 11, lineHeight: 16, marginTop: 3 },
+  reportChatTime: { color: '#829087', fontSize: 8, marginTop: 4 },
+  reportChatComposer: { alignItems: 'center', flexDirection: 'row', gap: 7, marginTop: 10 },
+  reportChatInput: { backgroundColor: '#ffffff', borderColor: '#dbe5df', borderRadius: 9, borderWidth: 1, color: '#294236', flex: 1, fontSize: 11, minHeight: 38, paddingHorizontal: 9 },
+  reportChatSend: { alignItems: 'center', backgroundColor: '#07815f', borderRadius: 9, justifyContent: 'center', minHeight: 38, paddingHorizontal: 12 },
+  reportChatSendText: { color: '#ffffff', fontSize: 10, fontWeight: '800' },
+  bottomNav: { backgroundColor: '#ffffff', borderTopColor: '#e2e9e5', borderTopWidth: 1, flexDirection: 'row', height: 78, paddingTop: 9 },
   navItem: { alignItems: 'center', flex: 1 },
-  navText: { color: '#99a7a0', fontSize: 9, fontWeight: '600', marginTop: 3 },
+  navText: { color: '#99a7a0', fontSize: 10, fontWeight: '600', marginTop: 4 },
   navTextActive: { color: '#008c68', fontWeight: '800' },
-  navIndicator: { backgroundColor: '#008c68', borderRadius: 3, height: 3, marginTop: 4, width: 4 },
-  navIndicatorPlaceholder: { height: 3, marginTop: 4, width: 4 },
+  navIndicator: { backgroundColor: '#008c68', borderRadius: 3, height: 4, marginTop: 5, width: 5 },
+  navIndicatorPlaceholder: { height: 4, marginTop: 5, width: 5 },
 });
