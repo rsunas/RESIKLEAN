@@ -20,13 +20,19 @@ const reportMessageSchema = new mongoose.Schema(
     },
     senderRole: {
       type: String,
-      enum: ['resident', 'admin'],
+      enum: ['resident', 'admin', 'collector', 'system'],
       required: [true, 'senderRole is required'],
     },
     body: {
       type: String,
       required: [true, 'Message body is required'],
       maxlength: [1000, 'Message must be 1000 characters or fewer'],
+    },
+    photoUrl: {
+      type: String,
+    },
+    photoMetadata: {
+      type: Object,
     },
   },
   { timestamps: true }

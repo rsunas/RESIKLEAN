@@ -1,6 +1,7 @@
 const Route = require('../models/Route');
 const RouteLog = require('../models/RouteLog');
 const MissedReport = require('../models/MissedReport');
+const ReportMessage = require('../models/ReportMessage');
 const socketService = require('../services/socket.service');
 const { uploadPhoto } = require('../services/cloudinary.service');
 const { sendSuccess, sendError } = require('../utils/response');
@@ -377,6 +378,16 @@ const resolveComplaint = async (req, res) => {
 
     await report.save();
 
+    // Create the automated chat message with the proof photo
+    const message = await ReportMessage.create({
+      reportId: report._id,
+      senderId: req.user._id,
+      senderRole: 'collector',
+      body: 'Your complaint has been resolved by the driver.',
+      photoUrl: result.url,
+      photoMetadata: parsedMetadata,
+    });
+
     // Socket: Update admins and resident
     if (socketService.emitToComplaint) {
       socketService.emitToComplaint('complaint:status-updated', report.residentId._id || report.residentId, {
@@ -384,9 +395,10 @@ const resolveComplaint = async (req, res) => {
         status: report.status,
         report,
       });
+      socketService.emitToComplaint('complaint:message-created', report.residentId._id || report.residentId, message);
     }
 
-    sendSuccess(res, report, 201);
+    sendSuccess(res, { report, message }, 201);
   } catch (err) {
     sendError(res, err.message, 500);
   }
