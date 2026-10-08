@@ -15,6 +15,8 @@ const { uploadPhoto } = require('../services/cloudinary.service');
 const { sendSuccess, sendError } = require('../utils/response');
 const { buildRouteHistoryPayload, generateRouteHistoryPDF } = require('../services/pdf/routeHistoryReport');
 const { calculateProjection, STATUS_OK, STATUS_WARNING, STATUS_CRITICAL } = require('../utils/capacityProjection');
+const { getTonnageTrendData } = require('../services/tonnageService');
+const { generateTonnageTrendPDF } = require('../services/pdf/tonnageTrendReport');
 
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
 // Returns all users. Supports ?role= filter.
@@ -897,6 +899,59 @@ const getActiveCyclesMonitoring = async (req, res) => {
   }
 };
 
+const getTonnageTrendReport = async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    if (!start || !end) return sendError(res, 'Missing start or end date', 400);
+    const data = await getTonnageTrendData(start, end);
+    sendSuccess(res, data);
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
+const exportTonnageTrendPDF = async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    if (!start || !end) return sendError(res, 'Missing start or end date', 400);
+    const data = await getTonnageTrendData(start, end);
+
+    // Insert ComplianceReport record
+    const ComplianceReport = require('../models/ComplianceReport');
+    const { start: startBound, end: endBound } = require('../services/tonnageService').getManilaDateBounds ? require('../services/tonnageService').getManilaDateBounds(start, end) : { start: new Date(start), end: new Date(end) };
+    
+    await ComplianceReport.create({
+      reportId: `TR-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+      generatedBy: req.user._id,
+      reportPeriodStart: startBound || new Date(start),
+      reportPeriodEnd: endBound || new Date(end),
+      aggregatedMetrics: {
+        totalTonnage: data.summary.totalTonnage || 0,
+        truckLoads: data.summary.truckLoads || 0,
+      }
+    });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=Tonnage-Trend-Report-${start}-to-${end}.pdf`);
+    
+    const doc = new PDFDocument({
+      size: 'A4',
+      margin: 0,
+      bufferPages: true,
+      autoFirstPage: true,
+    });
+    
+    doc.pipe(res);
+    await generateTonnageTrendPDF(doc, data, `${start} to ${end}`);
+    doc.end();
+  } catch (err) {
+    console.error(err);
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, error: 'PDF generation failed' });
+    }
+  }
+};
+
 module.exports = {
   getAllUsers,
   createUser,
@@ -917,4 +972,6 @@ module.exports = {
   getRouteHistoryDetail,
   exportRouteHistoryPDF,
   getActiveCyclesMonitoring,
+  getTonnageTrendReport,
+  exportTonnageTrendPDF,
 };

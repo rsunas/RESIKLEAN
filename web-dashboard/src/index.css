@@ -449,3 +449,5 @@ button { cursor: pointer; }
   .dashboard-content:has(.accounts-table-card) { padding-top: 10px; }
   .accounts-action-header { padding-right: 14px !important; }
 }
+
+

@@ -23,6 +23,8 @@ const {
   getRouteHistoryDetail,
   exportRouteHistoryPDF,
   getActiveCyclesMonitoring,
+  getTonnageTrendReport,
+  exportTonnageTrendPDF,
 } = require('../controllers/admin.controller');
 const { getMessages, sendMessage } = require('../controllers/message.controller');
 
@@ -51,6 +53,8 @@ router.post('/reports/:reportId/messages', sendMessage);
 
 // Tonnage
 router.get('/tonnage', getTonnageSummary);
+router.get('/reports/tonnage-trend', getTonnageTrendReport);
+router.get('/reports/tonnage-trend/pdf', exportTonnageTrendPDF);
 
 // Trucks
 router.post('/trucks', createTruck);

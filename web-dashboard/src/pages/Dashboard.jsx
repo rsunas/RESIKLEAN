@@ -7,6 +7,7 @@ import PageHeader from '../components/PageHeader.jsx';
 import AppSelect from '../components/AppSelect.jsx';
 import TruckManagementPanel from '../components/TruckManagementPanel.jsx';
 import RouteAssignmentPanel from '../components/RouteAssignmentPanel.jsx';
+import TonnageExportPopover from '../components/TonnageExportPopover.jsx';
 
 const API_URL = import.meta.env.VITE_API_URL;
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || API_URL?.replace(/\/api\/?$/, '');
@@ -705,6 +706,25 @@ export default function Dashboard() {
   }), [activityRows, apiData.loads]);
   const totalTonnage = apiData.tonnage?.totalTonnesEstimate;
   const totalLoads = apiData.tonnage?.count || 0;
+
+  const tonnageStats = useMemo(() => {
+    if (!tonnageSeries || tonnageSeries.length === 0) return { dailyAverage: 0, peakDay: 0, peakDate: null };
+    let total = 0;
+    let peak = 0;
+    let peakDt = null;
+    tonnageSeries.forEach(item => {
+      total += item.tonnes;
+      if (item.tonnes > peak) {
+        peak = item.tonnes;
+        peakDt = item.date;
+      }
+    });
+    return {
+      dailyAverage: total / tonnageSeries.length,
+      peakDay: peak,
+      peakDate: peakDt
+    };
+  }, [tonnageSeries]);
   const completionRate = useMemo(() => {
     if (!apiData.compliance?.length) return null;
     const totalStops = apiData.compliance.reduce((sum, row) => sum + (row.totalStops || 0), 0);
@@ -894,7 +914,39 @@ export default function Dashboard() {
       <MetricCard caption="Reports awaiting review" icon="alert" label="Pending complaints" tone="amber" value={String(complaintRows.filter((item) => item.status === 'pending').length)} />
     </div>
     <Card className="chart-card">
-      <div className="card-heading-row"><div><h3>Tonnage trend</h3><p>Volume collected per day · {formatTrendRange(tonnageSeries)}</p></div><Button className="outline-button chart-export-button" variant="secondary">Export</Button></div>
+      <div className="card-heading-row">
+        <div>
+          <h3>Tonnage trend</h3>
+          <p>Volume collected per day · {formatTrendRange(tonnageSeries)}</p>
+        </div>
+        <TonnageExportPopover 
+          onExport={async (start, end) => {
+            const token = sessionStorage.getItem('resiklean_admin_token');
+            if (!token) return;
+            try {
+              const res = await fetch(`${API_URL.replace(/\/$/, '')}/admin/reports/tonnage-trend/pdf?start=${start}&end=${end}`, {
+                headers: { Authorization: `Bearer ${token}` }
+              });
+              if (!res.ok) {
+                const errorData = await res.json().catch(() => null);
+                throw new Error(errorData?.error || 'Failed to generate PDF');
+              }
+              const blob = await res.blob();
+              const url = window.URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `Tonnage-Trend-Report-${start}-to-${end}.pdf`;
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+              window.URL.revokeObjectURL(url);
+            } catch (err) {
+              alert('Error exporting PDF: ' + err.message);
+              throw err;
+            }
+          }} 
+        />
+      </div>
       <TonnageChart series={tonnageSeries} />
     </Card>
     <Card className="overview-routes"><div className="card-heading-row overview-route-heading"><div><p className="eyebrow">Collection tracking</p><h3>Recent route activity</h3><p>Street-level collection status</p></div><button className="text-button" onClick={() => selectPage('routes')}>View route history <Icon name="arrow" size={15} /></button></div>{routeRows.slice(0, 4).map((route) => <RoutePreview key={route.id} route={route} />)}<button className="view-more" onClick={() => selectPage('routes')}>View all {routeRows.length} entries <Icon name="arrow" size={15} /></button></Card>

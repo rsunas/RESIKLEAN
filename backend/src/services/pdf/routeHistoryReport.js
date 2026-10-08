@@ -87,20 +87,31 @@ function drawTable(doc, x, y, width, rows, { labelWidth, colHeader, accent } = {
     const valueColor = opts.color || COLORS.dark;
     const valueBold = opts.bold ? 'Helvetica-Bold' : 'Helvetica';
     const valueSize = opts.size || 11;
-    doc.fillColor(valueColor).font(valueBold).fontSize(valueSize);
+    
     const lines = Array.isArray(value) ? value : [value];
-    lines.forEach((line, idx) => {
+    
+    let currentY = cursorY;
+    lines.forEach((line) => {
       if (typeof line === 'object' && line.label) {
-        doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9).text(line.label, valueX, cursorY + (idx * 16));
+        doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9);
+        const height = doc.heightOfString(line.label, { width: valueWidth - 8, align: 'left' });
+        doc.text(line.label, valueX, currentY, { width: valueWidth - 8, align: 'left' });
+        currentY += height + 2;
       } else {
-        doc.fillColor(valueColor).font(valueBold).fontSize(valueSize).text(line, valueX, cursorY + (idx * 16), { width: valueWidth - 8, align: 'left' });
+        doc.fillColor(valueColor).font(valueBold).fontSize(valueSize);
+        const height = doc.heightOfString(line, { width: valueWidth - 8, align: 'left' });
+        doc.text(line, valueX, currentY, { width: valueWidth - 8, align: 'left' });
+        currentY += height + 4;
       }
     });
-    doc.moveTo(x, cursorY + padY).lineTo(x + width, cursorY + padY).strokeColor(COLORS.tableBorder).lineWidth(0.5).stroke();
+    
+    const rowHeight = Math.max(currentY - cursorY, 16);
+    
+    doc.moveTo(x, cursorY + rowHeight + 4).lineTo(x + width, cursorY + rowHeight + 4).strokeColor(COLORS.tableBorder).lineWidth(0.5).stroke();
     if (accent && opts.highlight) {
-      doc.fillColor(accent).rect(x - 2, cursorY - 2, 3, padY + 2).fill();
+      doc.fillColor(accent).rect(x - 2, cursorY - 2, 3, rowHeight + 6).fill();
     }
-    cursorY += padY + 6;
+    cursorY += rowHeight + 12;
   });
   doc.restore();
   return cursorY;
@@ -160,10 +171,11 @@ async function generateRouteHistoryPDF(doc, data) {
     doc.fillColor(COLORS.tealDark).roundedRect(margin, cursorY, 50, 46, 8).fill();
     doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(18).text('R', margin + 18, cursorY + 13);
     doc.restore();
+    
+    const brandX = margin + 62;
+    doc.fillColor(COLORS.tealDark).font('Helvetica-Bold').fontSize(22).text('ResiKlean', brandX, cursorY + 6);
+    doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9).text('SOLID WASTE MANAGEMENT SYSTEM', brandX, cursorY + 28, { characterSpacing: 0.5 });
   }
-  const brandX = logoOk ? margin + 62 : margin + 62;
-  doc.fillColor(COLORS.tealDark).font('Helvetica-Bold').fontSize(22).text('ResiKlean', brandX, cursorY + 6);
-  doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9).text('SOLID WASTE MANAGEMENT SYSTEM', brandX, cursorY + 28, { characterSpacing: 0.5 });
 
   doc.fillColor(COLORS.greyLight).font('Helvetica').fontSize(10).text('NAGA CITY SOLID WASTE MANAGEMENT OFFICE', margin, cursorY + 6, { width: contentWidth, align: 'right' });
   doc.fillColor(COLORS.dark).font('Helvetica-Bold').fontSize(26).text('Route History Report', margin, cursorY + 24, { width: contentWidth, align: 'right' });
@@ -186,7 +198,7 @@ async function generateRouteHistoryPDF(doc, data) {
     ['Street Segment', summary.streetSegment || 'Unrecorded segment'],
     ['Collector Name', [summary.collectorName || 'Unassigned collector', summary.collectorSubtitle || 'SWMO Naga City']],
     ['Truck Assigned', summary.truckAssigned || 'No truck recorded for this shift'],
-    ['Shift Start / End', [summary.shiftStart || '—', [{ label: 'Shift End', }, summary.shiftEnd || '—']]],
+    ['Shift Start / End', [summary.shiftStart || '—', { label: 'Shift End' }, summary.shiftEnd || '—']],
     ['Geofence Entry', summary.geofenceEntry || 'Not logged'],
     ['Geofence Exit', summary.geofenceExit || 'Not logged — no exit event recorded', { color: COLORS.red, bold: !summary.geofenceExit }],
     ['Segment Status', segmentStatus, { color: isFlagged ? COLORS.red : COLORS.tealDark, bold: true, size: 12, highlight: true }],
@@ -209,6 +221,12 @@ async function generateRouteHistoryPDF(doc, data) {
   cursorY += 16;
 
   // ── Segment Trail ─────────────────────────────────────────────────────
+  
+  // Temporarily remove the bottom margin so our absolute-positioned map/legend 
+  // elements don't trigger accidental page breaks when they get near the bottom.
+  const originalBottomMargin = doc.page.margins.bottom;
+  doc.page.margins.bottom = 0;
+  
   doc.fillColor(COLORS.tealDark).font('Helvetica-Bold').fontSize(11).text('SEGMENT TRAIL', margin, cursorY);
   cursorY += 18;
 
@@ -257,22 +275,106 @@ async function generateRouteHistoryPDF(doc, data) {
       const gyPos = trailBox.y + 8 + (gy / 4) * (trailBox.height - 20);
       doc.moveTo(trailBox.x + 10, gyPos).lineTo(trailBox.x + trailBox.width - 12, gyPos).stroke();
     }
-    // Street label
-    doc.fillColor(COLORS.tealDark).font('Helvetica-Bold').fontSize(10).text(summary.streetSegment || 'Segment', trailBox.x + trailBox.width / 2 - 40, trailBox.y + trailBox.height / 2 + 8);
-    // Draw line
-    const lineY = trailBox.y + trailBox.height / 2;
-    const entryPoint = { x: trailBox.x + 40, y: lineY };
-    const exitPoint = { x: trailBox.x + trailBox.width - 60, y: lineY };
-    doc.lineWidth(4).strokeColor(COLORS.redSoft).lineCap('round').moveTo(entryPoint.x, entryPoint.y).lineTo(exitPoint.x, exitPoint.y).stroke();
-    doc.dash(4, 4);
-    doc.lineWidth(3).moveTo(exitPoint.x, exitPoint.y).lineTo(trailBox.x + trailBox.width - 30, exitPoint.y).stroke();
-    doc.undash();
-    doc.fillColor(COLORS.redSoft).circle(entryPoint.x, entryPoint.y, 7).fill();
-    doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8).text('•', entryPoint.x - 2, entryPoint.y - 4);
-    doc.fillColor('#888888').circle(exitPoint.x, exitPoint.y, 7).fill();
-    doc.fillColor(COLORS.greyLight).font('Helvetica').fontSize(9).text('N ↑', trailBox.x + trailBox.width - 40, trailBox.y + trailBox.height - 28);
-    doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9).text('Entry', entryPoint.x - 12, entryPoint.y - 18);
-    doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9).text('Not logged', exitPoint.x - 6, exitPoint.y - 18);
+
+    const allCoords = [...(trail.expectedCoordinates || []), ...(trail.coveredCoordinates || [])]
+      .filter((c) => c && Number.isFinite(c[0]) && Number.isFinite(c[1]));
+
+    if (allCoords.length > 0) {
+      const pad = 24;
+      const drawArea = { x: trailBox.x + pad, y: trailBox.y + pad, w: trailBox.width - pad * 2, h: trailBox.height - pad * 2 - 20 };
+      
+      let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
+      allCoords.forEach(c => {
+        if (c[0] < minLng) minLng = c[0];
+        if (c[1] < minLat) minLat = c[1];
+        if (c[0] > maxLng) maxLng = c[0];
+        if (c[1] > maxLat) maxLat = c[1];
+      });
+      
+      const lngDiff = maxLng - minLng || 0.0001;
+      const latDiff = maxLat - minLat || 0.0001;
+      const aspectData = lngDiff / latDiff;
+      const aspectBox = drawArea.w / drawArea.h;
+      
+      let scaleX, scaleY;
+      if (aspectData > aspectBox) {
+        scaleX = drawArea.w / lngDiff;
+        scaleY = (drawArea.w / aspectData) / latDiff;
+      } else {
+        scaleY = drawArea.h / latDiff;
+        scaleX = (drawArea.h * aspectData) / lngDiff;
+      }
+      
+      const offsetX = drawArea.x + (drawArea.w - (lngDiff * scaleX)) / 2;
+      const offsetY = drawArea.y + (drawArea.h - (latDiff * scaleY)) / 2;
+      
+      const project = (c) => ({
+        x: offsetX + (c[0] - minLng) * scaleX,
+        y: offsetY + (latDiff * scaleY) - ((c[1] - minLat) * scaleY)
+      });
+
+      doc.save();
+      doc.rect(trailBox.x, trailBox.y, trailBox.width, trailBox.height).clip();
+      
+      const drawPath = (coords, color, width, dash) => {
+        if (!coords || !Array.isArray(coords)) return;
+        const validCoords = coords.filter((c) => c && Number.isFinite(c[0]) && Number.isFinite(c[1]));
+        if (validCoords.length < 2) return;
+        
+        doc.lineWidth(width).strokeColor(color).lineJoin('round').lineCap('round');
+        if (dash) doc.dash(dash[0], { space: dash[1] });
+        else doc.undash();
+        
+        const start = project(validCoords[0]);
+        doc.moveTo(start.x, start.y);
+        for (let i = 1; i < validCoords.length; i++) {
+          const pt = project(validCoords[i]);
+          doc.lineTo(pt.x, pt.y);
+        }
+        doc.stroke();
+        doc.undash();
+      };
+      
+      drawPath(trail.expectedCoordinates, COLORS.greyLight, 3, [4, 4]);
+      drawPath(trail.coveredCoordinates, COLORS.redSoft, 4);
+      
+      if (trail.entryCoord) {
+        const pt = project(trail.entryCoord);
+        doc.fillColor(COLORS.redSoft).circle(pt.x, pt.y, 6).fill();
+        doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(7).text('•', pt.x - 1.5, pt.y - 3.5);
+        doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9).text('Entry', pt.x - 12, pt.y - 16);
+      }
+      if (trail.exitCoord) {
+        const pt = project(trail.exitCoord);
+        doc.fillColor('#888888').circle(pt.x, pt.y, 6).fill();
+        doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9).text('Exit', pt.x - 8, pt.y - 16);
+      }
+      doc.restore();
+    } else {
+      const lineY = trailBox.y + trailBox.height / 2;
+      const entryPoint = { x: trailBox.x + 40, y: lineY };
+      const exitPoint = { x: trailBox.x + trailBox.width - 60, y: lineY };
+      doc.lineWidth(4).strokeColor(COLORS.redSoft).lineCap('round').moveTo(entryPoint.x, entryPoint.y).lineTo(exitPoint.x, exitPoint.y).stroke();
+      doc.dash(4, 4);
+      doc.lineWidth(3).moveTo(exitPoint.x, exitPoint.y).lineTo(trailBox.x + trailBox.width - 30, exitPoint.y).stroke();
+      doc.undash();
+      doc.fillColor(COLORS.redSoft).circle(entryPoint.x, entryPoint.y, 7).fill();
+      doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8).text('•', entryPoint.x - 2, entryPoint.y - 4);
+      doc.fillColor('#888888').circle(exitPoint.x, exitPoint.y, 7).fill();
+      doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9).text('Entry', entryPoint.x - 12, entryPoint.y - 18);
+      doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9).text('Not logged', exitPoint.x - 12, exitPoint.y - 18);
+    }
+    
+    doc.fillColor(COLORS.greyLight).font('Helvetica').fontSize(9).text('N ↑', trailBox.x + trailBox.width - 24, trailBox.y + trailBox.height - 24);
+
+    let label = summary.streetSegment || 'Segment';
+    if (label.length > 55) label = label.substring(0, 52) + '...';
+    doc.fillColor(COLORS.tealDark).font('Helvetica-Bold').fontSize(10).text(
+      label,
+      trailBox.x + 10,
+      trailBox.y + trailBox.height - 18,
+      { width: trailBox.width - 20, align: 'center', lineBreak: false, height: 12 }
+    );
     doc.restore();
   }
 
@@ -287,6 +389,7 @@ async function generateRouteHistoryPDF(doc, data) {
     : 'Fig. 1 — Segment traced via on-device geofencing. Rendered as diagram when map service is unavailable.';
   doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9).text(caption, trailBox.x, trailBox.y + trailBox.height + 8, { width: trailBox.width });
 
+  doc.page.margins.bottom = originalBottomMargin;
   doc.end();
 }
 
@@ -357,7 +460,9 @@ function buildRouteHistoryPayload(input, { adminUser, referenceCounter = 1 }) {
     .map((p) => [Number(p.longitude), Number(p.latitude)]) || [];
   const expectedCoordinates = route.routePath && route.routePath.type === 'LineString' && Array.isArray(route.routePath.coordinates)
     ? route.routePath.coordinates
-    : [];
+    : route.routePath && route.routePath.type === 'MultiLineString' && Array.isArray(route.routePath.coordinates)
+      ? route.routePath.coordinates.flat(1)
+      : [];
   const trailPoints = coveredCoordinates;
   const entryCoord = trailPoints[0] || null;
   const exitCoord = trailPoints[trailPoints.length - 1] || null;

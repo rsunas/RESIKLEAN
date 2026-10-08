@@ -1137,7 +1137,7 @@ export default function ResidentScreen() {
 
   const scheduleScreen = (
     <ScrollView contentContainerStyle={styles.newsScreenContent} showsVerticalScrollIndicator={false}>
-      <Text style={styles.newsScreenTitle}>NAGA CITY'S LATEST NEWS</Text>
+      <Text style={styles.newsScreenTitle}>SWMO'S LATEST NEWS</Text>
       {CITY_NEWS.map((item) => <NewsListItem item={item} key={item.id} />)}
     </ScrollView>
   );
