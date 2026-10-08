@@ -2,50 +2,47 @@ const mongoose = require('mongoose');
 
 const capacityLogSchema = new mongoose.Schema(
   {
+    type: { type: String, enum: ['log', 'reset'], default: 'log' },
     clientId: {
       type: String,
       required: true,
       unique: true,
     },
-    driver: {
+    driverId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
       required: true,
     },
-    truck: {
+    truckId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Truck',
       required: true,
     },
-    dailyCycle: {
+    cycleLogId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'DailyCycleLog',
       required: true,
     },
-    route: {
+    routeId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Route',
       required: true,
     },
-    fillLevel: {
+    fillLevelPct: {
       type: Number,
       required: true,
-      min: 10,
+      min: 0,
       max: 100,
       validate: {
         validator: Number.isInteger,
         message: '{VALUE} is not an integer value',
       },
     },
-    snapshot: {
-      completedStops: { type: Number, required: true },
-      totalStops: { type: Number, required: true },
-    },
-    calculated: {
-      volume: { type: Number, required: true },
-      tonnage: { type: Number, required: true },
-    },
-    timestamp: {
+    stopsCompleted: { type: Number, required: true, min: 0 },
+    totalStops: { type: Number, required: true, min: 0 },
+    estimatedVolumeM3: { type: Number, required: true, min: 0 },
+    estimatedTonnage: { type: Number, required: true, min: 0 },
+    loggedAt: {
       type: Date,
       default: Date.now,
     },
@@ -61,7 +58,7 @@ const capacityLogSchema = new mongoose.Schema(
 );
 
 // Indexes to speed up queries
-capacityLogSchema.index({ dailyCycle: 1, timestamp: -1 });
-capacityLogSchema.index({ driver: 1, timestamp: -1 });
+capacityLogSchema.index({ cycleLogId: 1, loggedAt: -1 });
+capacityLogSchema.index({ driverId: 1, loggedAt: -1 });
 
 module.exports = mongoose.model('CapacityLog', capacityLogSchema);

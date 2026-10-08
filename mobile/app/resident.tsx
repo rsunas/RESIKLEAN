@@ -80,6 +80,17 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL?.replace(/\/$/, '') || API_URL?.replace(/\/api\/?$/, '');
 const CITY = 'Naga City';
 
+const CITY_NEWS = [
+  {
+    id: 'swmo-denr-may-2026',
+    category: 'Solid Waste Management Office',
+    headline: 'DENR Secretary & Mayor Leni Address Naga City Solid Waste Concerns',
+    date: 'May 22, 2026',
+    excerpt: 'The City Solid Waste Management Office (SWMO), headed by Engr. Joel P. Martin, met with DENR Secretary Mitch Cuna and Mayor Leni at the San Isidro Sanitary Landfill...',
+    image: require('../assets/images/naga-swmo-news.jpg'),
+  },
+] as const;
+
 type SocketStatus = 'connecting' | 'connected' | 'disconnected' | 'unavailable';
 
 type ComplaintSocketPayload = {
@@ -491,6 +502,22 @@ function HomeSectionLabel({ label, onViewAll }: { label: string; onViewAll?: () 
             <Text style={styles.viewAll}>View All</Text>
           </Pressable>
         ) : null}
+      </View>
+    </View>
+  );
+}
+
+function NewsListItem({ item }: { item: (typeof CITY_NEWS)[number] }) {
+  return (
+    <View style={styles.newsCard}>
+      <Text style={styles.newsCategory}>{item.category}</Text>
+      <View style={styles.newsCardContent}>
+        <Image accessibilityLabel={`${item.headline} image`} resizeMode="cover" source={item.image} style={styles.newsThumbnail} />
+        <View style={styles.newsCopy}>
+          <Text numberOfLines={3} style={styles.newsHeadline}>{item.headline}</Text>
+          <Text style={styles.newsDate}>{item.date}</Text>
+          <Text numberOfLines={3} style={styles.newsExcerpt}>{item.excerpt}</Text>
+        </View>
       </View>
     </View>
   );
@@ -1109,17 +1136,9 @@ export default function ResidentScreen() {
   );
 
   const scheduleScreen = (
-    <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-      <Text style={styles.screenTitle}>Collection Schedule</Text>
-      <Text style={styles.screenSubtitle}>{location} · {formatDate(currentWeekDates[0], { month: 'long', year: 'numeric' })}</Text>
-
-      {isLoadingSchedule ? <Card style={styles.card}><ActivityIndicator color="#07815f" style={styles.loadingSchedule} /></Card> : <MonthlyScheduleCalendar collections={upcomingCollections} />}
-      {scheduleError ? <Text style={styles.errorMessage}>{scheduleError}</Text> : null}
-
-      <Card style={styles.card}>
-        <View style={styles.cardTopRow}><Text style={styles.cardHeading}>UPCOMING COLLECTIONS</Text>{upcomingCollections.length > 3 ? <Pressable accessibilityRole="button" onPress={() => setShowAllUpcoming((visible) => !visible)}><Text style={styles.viewAll}>{showAllUpcoming ? 'Show Less' : 'View All'}</Text></Pressable> : null}</View>
-        {isLoadingSchedule ? <ActivityIndicator color="#07815f" style={styles.loadingSchedule} /> : visibleUpcomingCollections.length ? visibleUpcomingCollections.map((collection) => <View key={collection.date} style={[styles.upcomingRow, collection.wasteType === 'biodegradable' ? styles.upcomingBio : styles.upcomingNonBio]}><View><Text style={styles.collectionDate}>{formatDate(collection.date, { weekday: 'short', month: 'short', day: 'numeric' })}</Text><Text style={styles.collectionTime}>{collection.timeWindows.length ? collection.timeWindows.join(' · ') : 'Time unavailable'}</Text></View><WastePill type={toWasteLabel(collection.wasteType)} /></View>) : <Text style={styles.emptyScheduleText}>No upcoming collections found.</Text>}
-      </Card>
+    <ScrollView contentContainerStyle={styles.newsScreenContent} showsVerticalScrollIndicator={false}>
+      <Text style={styles.newsScreenTitle}>NAGA CITY'S LATEST NEWS</Text>
+      {CITY_NEWS.map((item) => <NewsListItem item={item} key={item.id} />)}
     </ScrollView>
   );
 
@@ -1284,6 +1303,16 @@ const styles = StyleSheet.create({
   bannerSubtitle: { color: '#d9ffec', fontSize: 10, marginTop: 2 },
   content: { flex: 1 },
   scrollContent: { padding: 13, paddingBottom: 98 },
+  newsScreenContent: { paddingBottom: 98, paddingHorizontal: 13, paddingTop: 19 },
+  newsScreenTitle: { color: '#107B57', fontSize: 22, fontWeight: '800', letterSpacing: 0.25, marginBottom: 27 },
+  newsCard: { backgroundColor: '#ffffff', borderColor: '#e3e9e5', borderRadius: 12, borderWidth: 1, marginBottom: 12, padding: 13, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 7, elevation: 2 },
+  newsCategory: { color: '#107B57', fontSize: 10, fontWeight: '800', letterSpacing: 0.8, marginBottom: 12, textTransform: 'uppercase' },
+  newsCardContent: { flexDirection: 'row' },
+  newsThumbnail: { backgroundColor: '#e7f0eb', borderRadius: 8, height: 132, width: 91 },
+  newsCopy: { flex: 1, marginLeft: 12, minWidth: 0 },
+  newsHeadline: { color: '#202320', fontSize: 14, fontWeight: '800', lineHeight: 19 },
+  newsDate: { color: '#777f7a', fontSize: 10, fontWeight: '600', marginTop: 6 },
+  newsExcerpt: { color: '#5c625e', fontSize: 12, lineHeight: 17, marginTop: 7 },
   greeting: { color: '#5d7066', fontSize: 13, marginTop: 2 },
   name: { color: '#20372a', fontSize: 20, fontWeight: '800', marginTop: 2 },
   location: { color: '#809087', fontSize: 11, marginTop: 3 },

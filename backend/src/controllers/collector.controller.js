@@ -9,6 +9,8 @@ const ReportMessage = require('../models/ReportMessage');
 const socketService = require('../services/socket.service');
 const { uploadPhoto } = require('../services/cloudinary.service');
 const { sendSuccess, sendError } = require('../utils/response');
+const CapacityLog = require('../models/CapacityLog');
+const { DENSITY_TONNES_PER_M3 } = require('../utils/capacityProjection');
 
 // ── GET /api/collector/route ──────────────────────────────────────────────────
 // Returns the route assigned to the logged-in collector,
@@ -58,7 +60,7 @@ const getAssignedRoute = async (req, res) => {
       shiftStatus: 'active',
     })
       .sort({ shiftStart: -1 })
-      .populate('truckId', 'plateNumber truckNumber color')
+      .populate('truckId', 'plateNumber truckNumber color length width height')
       .lean();
 
     // Sort stops by order field
@@ -892,8 +894,6 @@ const getTrailHistory = async (req, res) => {
   return sendSuccess(res, { sessions, points, count: sessions.length });
 };
 
-const CapacityLog = require('../models/CapacityLog');
-
 const batchSyncCapacity = async (req, res) => {
   try {
     const { logs } = req.body;
@@ -905,7 +905,7 @@ const batchSyncCapacity = async (req, res) => {
     const cycle = await DailyCycleLog.findOne({
       driverId: req.user._id,
       shiftStatus: 'active',
-    }).populate('truckId').lean();
+    }).sort({ shiftStart: -1 }).populate('truckId').lean();
 
     if (!cycle || !cycle.truckId) {
       return sendError(res, 'You do not have an active shift/cycle', 403);
@@ -917,14 +917,7 @@ const batchSyncCapacity = async (req, res) => {
       return sendError(res, 'No active route assigned to you', 403);
     }
 
-    const todayDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date());
     const totalStops = route.stops ? route.stops.length : 0;
-    const completedStops = await RouteLog.countDocuments({
-      routeId: route._id,
-      collectorId: req.user._id,
-      eventDate: todayDate,
-      status: 'collected',
-    });
 
     const clientIds = logs.map(l => l.clientId).filter(Boolean);
     const existingLogs = clientIds.length
@@ -932,71 +925,101 @@ const batchSyncCapacity = async (req, res) => {
       : [];
     const existingSet = new Set(existingLogs.map(l => l.clientId));
 
-    const inserted = [];
-    const skipped = [];
-    
-    // Truck capacity in m3
-    const capacity = cycle.truckId.capacity || 0;
-    const density = 0.294;
+    const syncedIds = [];
+    const failed = [];
+    const capacity = Number(cycle.truckId.length || 0)
+      * Number(cycle.truckId.width || 0)
+      * Number(cycle.truckId.height || 0);
 
     for (const record of logs) {
-      const { clientId, fillLevel, timestamp, dataSource } = record;
+      const { clientId, type, fillLevelPct, loggedAt } = record || {};
 
       if (!clientId) {
-        skipped.push({ clientId: null, reason: 'missing clientId' });
+        failed.push({ clientId: null, reason: 'missing clientId' });
         continue;
       }
       if (existingSet.has(clientId)) {
-        skipped.push({ clientId, reason: 'duplicate' });
+        syncedIds.push(clientId);
         continue;
       }
       
-      let level = Number(fillLevel);
-      if (isNaN(level) || level < 10 || level > 100 || level % 10 !== 0) {
-        skipped.push({ clientId, reason: 'invalid fillLevel (must be 10-100 in steps of 10)' });
+      let level = Number(fillLevelPct);
+      if (type === 'reset') {
+        level = 0;
+      } else if (!Number.isInteger(level) || level < 10 || level > 100 || level % 10 !== 0) {
+        failed.push({ clientId, reason: 'fillLevelPct must be 10-100 in steps of 10' });
         continue;
       }
 
-      const volume = Number((capacity * (level / 100)).toFixed(2));
-      const tonnage = Number((volume * density).toFixed(2));
+      const recordedAt = loggedAt ? new Date(loggedAt) : new Date();
+      if (Number.isNaN(recordedAt.getTime())) {
+        failed.push({ clientId, reason: 'loggedAt must be a valid date' });
+        continue;
+      }
+
+      const stopsCompleted = await RouteLog.countDocuments({
+        routeId: route._id,
+        collectorId: req.user._id,
+        status: 'collected',
+        collectedAt: { $gte: cycle.shiftStart, $lte: recordedAt },
+      });
+      const estimatedVolumeM3 = Number((capacity * (level / 100)).toFixed(3));
+      const estimatedTonnage = Number((estimatedVolumeM3 * DENSITY_TONNES_PER_M3).toFixed(3));
 
       try {
-        const log = await CapacityLog.create({
+        await CapacityLog.create({
           clientId,
-          driver: req.user._id,
-          truck: cycle.truckId._id,
-          dailyCycle: cycle._id,
-          route: route._id,
-          fillLevel: level,
-          snapshot: { completedStops, totalStops },
-          calculated: { volume, tonnage },
-          timestamp: timestamp || new Date(),
-          dataSource: dataSource === 'seed' ? 'seed' : 'real',
+          type: type || 'log',
+          driverId: req.user._id,
+          truckId: cycle.truckId._id,
+          cycleLogId: cycle._id,
+          routeId: route._id,
+          fillLevelPct: level,
+          stopsCompleted,
+          totalStops,
+          estimatedVolumeM3,
+          estimatedTonnage,
+          loggedAt: recordedAt,
+          dataSource: 'real',
         });
-        inserted.push(log);
+        syncedIds.push(clientId);
         existingSet.add(clientId);
       } catch (err) {
         if (err.code === 11000) {
-          skipped.push({ clientId, reason: 'duplicate' });
+          syncedIds.push(clientId);
         } else {
-          skipped.push({ clientId, reason: err.message });
+          failed.push({ clientId, reason: err.message });
         }
       }
     }
 
-    const syncedIds = inserted.map(l => l.clientId);
-    for (const id of existingSet) {
-      if (!syncedIds.includes(id)) syncedIds.push(id);
-    }
-
     sendSuccess(res, {
-      inserted: inserted.length,
-      skipped: skipped.length,
+      syncedIds: [...new Set(syncedIds)],
+      failed,
       total: logs.length,
-      syncedIds,
-    }, 201);
+    });
   } catch (err) {
     sendError(res, err.message, 500);
+  }
+};
+
+// ── GET /api/collector/capacity/latest ───────────────────────────────────────
+// The collector UI uses this read-only value for the reported truck-load gauge.
+const getLatestCapacity = async (req, res) => {
+  try {
+    const cycle = await DailyCycleLog.findOne({
+      driverId: req.user._id,
+      shiftStatus: 'active',
+    }).sort({ shiftStart: -1 }).lean();
+
+    if (!cycle) return sendSuccess(res, null);
+
+    const latestLog = await CapacityLog.findOne({ cycleLogId: cycle._id, type: 'reset' })
+      .sort({ loggedAt: -1 })
+      .lean();
+    return sendSuccess(res, latestLog || null);
+  } catch (err) {
+    return sendError(res, err.message, 500);
   }
 };
 
@@ -1012,4 +1035,5 @@ module.exports = {
   getTrailHistory,
   completeRoute,
   batchSyncCapacity,
+  getLatestCapacity,
 };

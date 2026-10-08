@@ -3,7 +3,7 @@ const router   = express.Router();
 const { protect }   = require('../middlewares/auth');
 const { authorize } = require('../middlewares/authorize');
 const upload = require('../middlewares/upload');
-const { getAssignedRoute, markStop, batchSyncLogs, getTodayProgress, getRouteHistory, resolveComplaint, getComplaints, batchSyncTrails, getTrailHistory, completeRoute, batchSyncCapacity } = require('../controllers/collector.controller');
+const { getAssignedRoute, markStop, batchSyncLogs, getTodayProgress, getRouteHistory, resolveComplaint, getComplaints, batchSyncTrails, getTrailHistory, completeRoute, batchSyncCapacity, getLatestCapacity } = require('../controllers/collector.controller');
 
 router.use(protect, authorize('collector'));
 
@@ -11,6 +11,7 @@ router.get('/route',                    getAssignedRoute);
 router.get('/route/progress',           getTodayProgress);
 router.get('/route-history',            getRouteHistory);
 router.post('/route/logs/batch',        batchSyncLogs);    // batch must come before :stopId
+router.get('/capacity/latest',          getLatestCapacity);
 router.post('/capacity/batch',          batchSyncCapacity);
 router.post('/route/complete',          completeRoute);
 router.patch('/route/logs/:stopId',     markStop);

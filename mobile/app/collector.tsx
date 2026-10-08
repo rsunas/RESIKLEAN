@@ -2,8 +2,8 @@ import { Feather } from 'expo/node_modules/@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, AppState, Image, Modal, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Alert, AppState, Image, Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { io } from 'socket.io-client';
 import Svg, { Circle } from 'react-native-svg';
 import Mapbox from '@rnmapbox/maps';
@@ -15,10 +15,14 @@ import { Card } from 'heroui-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { deleteOfflineRouteMap, downloadOfflineRouteMap, getOfflineRouteMapStatus, type OfflineRouteMapStatus } from '@/lib/driver-offline-map';
 import { enableDriverGeofencing, getDriverGeofencingStatus, stopDriverGeofencing, updateDriverGeofences } from '@/lib/driver-geofencing';
-import { getRouteLogQueueStats, subscribeToRouteLogSync, syncRouteLogQueue, type RouteLogSyncResult } from '@/lib/driver-route-log-queue';
+import { getQueuedRouteLogStopIds, getRouteLogQueueStats, subscribeToRouteLogSync, syncRouteLogQueue, type RouteLogSyncResult } from '@/lib/driver-route-log-queue';
 import { recordDriverTrailLocation, startDriverTrailSession, subscribeToDriverTrailSync, syncDriverTrailQueue } from '@/lib/driver-trail-queue';
 import { cacheAssignedRoute, clearCachedAssignedRoute, enableRouteProximityTracking, getCachedAssignedRoute, getRouteProximityEvents, getRouteProximityStatus, ROUTE_ENTER_TOLERANCE_METERS, ROUTE_EXIT_TOLERANCE_METERS, stopRouteProximityTracking, subscribeToRouteProximityStatus, updateRouteProximityTracking, type RoutePresenceEvent, type RoutePresenceStatus } from '@/lib/driver-route-proximity';
 import { clearSession, getSession, type AccountUser, type AuthSession } from '@/lib/session';
+import { queueCapacityLog, syncCapacityQueue } from '@/lib/driver-capacity-queue';
+
+const TONNES_PER_STOP = 0.1;
+const TRUCK_DENSITY = 0.294;
 
 type CollectorTab = 'map' | 'history' | 'profile';
 
@@ -59,7 +63,7 @@ type DriverRoute = {
   schedule: number[];
   stops: RouteStop[];
   routePath?: RoutePath;
-  assignedTruck?: { plateNumber?: string; truckNumber?: string; color?: string } | null;
+  assignedTruck?: { plateNumber?: string; truckNumber?: string; color?: string; length?: number; width?: number; height?: number } | null;
   isScheduledToday?: boolean;
   isCompletedToday?: boolean;
 };
@@ -79,6 +83,12 @@ type RouteProgress = {
   completed: number;
   remaining: number;
   logs: RouteLog[];
+};
+
+type CapacityLog = {
+  type?: 'reset' | 'log';
+  fillLevelPct: number;
+  loggedAt: string;
 };
 
 type RouteHistoryStopLog = {
@@ -157,6 +167,12 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL?.replace(/\/$/, '') || API_URL?.replace(/\/api\/?$/, '');
 const MAPBOX_ACCESS_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN?.trim();
 const MAP_CENTER: [number, number] = [123.1815, 13.6192];
+// Visual approach indicator only. Stop collection still uses the platform
+// geofence radius configured in driver-geofencing.ts (50 m).
+const STOP_NEAR_RADIUS_METERS = 100;
+const STOP_FLAG_POLE_HEIGHT_LATITUDE = 0.00035;
+const STOP_FLAG_WIDTH_LONGITUDE = 0.00055;
+const STOP_FLAG_HEIGHT_LATITUDE = 0.00018;
 
 if (MAPBOX_ACCESS_TOKEN) {
   Mapbox.setAccessToken(MAPBOX_ACCESS_TOKEN);
@@ -222,6 +238,17 @@ function lastRouteCoordinate(feature: RouteLineFeature | null): [number, number]
   }
   const lastLine = feature.geometry.coordinates[feature.geometry.coordinates.length - 1];
   return lastLine?.[lastLine.length - 1] || null;
+}
+
+function distanceBetweenCoordinates(first: [number, number], second: [number, number]) {
+  const earthRadiusMeters = 6_371_000;
+  const firstLatitude = first[1] * (Math.PI / 180);
+  const secondLatitude = second[1] * (Math.PI / 180);
+  const latitudeDelta = (second[1] - first[1]) * (Math.PI / 180);
+  const longitudeDelta = (second[0] - first[0]) * (Math.PI / 180);
+  const haversine = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(firstLatitude) * Math.cos(secondLatitude) * Math.sin(longitudeDelta / 2) ** 2;
+  return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
 }
 
 function formatTime(date?: string) {
@@ -362,6 +389,7 @@ export default function CollectorScreen() {
   const [assignedRoute, setAssignedRoute] = useState<DriverRoute | null>(null);
   const [driverLocation, setDriverLocation] = useState<DriverLocation | null>(null);
   const [progress, setProgress] = useState<RouteProgress | null>(null);
+  const [latestCapacityLog, setLatestCapacityLog] = useState<CapacityLog | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isGeofencingEnabled, setIsGeofencingEnabled] = useState(false);
@@ -372,10 +400,10 @@ export default function CollectorScreen() {
   const [offlineMap, setOfflineMap] = useState<OfflineRouteMapStatus>({ completedSizeBytes: 0, downloaded: false, downloading: false, percentage: 0 });
   const [isUpdatingOfflineMap, setIsUpdatingOfflineMap] = useState(false);
   const [offlineMapMessage, setOfflineMapMessage] = useState<string | null>(null);
-  const [isCapacityPanelExpanded, setIsCapacityPanelExpanded] = useState(true);
   const [isSignOutConfirmVisible, setIsSignOutConfirmVisible] = useState(false);
   const [pendingRouteLogs, setPendingRouteLogs] = useState(0);
   const [failedRouteLogs, setFailedRouteLogs] = useState(0);
+  const [queuedRouteStopIds, setQueuedRouteStopIds] = useState<string[]>([]);
   const [complaints, setComplaints] = useState<ComplaintMarker[]>([]);
   const [selectedComplaint, setSelectedComplaint] = useState<ComplaintMarker | null>(null);
   const [pendingProofAsset, setPendingProofAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
@@ -391,7 +419,57 @@ export default function CollectorScreen() {
   const [isSubmittingRoute, setIsSubmittingRoute] = useState(false);
   const [isFinishRouteConfirmVisible, setIsFinishRouteConfirmVisible] = useState(false);
   const [routeActionMessage, setRouteActionMessage] = useState<{ kind: 'success' | 'error'; title: string; message: string } | null>(null);
+  
+  const [isEmptiedUndoing, setIsEmptiedUndoing] = useState(false);
+  const [localResetTimestamp, setLocalResetTimestamp] = useState<number>(0);
+  const emptyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  
+  const handleTruckEmptied = () => {
+    setIsEmptiedUndoing(true);
+    emptyTimeoutRef.current = setTimeout(() => {
+      setIsEmptiedUndoing(false);
+      const now = Date.now();
+      setLocalResetTimestamp(now);
+      const clientId = 'reset-' + now;
+      queueCapacityLog({ clientId, type: 'reset', fillLevelPct: 0, loggedAt: new Date(now).toISOString() }).catch(() => {});
+      if (session?.token) syncCapacityQueue(session.token).catch(() => {});
+    }, 10000);
+  };
+  
+  const cancelTruckEmptied = () => {
+    if (emptyTimeoutRef.current) clearTimeout(emptyTimeoutRef.current);
+    setIsEmptiedUndoing(false);
+  };
+  const capacityPositionRef = useRef({ x: 0, y: 0 });
+  const capacityDragStartRef = useRef({ x: 0, y: 0 });
+  const [capacityPosition, setCapacityPosition] = useState({ x: 0, y: 0 });
+  const capacityPanResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) > 2 || Math.abs(gesture.dy) > 2,
+    onPanResponderGrant: () => { capacityDragStartRef.current = capacityPositionRef.current; },
+    onPanResponderMove: (_, gesture) => {
+      const nextPosition = {
+        x: capacityDragStartRef.current.x + gesture.dx,
+        y: capacityDragStartRef.current.y + gesture.dy,
+      };
+      capacityPositionRef.current = nextPosition;
+      setCapacityPosition(nextPosition);
+    },
+  }), []);
   const collectorId = session?.user._id || session?.user.id;
+  const refreshQueuedRouteStops = useCallback(async () => {
+    if (!collectorId) return;
+    try {
+      const [stopIds, queueStats] = await Promise.all([
+        getQueuedRouteLogStopIds(collectorId),
+        getRouteLogQueueStats(collectorId),
+      ]);
+      setQueuedRouteStopIds(stopIds);
+      setPendingRouteLogs(queueStats.pending);
+      setFailedRouteLogs(queueStats.failed);
+    } catch {
+      // The route-progress bar keeps the last known local queue state if SQLite is unavailable.
+    }
+  }, [collectorId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -432,20 +510,26 @@ export default function CollectorScreen() {
         return { payload, response };
       };
 
-      const [profileResult, routeResult, progressResult] = await Promise.all([
+      const [profileResult, routeResult, progressResult, capacityResult] = await Promise.all([
         request('/auth/me'),
         request('/collector/route'),
         request('/collector/route/progress'),
+        request('/collector/capacity/latest'),
       ]);
       const profilePayload = profileResult.payload as ApiResponse<AccountUser>;
       const routePayload = routeResult.payload as ApiResponse<DriverRoute>;
       const progressPayload = progressResult.payload as ApiResponse<RouteProgress>;
+      const capacityPayload = capacityResult.payload as ApiResponse<CapacityLog | null>;
       const errors: string[] = [];
 
       if (profileResult.response.ok && profilePayload.success && profilePayload.data) {
         setDriver(profilePayload.data);
       } else {
         errors.push(profilePayload.error || 'Unable to load your driver profile.');
+      }
+
+      if (capacityResult.response.ok && capacityPayload.success) {
+        setLatestCapacityLog(capacityPayload.data || null);
       }
 
       if (routeResult.response.status === 404) {
@@ -670,10 +754,44 @@ export default function CollectorScreen() {
     .map((stop) => ({ ...stop, latitude: Number(stop.latitude), longitude: Number(stop.longitude) }))
     .filter((stop) => Number.isFinite(stop.latitude) && Number.isFinite(stop.longitude) && Math.abs(stop.latitude) <= 90 && Math.abs(stop.longitude) <= 180), [routeStops]);
   const mapRouteLine = useMemo(() => routeLineFeature(assignedRoute?.routePath), [assignedRoute?.routePath]);
-  const completedStopIds = new Set((progress?.logs || []).filter((log) => log.status === 'collected').map((log) => log.stopId));
+  const completedStopIds = useMemo(() => new Set((progress?.logs || []).filter((log) => log.status === 'collected').map((log) => log.stopId)), [progress]);
   const geofenceStops = useMemo(() => mapStops
     .filter((stop) => !(progress?.logs || []).some((log) => log.stopId === stop._id && log.status === 'collected'))
     .map((stop) => ({ id: stop._id, latitude: stop.latitude, longitude: stop.longitude })), [mapStops, progress]);
+  const mapStopFeatures = useMemo(() => ({
+    type: 'FeatureCollection' as const,
+    features: mapStops.flatMap((stop) => {
+      const isCollected = completedStopIds.has(stop._id);
+      const needsReview = progress?.logs.some((log) => log.stopId === stop._id && log.flaggedForReview) || false;
+      const distanceToStop = driverLocation
+        ? distanceBetweenCoordinates([driverLocation.longitude, driverLocation.latitude], [stop.longitude, stop.latitude])
+        : null;
+      const isNear = distanceToStop !== null && distanceToStop <= STOP_NEAR_RADIUS_METERS;
+      const status = needsReview ? 'review' : isCollected ? 'collected' : isNear ? 'near' : 'pending';
+      const poleTop: [number, number] = [stop.longitude, stop.latitude + STOP_FLAG_POLE_HEIGHT_LATITUDE];
+      const flagTip: [number, number] = [stop.longitude + STOP_FLAG_WIDTH_LONGITUDE, stop.latitude + STOP_FLAG_POLE_HEIGHT_LATITUDE - STOP_FLAG_HEIGHT_LATITUDE / 2];
+      const flagBottom: [number, number] = [stop.longitude + STOP_FLAG_WIDTH_LONGITUDE, stop.latitude + STOP_FLAG_POLE_HEIGHT_LATITUDE - STOP_FLAG_HEIGHT_LATITUDE];
+
+      return [
+        {
+          type: 'Feature' as const,
+          properties: { status },
+          geometry: {
+            type: 'LineString' as const,
+            coordinates: [[stop.longitude, stop.latitude], poleTop] as [number, number][],
+          },
+        },
+        {
+          type: 'Feature' as const,
+          properties: { status },
+          geometry: {
+            type: 'Polygon' as const,
+            coordinates: [[poleTop, flagTip, flagBottom, poleTop]] as [number, number][][],
+          },
+        },
+      ];
+    }),
+  }), [completedStopIds, driverLocation, mapStops, progress]);
   const todayStreets: Street[] = routeStops.map((stop) => {
     const log = progress?.logs.find((item) => item.stopId === stop._id && item.status === 'collected');
     return {
@@ -690,6 +808,39 @@ export default function CollectorScreen() {
   const pending = Math.max(0, progress?.remaining ?? totalStops - completedStopIds.size);
   const reviewCount = (progress?.logs || []).filter((log) => log.flaggedForReview).length;
   const progressPercent = totalStops ? (completed / totalStops) * 100 : 0;
+  const capacityCompletedStops = useMemo(
+    () => new Set([...completedStopIds, ...queuedRouteStopIds]).size,
+    [completedStopIds, queuedRouteStopIds],
+  );
+  const routeProgressPct = totalStops
+    ? Math.round(Math.min(100, Math.max(0, (capacityCompletedStops / totalStops) * 100)))
+    : 0;
+
+  const latestResetTime = Math.max(localResetTimestamp, latestCapacityLog ? new Date(latestCapacityLog.loggedAt).getTime() : 0);
+  
+  const stopsSinceReset = useMemo(() => {
+    let count = 0;
+    if (progress?.logs) {
+      count += progress.logs.filter(log => new Date(log.collectedAt).getTime() > latestResetTime).length;
+    }
+    // queued stops are always since reset (offline local)
+    count += queuedRouteStopIds.length;
+    return count;
+  }, [progress, queuedRouteStopIds, latestResetTime]);
+  
+  const truckLength = assignedRoute?.assignedTruck?.length ?? 0;
+  const truckWidth = assignedRoute?.assignedTruck?.width ?? 0;
+  const truckHeight = assignedRoute?.assignedTruck?.height ?? 0;
+  const truckCapacityM3 = truckLength * truckWidth * truckHeight;
+  const capacityTonnes = truckCapacityM3 * TRUCK_DENSITY;
+  
+  const estimatedTonnes = stopsSinceReset * TONNES_PER_STOP;
+  const cylinderPct = capacityTonnes > 0 ? Math.min(100, Math.max(0, (estimatedTonnes / capacityTonnes) * 100)) : 0;
+  
+  const remainingStops = totalStops - completed;
+  const projectedPct = capacityTonnes > 0 ? ((estimatedTonnes + (remainingStops * TONNES_PER_STOP)) / capacityTonnes) * 100 : 0;
+  
+  const capacityStatus = projectedPct > 100 || cylinderPct >= 90 ? 'CRITICAL' : projectedPct >= 90 ? 'WARNING' : 'OK';
   const firstMapStop = mapStops[0];
   const firstRoutePoint = firstRouteCoordinate(mapRouteLine);
   const hasMapFocus = Boolean(firstMapStop || firstRoutePoint);
@@ -868,6 +1019,7 @@ export default function CollectorScreen() {
     const handleSync = (result: RouteLogSyncResult) => {
       if (!isMounted) return;
       applyQueueResult(result);
+      void refreshQueuedRouteStops();
       if (result.synced) void loadDriverData(session.token, collectorId);
     };
 
@@ -878,12 +1030,15 @@ export default function CollectorScreen() {
         setFailedRouteLogs(stats.failed);
       }
     });
+    void refreshQueuedRouteStops();
+    const queuePoll = setInterval(() => { void refreshQueuedRouteStops(); }, 3000);
 
     return () => {
       isMounted = false;
       unsubscribe();
+      clearInterval(queuePoll);
     };
-  }, [applyQueueResult, collectorId, loadDriverData, session?.token]);
+  }, [applyQueueResult, collectorId, loadDriverData, refreshQueuedRouteStops, session?.token]);
 
   useEffect(() => {
     if (!API_URL || !session?.token || !collectorId) return undefined;
@@ -1135,6 +1290,26 @@ export default function CollectorScreen() {
                 <Mapbox.LineLayer id="assigned-route-line" style={{ lineCap: 'round', lineColor: '#14A87D', lineJoin: 'round', lineOpacity: 0.9, lineWidth: 5 }} />
               </Mapbox.ShapeSource>
             ) : null}
+            {mapStopFeatures.features.length ? (
+              <Mapbox.ShapeSource id="assigned-route-stops" shape={mapStopFeatures}>
+                <Mapbox.LineLayer
+                  id="assigned-route-stop-flag-poles"
+                  style={{
+                    lineCap: 'round',
+                    lineColor: ['match', ['get', 'status'], 'near', '#13b981', 'collected', '#13b981', 'review', '#8d53ce', '#7f8b84'],
+                    lineWidth: 4,
+                  }}
+                />
+                <Mapbox.FillLayer
+                  id="assigned-route-stop-flag-banners"
+                  style={{
+                    fillColor: ['match', ['get', 'status'], 'near', '#13b981', 'collected', '#13b981', 'review', '#8d53ce', '#7f8b84'],
+                    fillOpacity: 1,
+                    fillOutlineColor: '#ffffff',
+                  }}
+                />
+              </Mapbox.ShapeSource>
+            ) : null}
             {driverLocation ? (
               <Mapbox.PointAnnotation
                 coordinate={[driverLocation.longitude, driverLocation.latitude]}
@@ -1145,25 +1320,6 @@ export default function CollectorScreen() {
                 </View>
               </Mapbox.PointAnnotation>
             ) : null}
-            {mapStops.map((stop) => {
-              const isCollected = completedStopIds.has(stop._id);
-              const needsReview = progress?.logs.some((log) => log.stopId === stop._id && log.flaggedForReview);
-              return (
-                <Mapbox.PointAnnotation coordinate={[stop.longitude, stop.latitude]} id={stop._id} key={stop._id}>
-                  <View style={styles.mapMarkerWrap}>
-                    <View style={[styles.mapMarkerPin, needsReview ? styles.mapMarkerReview : isCollected ? styles.mapMarkerCollected : styles.mapMarkerPending]}>
-                      <Text style={styles.mapMarkerText}>{stop.order}</Text>
-                    </View>
-                    {needsReview ? (
-                      <View style={styles.mapMarkerFlagBadge}>
-                        <Feather color="#ffffff" name="flag" size={8} />
-                      </View>
-                    ) : null}
-                    <Text numberOfLines={1} style={styles.mapMarkerLabel}>{stop.name}</Text>
-                  </View>
-                </Mapbox.PointAnnotation>
-              );
-            })}
             {complaints.map((complaint) => {
               const latitude = Number(complaint.photoMetadata?.latitude);
               const longitude = Number(complaint.photoMetadata?.longitude);
@@ -1215,18 +1371,27 @@ export default function CollectorScreen() {
           </View>
         )}
         {assignedRoute && (
-          <View style={styles.capacityFloatingCard}>
-            <Pressable accessibilityRole="button" onPress={() => setIsCapacityPanelExpanded((expanded) => !expanded)} style={styles.capacityHeader}>
-              <View style={styles.capacityHeaderIcon}><Feather color="#ffffff" name="truck" size={13} /></View>
-              <View style={styles.capacityHeaderTextWrap}><Text style={styles.capacityTitle}>Predictive capacity</Text><Text style={styles.capacitySubtitle}>Route load estimate</Text></View>
-              <Feather color="#ffffff" name={isCapacityPanelExpanded ? 'chevron-up' : 'chevron-down'} size={15} />
-            </Pressable>
-            {isCapacityPanelExpanded && (
-              <View style={styles.capacityBody}>
-                <View style={styles.capacityMetric}><Text style={styles.capacityPercent}>65%</Text><Text style={styles.capacityMetricLabel}>Loaded space</Text></View>
-                <View style={styles.capacityProgressTrack}><View style={styles.capacityProgressFill} /></View>
-                <Text style={styles.capacityPlaceholder}>Predictive truck capacity will appear here.</Text>
-              </View>
+          <View {...capacityPanResponder.panHandlers} style={[styles.capacityFloatingCard, { transform: [{ translateX: capacityPosition.x }, { translateY: capacityPosition.y }] }]}>
+            <Text numberOfLines={2} style={styles.capacityCylinderLabel}>Truck load</Text>
+            <View style={[styles.capacityCylinder, capacityStatus === 'CRITICAL' && styles.capacityCylinderCritical, capacityStatus === 'WARNING' && styles.capacityCylinderWarning]}>
+              <View style={[styles.capacityCylinderFill, { height: `${cylinderPct}%` }, capacityStatus === 'CRITICAL' && styles.capacityCylinderFillCritical, capacityStatus === 'WARNING' && styles.capacityCylinderFillWarning]} />
+              <View style={[styles.capacityCylinderTop, capacityStatus === 'CRITICAL' && styles.capacityCylinderTopCritical, capacityStatus === 'WARNING' && styles.capacityCylinderTopWarning]} />
+              {stopsSinceReset === 0
+                ? <Text style={styles.capacityNoLoadText}>No stops{`\n`}collected yet.</Text>
+                : <Text style={[styles.capacityCylinderPercent, capacityStatus === 'CRITICAL' && styles.capacityCylinderPercentCritical]}>{Math.round(cylinderPct)}%</Text>}
+            </View>
+            <View style={styles.routeProgressIndicator}>
+              <Text style={styles.routeProgressLabel}>Route progress</Text>
+              <View style={styles.routeProgressTrack}><View style={[styles.routeProgressFill, { width: `${routeProgressPct}%` }]} /></View>
+            </View>
+            {isEmptiedUndoing ? (
+              <Pressable onPress={cancelTruckEmptied} style={styles.capacityEmptiedUndoButton}>
+                <Text style={styles.capacityEmptiedUndoText}>Undo (10s)</Text>
+              </Pressable>
+            ) : (
+              <Pressable onPress={handleTruckEmptied} style={styles.capacityEmptiedButton}>
+                <Text style={styles.capacityEmptiedButtonText}>Truck emptied</Text>
+              </Pressable>
             )}
           </View>
         )}
@@ -1424,6 +1589,11 @@ export default function CollectorScreen() {
         <View style={styles.statsRow}>
           {[[String(completed), 'Collected'], [String(reviewCount), 'For review'], [String(pending), 'Pending']].map(([value, label]) => <Card key={label} style={styles.statCard}><Text style={styles.statValue}>{value}</Text><Text style={styles.statLabel}>{label}</Text><Text style={styles.statCaption}>stops</Text></Card>)}
         </View>
+
+        <Card style={styles.profileSyncCard}>
+          <Text style={styles.profileSyncLabel}>NEEDS SYNC</Text>
+          <Text style={styles.profileSyncNumber}>{pendingRouteLogs}</Text>
+        </Card>
 
         <Card style={styles.accountCard}>
           <Text style={styles.accountHeading}>ACCOUNT DETAILS</Text>
@@ -1720,14 +1890,6 @@ const styles = StyleSheet.create({
   pendingText: { color: '#f2e278', fontSize: 9, fontWeight: '800' },
   mapPlaceholder: { backgroundColor: '#dbe7df', flex: 1, overflow: 'hidden', position: 'relative' },
   mapView: { flex: 1 },
-  mapMarkerWrap: { alignItems: 'center', minWidth: 50 },
-  mapMarkerPin: { alignItems: 'center', borderColor: '#ffffff', borderRadius: 14, borderWidth: 2, flexDirection: 'row', gap: 3, height: 28, justifyContent: 'center', paddingHorizontal: 6 },
-  mapMarkerLabel: { color: '#2d3b33', fontSize: 8, fontWeight: '800', marginTop: 1, maxWidth: 70, textAlign: 'center', textShadowColor: '#ffffff', textShadowOffset: { width: 0, height: 0 }, textShadowRadius: 3 },
-  mapMarkerStem: { borderRadius: 1, height: 8, marginTop: 1, width: 2 },
-  mapMarkerCollected: { backgroundColor: '#13b981' },
-  mapMarkerPending: { backgroundColor: '#7f8b84' },
-  mapMarkerReview: { backgroundColor: '#8d53ce' },
-  mapMarkerText: { color: '#ffffff', fontSize: 10, fontWeight: '800' },
   driverLocationMarker: { alignItems: 'center', backgroundColor: '#1976e8', borderColor: '#ffffff', borderRadius: 24, borderWidth: 3, height: 48, justifyContent: 'center', shadowColor: '#0d3c79', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.3, shadowRadius: 5, width: 48 },
   complaintMarker: { alignItems: 'center', backgroundColor: '#d44859', borderColor: '#ffffff', borderRadius: 20, borderWidth: 3, height: 38, justifyContent: 'center', shadowColor: '#7a1f2e', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, width: 38 },
   mapPlaceholderLabel: { alignItems: 'center', backgroundColor: 'rgba(248,252,249,0.88)', borderColor: '#c2d3c9', borderRadius: 12, borderWidth: 1, flexDirection: 'row', gap: 7, left: 20, paddingHorizontal: 12, paddingVertical: 9, position: 'absolute', right: 20, top: '47%' },
@@ -1748,19 +1910,28 @@ const styles = StyleSheet.create({
   monitoringSwitchThumb: { backgroundColor: '#ffffff', borderRadius: 11, height: 21, shadowColor: '#244738', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.16, shadowRadius: 2, width: 21 },
   monitoringSwitchThumbOn: { alignSelf: 'flex-end' },
   geofenceQueueText: { color: '#9b6816', fontSize: 9, fontWeight: '700', marginTop: 7 },
-  capacityFloatingCard: { backgroundColor: 'rgba(255,255,255,0.96)', borderColor: '#d4e3db', borderRadius: 13, overflow: 'hidden', position: 'absolute', right: 12, shadowColor: '#234837', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.16, shadowRadius: 8, top: 82, width: 190 },
-  capacityHeader: { alignItems: 'center', backgroundColor: '#07815f', flexDirection: 'row', gap: 7, paddingHorizontal: 9, paddingVertical: 8 },
-  capacityHeaderIcon: { alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 10, height: 21, justifyContent: 'center', width: 21 },
-  capacityHeaderTextWrap: { flex: 1 },
-  capacityTitle: { color: '#ffffff', fontSize: 12, fontWeight: '800' },
-  capacitySubtitle: { color: '#c6f0dc', fontSize: 9, marginTop: 2 },
-  capacityBody: { padding: 11 },
-  capacityMetric: { alignItems: 'baseline', flexDirection: 'row', gap: 5 },
-  capacityPercent: { color: '#263f33', fontSize: 25, fontWeight: '800' },
-  capacityMetricLabel: { color: '#718279', fontSize: 10 },
-  capacityProgressTrack: { backgroundColor: '#e4eee9', borderRadius: 4, height: 8, marginTop: 7, overflow: 'hidden' },
-  capacityProgressFill: { backgroundColor: '#14a87d', borderRadius: 4, height: '100%', width: '65%' },
-  capacityPlaceholder: { color: '#87948d', fontSize: 10, lineHeight: 14, marginTop: 7 },
+  capacityFloatingCard: { alignItems: 'center', backgroundColor: 'transparent', position: 'absolute', right: 12, top: 82, width: 94 },
+  capacityCylinderLabel: { color: '#111111', fontSize: 7, fontWeight: '900', letterSpacing: 0.25, lineHeight: 10, marginBottom: 5, textAlign: 'center' },
+  capacityCylinder: { backgroundColor: 'transparent', borderBottomLeftRadius: 21, borderBottomRightRadius: 21, borderColor: '#0b4b2b', borderTopLeftRadius: 15, borderTopRightRadius: 15, borderWidth: 2, height: 100, overflow: 'hidden', position: 'relative', width: 54 },
+  capacityCylinderWarning: { borderColor: '#b56d0d' },
+  capacityCylinderCritical: { borderColor: '#b81d1d' },
+  capacityCylinderFill: { backgroundColor: '#0b4b2b', bottom: 0, left: 0, position: 'absolute', right: 0 },
+  capacityCylinderFillWarning: { backgroundColor: '#b56d0d' },
+  capacityCylinderFillCritical: { backgroundColor: '#b81d1d' },
+  capacityCylinderTop: { backgroundColor: 'transparent', borderBottomColor: '#0b4b2b', borderBottomWidth: 1, height: 12, left: 0, position: 'absolute', right: 0, top: 0 },
+  capacityCylinderTopWarning: { borderBottomColor: '#b56d0d' },
+  capacityCylinderTopCritical: { borderBottomColor: '#b81d1d' },
+  capacityCylinderPercent: { color: '#111111', fontSize: 15, fontWeight: '900', left: 0, position: 'absolute', right: 0, textAlign: 'center', top: 40 },
+  capacityCylinderPercentCritical: { color: '#ffffff' },
+  capacityNoLoadText: { color: '#111111', fontSize: 8, fontWeight: '800', left: 2, lineHeight: 11, position: 'absolute', right: 2, textAlign: 'center', top: 37 },
+  capacityEmptiedButton: { backgroundColor: '#07815f', borderRadius: 8, marginTop: 10, paddingVertical: 8, paddingHorizontal: 12, width: '100%', alignItems: 'center' },
+  capacityEmptiedButtonText: { color: '#ffffff', fontSize: 9, fontWeight: '900' },
+  capacityEmptiedUndoButton: { backgroundColor: '#c77d10', borderRadius: 8, marginTop: 10, paddingVertical: 8, paddingHorizontal: 12, width: '100%', alignItems: 'center' },
+  capacityEmptiedUndoText: { color: '#ffffff', fontSize: 9, fontWeight: '900' },
+  routeProgressIndicator: { marginTop: 7, width: '100%' },
+  routeProgressLabel: { color: '#111111', fontSize: 8, fontWeight: '900', marginBottom: 3, textAlign: 'center' },
+  routeProgressTrack: { backgroundColor: 'rgba(11,75,43,0.2)', borderRadius: 3, height: 6, overflow: 'hidden' },
+  routeProgressFill: { backgroundColor: '#0b4b2b', borderRadius: 3, height: '100%' },
   complaintToast: { alignItems: 'center', backgroundColor: '#e8fbf1', borderColor: '#b9dfca', borderRadius: 12, borderWidth: 1, bottom: 102, flexDirection: 'row', gap: 7, left: 14, maxWidth: '78%', paddingHorizontal: 11, paddingVertical: 9, position: 'absolute', shadowColor: '#234837', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.14, shadowRadius: 6 },
   complaintToastText: { color: '#286349', flex: 1, fontSize: 10, fontWeight: '800' },
   complaintModalBackdrop: { backgroundColor: 'rgba(20, 42, 31, 0.3)', flex: 1, justifyContent: 'flex-end' },
@@ -1886,6 +2057,9 @@ const styles = StyleSheet.create({
   statValue: { color: '#07815f', fontSize: 19, fontWeight: '800' },
   statLabel: { color: '#415348', fontSize: 10, fontWeight: '800', marginTop: 4 },
   statCaption: { color: '#9ba7a1', fontSize: 9, marginTop: 2 },
+  profileSyncCard: { alignItems: 'center', backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 14, borderWidth: 1, flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, paddingHorizontal: 14, paddingVertical: 11, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 7 },
+  profileSyncLabel: { color: '#415348', fontSize: 10, fontWeight: '900', letterSpacing: 0.45 },
+  profileSyncNumber: { color: '#0b4b2b', fontSize: 24, fontWeight: '900' },
   accountCard: { backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 16, borderWidth: 1, marginTop: 12, padding: 14, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 7 },
   accountHeading: { color: '#65766c', fontSize: 10, fontWeight: '800', letterSpacing: 0.4, marginBottom: 3 },
   accountRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 },
@@ -1908,7 +2082,6 @@ const styles = StyleSheet.create({
   streetNameRow: { alignItems: 'center', flexDirection: 'row', gap: 6 },
   flagChip: { alignItems: 'center', backgroundColor: '#9d3139', borderRadius: 7, flexDirection: 'row', gap: 2, paddingHorizontal: 5, paddingVertical: 2 },
   flagChipText: { color: '#ffffff', fontSize: 8, fontWeight: '800' },
-  mapMarkerFlagBadge: { alignItems: 'center', backgroundColor: '#c53030', borderColor: '#ffffff', borderRadius: 9, borderWidth: 1.5, height: 18, justifyContent: 'center', position: 'absolute', right: -8, shadowColor: '#7a1f2e', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.3, shadowRadius: 2, top: -6, width: 18 },
   emptyCard: { alignItems: 'center', backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 14, borderWidth: 1, flexDirection: 'row', gap: 10, padding: 16 },
   historyCardWrap: { marginBottom: 10 },
   historyCard: { alignItems: 'stretch', backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 15, borderWidth: 1, flexDirection: 'row', overflow: 'hidden', shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 7 },

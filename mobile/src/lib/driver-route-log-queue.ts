@@ -285,6 +285,13 @@ export function getRouteLogQueueStats(collectorId: string) {
   return getStats(collectorId);
 }
 
+// Lets the collector UI account for geofence exits recorded locally before a
+// network sync has made them visible in the server-side route progress.
+export async function getQueuedRouteLogStopIds(collectorId: string) {
+  const rows = await getQueueRows(collectorId);
+  return [...new Set(rows.map((row) => row.stop_id))];
+}
+
 export function syncRouteLogQueue(context: RouteLogSyncContext) {
   if (!syncInFlight) {
     syncInFlight = syncQueue(context).finally(() => { syncInFlight = null; });

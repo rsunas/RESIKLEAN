@@ -4,6 +4,9 @@
   "description": "Resiklean backend API",
   "main": "server.js",
   "scripts": {
+    "test": "jest",
+    "seed:capacity-demo": "node src/seeds/capacityMonitoringDemo.seed.js",
+    "reset:capacity-demo": "node src/seeds/resetCapacityMonitoringDemo.js",
     "start": "node server.js",
     "dev": "nodemon server.js"
   },

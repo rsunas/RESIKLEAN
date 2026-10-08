@@ -1,4 +1,7 @@
-const { calculateProjection, MIN_STOPS } = require('../utils/capacityProjection');
+const {
+  calculateProjection,
+  MIN_STOPS,
+} = require('../src/utils/capacityProjection');
 
 describe('Capacity Projection Logic', () => {
   it('returns INSUFFICIENT_DATA when completedStops is less than MIN_STOPS', () => {
@@ -46,5 +49,12 @@ describe('Capacity Projection Logic', () => {
   it('rounds projection to 1 decimal place', () => {
     const result = calculateProjection(33, 3, 10);
     expect(result.projection).toBe(110); // 33 * 10 / 3 = 110
+  });
+
+  it('handles a truck empty/reset action by calculating projection from 0 fill level', () => {
+    // When a truck is emptied, fillLevelPct resets to 0
+    const result = calculateProjection(0, 10, 40);
+    expect(result.status).toBe('OK');
+    expect(result.projection).toBe(0);
   });
 });
