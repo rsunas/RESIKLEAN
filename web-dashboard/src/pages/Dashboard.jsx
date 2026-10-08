@@ -82,6 +82,33 @@ function formatReportDate(value) {
   return Number.isNaN(date.getTime()) ? 'Date unavailable' : date.toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
+function mapCoordinateList(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((point) => {
+      const longitude = Number(point?.longitude ?? point?.[0]);
+      const latitude = Number(point?.latitude ?? point?.[1]);
+      return Number.isFinite(longitude) && Number.isFinite(latitude) ? [longitude, latitude] : null;
+    })
+    .filter(Boolean);
+}
+
+function projectRouteCoordinates(coordinates, width = 620, height = 280, boundsCoordinates = coordinates) {
+  if (!coordinates.length) return '';
+  const longitudes = boundsCoordinates.map(([longitude]) => longitude);
+  const latitudes = boundsCoordinates.map(([, latitude]) => latitude);
+  const minLon = Math.min(...longitudes);
+  const maxLon = Math.max(...longitudes);
+  const minLat = Math.min(...latitudes);
+  const maxLat = Math.max(...latitudes);
+  const lonSpan = Math.max(maxLon - minLon, 0.00001);
+  const latSpan = Math.max(maxLat - minLat, 0.00001);
+  const padding = 34;
+  return coordinates
+    .map(([longitude, latitude]) => `${padding + ((longitude - minLon) / lonSpan) * (width - padding * 2)},${height - padding - ((latitude - minLat) / latSpan) * (height - padding * 2)}`)
+    .join(' ');
+}
+
 function getReportBagCount(report = {}) {
   const count = report.detectedBagCount ?? report.bagCount ?? report.aiResult?.detectedBagCount ?? report.aiResult?.bagCount;
   if (typeof count === 'number') return `${count} bag${count === 1 ? '' : 's'}`;
@@ -430,6 +457,19 @@ export default function Dashboard() {
   const [submissionState, setSubmissionState] = useState({ loading: false, message: '', error: '' });
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [complaintUpdateError, setComplaintUpdateError] = useState('');
+  const [routeHistoryRows, setRouteHistoryRows] = useState([]);
+  const [routeHistoryPagination, setRouteHistoryPagination] = useState({ total: 0, page: 1, limit: 25, totalPages: 1 });
+  const [routeHistoryLoading, setRouteHistoryLoading] = useState(false);
+  const [routeHistoryError, setRouteHistoryError] = useState('');
+  const [selectedRouteHistory, setSelectedRouteHistory] = useState(null);
+  const [isRouteHistoryDetailVisible, setIsRouteHistoryDetailVisible] = useState(false);
+  const [routeDetailLoading, setRouteDetailLoading] = useState(false);
+  const [routeDetailError, setRouteDetailError] = useState('');
+  const [rhCollectorId, setRhCollectorId] = useState('all');
+  const [rhBarangay, setRhBarangay] = useState('all');
+  const [rhDateFrom, setRhDateFrom] = useState('');
+  const [rhDateTo, setRhDateTo] = useState('');
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
   const socketRef = useRef(null);
   const [realtimeMessagesByReport, setRealtimeMessagesByReport] = useState({});
   const [apiData, setApiData] = useState({ users: null, routes: null, reports: null, loads: null, tonnage: null, compliance: null, usingPlaceholder: true });
@@ -508,6 +548,123 @@ export default function Dashboard() {
     };
   }, [token]);
 
+  const loadRouteHistory = useCallback(async () => {
+    if (!API_URL || !token) return;
+    setRouteHistoryLoading(true);
+    setRouteHistoryError('');
+    try {
+      const params = new URLSearchParams();
+      if (rhCollectorId !== 'all') params.set('collectorId', rhCollectorId);
+      if (rhBarangay !== 'all') params.set('barangay', rhBarangay);
+      if (rhDateFrom) params.set('from', rhDateFrom);
+      if (rhDateTo) params.set('to', rhDateTo);
+      params.set('page', String(routeHistoryPagination.page));
+      params.set('limit', String(routeHistoryPagination.limit));
+      const response = await fetch(`${API_URL.replace(/\/$/, '')}/admin/route-history?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || 'Unable to load route history.');
+      setRouteHistoryRows(Array.isArray(result.data?.rows) ? result.data.rows : []);
+      setRouteHistoryPagination({
+        page: Number(result.data?.page || 1),
+        limit: Number(result.data?.limit || 25),
+        total: Number(result.data?.count || 0),
+        totalPages: Number(result.data?.pages || 1),
+      });
+    } catch (error) {
+      setRouteHistoryRows([]);
+      setRouteHistoryError(error instanceof Error ? error.message : 'Unable to load route history.');
+    } finally {
+      setRouteHistoryLoading(false);
+    }
+  }, [API_URL, rhBarangay, rhCollectorId, rhDateFrom, rhDateTo, routeHistoryPagination.limit, routeHistoryPagination.page, token]);
+
+  const loadRouteHistoryDetail = useCallback(async (id) => {
+    if (!API_URL || !token) return null;
+    setRouteDetailLoading(true);
+    setRouteDetailError('');
+    try {
+      const response = await fetch(`${API_URL.replace(/\/$/, '')}/admin/route-history/${encodeURIComponent(id)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(result.error || 'Unable to load route history detail.');
+      setSelectedRouteHistory(result.data || null);
+      return result.data || null;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unable to load route history detail.';
+      setRouteDetailError(msg);
+      setSelectedRouteHistory(null);
+      return null;
+    } finally {
+      setRouteDetailLoading(false);
+    }
+  }, [API_URL, token]);
+
+  const openRouteHistoryDetail = useCallback(async (row) => {
+    setIsRouteHistoryDetailVisible(true);
+    setSelectedRouteHistory(null);
+    setRouteDetailError('');
+    if (!row?.id) return;
+    await loadRouteHistoryDetail(row.id);
+  }, [loadRouteHistoryDetail]);
+
+  const exportRouteHistoryPDF = useCallback(async () => {
+    if (!API_URL || !token || !selectedRouteHistory?.id) return;
+    setIsExportingPdf(true);
+    try {
+      const response = await fetch(`${API_URL.replace(/\/$/, '')}/admin/route-history/${encodeURIComponent(selectedRouteHistory.id)}/pdf`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) throw new Error('Unable to generate PDF.');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const filename = response.headers.get('Content-Disposition')?.match(/filename="?([^"]+)"?/)?.[1] || `Route-History-${selectedRouteHistory.id || 'report'}.pdf`;
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setRouteDetailError(error instanceof Error ? error.message : 'Unable to export PDF.');
+    } finally {
+      setIsExportingPdf(false);
+    }
+  }, [API_URL, selectedRouteHistory?.id, token]);
+
+  useEffect(() => {
+    if (activePage === 'routes') void loadRouteHistory();
+  }, [activePage, loadRouteHistory]);
+
+  const routeHistoryFilterCollectors = useMemo(() => [{ label: 'All collectors', value: 'all' }, ...(apiData.users?.filter((u) => u.role === 'collector').map((u) => ({ label: u.name, value: u._id })) || [])], [apiData.users]);
+  const routeHistoryFilterBarangays = useMemo(() => {
+    const set = new Set();
+    (apiData.routes || []).forEach((r) => {
+      const areas = Array.isArray(r.barangay) ? r.barangay : [r.barangay];
+      areas.filter(Boolean).forEach((b) => set.add(String(b)));
+    });
+    routeHistoryRows.forEach((row) => {
+      if (row.area) set.add(String(row.area));
+      if (row.barangay) set.add(String(row.barangay));
+    });
+    return [{ label: 'All areas', value: 'all' }, ...[...set].sort().map((b) => ({ label: b, value: b }))];
+  }, [apiData.routes, routeHistoryRows]);
+
+  const formatRHTime = (value) => value ? new Intl.DateTimeFormat('en-PH', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Manila' }).format(new Date(value)) : '—';
+  const formatRHShiftTime = (value) => value ? new Intl.DateTimeFormat('en-PH', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Manila' }).format(new Date(value)) : 'Not recorded';
+  const getRhFlaggedCount = (row) => Number(row?.flaggedCount ?? row?.flagged ?? 0);
+  const getRhCollectorName = (row) => row?.collector || row?.collectorName || row?.collectorId?.name || 'Unknown';
+  const getRhArea = (row) => row?.area || row?.barangay || '—';
+  const getRhEntry = (row) => row?.geofenceEntry || row?.geofenceEntryAt || null;
+  const getRhExit = (row) => row?.geofenceExit || row?.geofenceExitAt || null;
+  const getRhShiftStart = (row) => row?.cycle?.shiftStart || row?.shiftStart || null;
+  const getRhShiftEnd = (row) => row?.cycle?.shiftEnd || row?.shiftEnd || null;
+  const getRhTruckTitle = (row) => row?.truck?.plateNumber || row?.truckPlate || '—';
+  const getRhTruckSubtitle = (row) => [row?.truck?.truckNumber, row?.truck?.color].filter(Boolean).join(' · ') || row?.truckModel || '';
+
   const accountRows = useMemo(() => {
     if (!apiData.users?.length) return [...createdAccounts, ...PLACEHOLDER_ACCOUNTS];
     return [...createdAccounts, ...apiData.users.filter((user) => ['collector', 'staff'].includes(user.role)).map((user) => ({ id: user._id, name: user.name, role: user.role, area: user.barangay || 'Not assigned', contact: user.contact || '—', email: user.email, profilePhotoUrl: user.profilePhotoUrl || '' }))];
@@ -532,12 +689,20 @@ export default function Dashboard() {
     return apiData.reports.map((report) => ({ id: report._id, street: report.description || `${report.barangay || 'Unassigned area'} report`, bags: getReportBagCount(report), time: new Date(report.createdAt).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' }), date: new Date(report.createdAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }), reporter: report.residentId?.name || 'Resident', status: report.status || 'pending', report }));
   }, [apiData.reports]);
 
+  const formatLoadDimension = (value) => value ? Number(value).toFixed(1) : '—';
   const activityRows = useMemo(() => {
     if (!apiData.loads?.length) return PLACEHOLDER_ACTIVITY;
-    return apiData.loads.map((load) => ({ id: load._id, area: routeAreaCode(load.routeId?.name || load.routeId?.routeName || load.routeId?.area || 'Unassigned area'), driver: load.staffId?.name || 'Staff member', truckPlate: load.truckPlate || 'Unknown truck', length: load.length ? (load.length / 100).toFixed(1) : '—', width: load.width ? (load.width / 100).toFixed(1) : '—', height: load.height ? (load.height / 100).toFixed(1) : '—', slope: `${Number(load.slope || 0).toFixed(1)} m³`, tonnage: formatTonnes(load.tonnesEstimate), time: new Date(load.arrivedAt).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' }), date: load.arrivedAt ? new Date(load.arrivedAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Date unavailable', photoUrl: load.photoUrl || '', notes: load.notes || '' }));
+    return apiData.loads.map((load) => ({ id: load._id, area: routeAreaCode(load.routeId?.name || load.routeId?.routeName || load.routeId?.area || 'Unassigned area'), driver: load.staffId?.name || 'Staff member', truckPlate: load.truckPlate || 'Unknown truck', length: formatLoadDimension(load.length), width: formatLoadDimension(load.width), height: formatLoadDimension(load.height), slope: `${Number(load.slope || 0).toFixed(1)} m³`, tonnage: formatTonnes(load.tonnesEstimate), time: new Date(load.arrivedAt).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' }), date: load.arrivedAt ? new Date(load.arrivedAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Date unavailable', photoUrl: load.photoUrl || '', notes: load.notes || '' }));
   }, [apiData.loads]);
 
   const tonnageSeries = useMemo(() => apiData.usingPlaceholder ? [] : buildTonnageSeries(apiData.loads), [apiData.loads, apiData.usingPlaceholder]);
+  useMemo(() => activityRows.map((row) => {
+    const load = apiData.loads?.find((item) => item._id === row.id);
+    row.frontPhotoUrl = load?.sidePhotoUrl || '';
+    row.backPhotoUrl = load?.backPhotoUrl || '';
+    if (!row.photoUrl) row.photoUrl = row.frontPhotoUrl || row.backPhotoUrl;
+    return row;
+  }), [activityRows, apiData.loads]);
   const totalTonnage = apiData.tonnage?.totalTonnesEstimate;
   const totalLoads = apiData.tonnage?.count || 0;
   const completionRate = useMemo(() => {
@@ -692,6 +857,33 @@ export default function Dashboard() {
     return () => field.remove();
   }, [showAccountForm]);
 
+  useEffect(() => {
+    if (!selectedActivity?.backPhotoUrl || typeof document === 'undefined') return undefined;
+    const body = document.querySelector('.activity-detail-modal .activity-detail-body');
+    const original = body?.querySelector('.activity-detail-photo');
+    if (!body || !original || body.querySelector('.activity-detail-photo-grid')) return undefined;
+
+    const grid = document.createElement('div');
+    grid.className = 'activity-detail-photo-grid';
+    [
+      { label: 'Front photo', src: selectedActivity.frontPhotoUrl || (!selectedActivity.backPhotoUrl ? selectedActivity.photoUrl : '') },
+      { label: 'Back photo', src: selectedActivity.backPhotoUrl },
+    ].filter((photo) => photo.src).forEach((photo) => {
+      const card = document.createElement('figure');
+      card.className = 'activity-detail-photo-card';
+      const image = document.createElement('img');
+      image.alt = `${photo.label} for ${selectedActivity.area}`;
+      image.className = 'activity-detail-photo';
+      image.src = photo.src;
+      const caption = document.createElement('figcaption');
+      caption.textContent = photo.label;
+      card.append(image, caption);
+      grid.append(card);
+    });
+    original.replaceWith(grid);
+    return undefined;
+  }, [selectedActivity]);
+
   if (!token) return <Navigate replace to="/login" />;
 
   const overview = <>
@@ -708,7 +900,36 @@ export default function Dashboard() {
     <Card className="overview-routes"><div className="card-heading-row overview-route-heading"><div><p className="eyebrow">Collection tracking</p><h3>Recent route activity</h3><p>Street-level collection status</p></div><button className="text-button" onClick={() => selectPage('routes')}>View route history <Icon name="arrow" size={15} /></button></div>{routeRows.slice(0, 4).map((route) => <RoutePreview key={route.id} route={route} />)}<button className="view-more" onClick={() => selectPage('routes')}>View all {routeRows.length} entries <Icon name="arrow" size={15} /></button></Card>
   </>;
 
-  const routeHistory = <><PageHeader description="Street-level collection tracking by collector" title="Route history" /><Card className="table-card route-history-card"><div className="filter-row"><AppSelect aria-label="Filter by collector" defaultValue="all" options={[{ label: 'All collectors', value: 'all' }, ...accountRows.filter((account) => account.role === 'collector').map((account) => ({ label: account.name, value: account.name }))]} /><AppSelect aria-label="Filter by area" defaultValue="all" options={[{ label: 'All areas', value: 'all' }, ...[...new Set(routeRows.map((route) => route.area))].sort((left, right) => left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' })).map((area) => ({ label: area, value: area }))]} /><input aria-label="Filter by date" type="date" /><span className="entries-count">{routeRows.length} entries</span></div><div className="table-scroll"><table className="standard-data-table admin-data-table route-history-table"><thead><tr><th>Area</th><th>Date</th><th>Street</th><th>Collector</th><th>Status</th></tr></thead><tbody>{routeRows.map((route) => <tr key={route.id}><td>{route.area}{route.flagged ? <span className="flag">Flagged</span> : null}</td><td>{route.date}</td><td>{route.street}</td><td><AvatarName name={route.collector} /></td><td><StatusChip status={route.status} /></td></tr>)}</tbody></table></div></Card></>;
+  const rhDisplayRows = routeHistoryRows.length ? routeHistoryRows : (routeHistoryLoading ? [] : PLACEHOLDER_ROUTES.map((r) => ({
+    id: r.id,
+    area: r.area,
+    date: r.date,
+    street: r.street,
+    collector: r.collector,
+    truck: { plateNumber: 'NGC-001', truckNumber: 'Isuzu Elf NLR' },
+    cycle: { shiftStatus: r.date === '2025-06-28' ? 'day' : 'night', shiftStart: `${r.date}T05:30:00`, shiftEnd: `${r.date}T13:30:00` },
+    geofenceEntry: `${r.date}T06:05:00`,
+    geofenceExit: r.status === 'not collected' ? null : `${r.date}T12:45:00`,
+    flaggedCount: r.flagged ? 1 : 0,
+    collected: r.status === 'collected' ? 3 : 1,
+    totalStops: 3,
+    rowStatus: r.status === 'not collected' ? 'partial' : 'collected',
+    segmentStatus: r.status === 'not collected' ? 'Partial' : 'Collected',
+  })));
+
+  const routeHistory = <><PageHeader action={<Button className="outline-button" isDisabled={routeHistoryLoading} onPress={loadRouteHistory} variant="secondary"><Icon name="refresh" size={16} />{routeHistoryLoading ? 'Refreshing…' : 'Refresh'}</Button>} description="Completed route collections with geofence-verified entry and exit events" title="Route History" />{routeHistoryError ? <p className="feedback error-feedback">{routeHistoryError}</p> : null}<Card className="table-card route-history-card"><div className="filter-row"><AppSelect aria-label="Filter by collector" onChange={setRhCollectorId} options={routeHistoryFilterCollectors} value={rhCollectorId} /><AppSelect aria-label="Filter by area" onChange={setRhBarangay} options={routeHistoryFilterBarangays} value={rhBarangay} /><input aria-label="Filter from date" onChange={(e) => setRhDateFrom(e.target.value)} type="date" value={rhDateFrom} /><input aria-label="Filter to date" onChange={(e) => setRhDateTo(e.target.value)} type="date" value={rhDateTo} /><AppSelect aria-label="Filter by status" onChange={() => {}} options={[{ label: 'All statuses', value: 'all' }, { label: 'Collected', value: 'collected' }, { label: 'Partial', value: 'partial' }, { label: 'Flagged', value: 'flagged' }, { label: 'Not collected', value: 'notcollected' }]} value="all" /><span className="entries-count">{routeHistoryPagination.total || rhDisplayRows.length} entries</span></div><div className="table-scroll"><table className="standard-data-table admin-data-table route-history-table"><thead><tr><th>Area</th><th>Date</th><th>Street Segment</th><th>Collector</th><th>Truck</th><th className="actions-col">Actions</th></tr></thead><tbody>{routeHistoryLoading ? (<tr><td className="loading-cell" colSpan={6}><Icon name="refresh" size={16} />Loading route history…</td></tr>) : rhDisplayRows.length ? rhDisplayRows.map((row) => {
+    const isFlagged = getRhFlaggedCount(row) > 0;
+    return (
+      <tr key={row.id}>
+        <td>{getRhArea(row)}{isFlagged ? <span className="flag">Flagged · {getRhFlaggedCount(row)}</span> : null}</td>
+        <td>{row.date || row.eventDate}</td>
+        <td>{row.street || row.routeName || '—'}</td>
+        <td><AvatarName name={getRhCollectorName(row)} /></td>
+        <td><strong>{getRhTruckTitle(row)}</strong>{getRhTruckSubtitle(row) ? <p className="cell-sub">{getRhTruckSubtitle(row)}</p> : null}</td>
+        <td className="actions-col"><Button className="outline-button small-button" isDisabled={routeHistoryLoading} onPress={() => void openRouteHistoryDetail(row)} size="sm" variant="secondary">View details</Button></td>
+      </tr>
+    );
+  }) : (<tr><td className="empty-cell" colSpan={6}>No route history records match the current filters.</td></tr>)}</tbody></table></div></Card></>;
 
   const complaints = <><PageHeader title="Complaint queue" />{complaintUpdateError ? <p className="feedback error-feedback">{complaintUpdateError}</p> : null}<div className="complaint-list">{complaintRows.map((complaint) => <Card className="complaint-card" key={complaint.id}><div className="complaint-art">{complaint.report?.photoUrl || complaint.photoUrl ? <img alt={`Submitted complaint for ${complaint.street}`} src={complaint.report?.photoUrl || complaint.photoUrl} /> : <Icon name="alert" size={24} />}</div><div className="complaint-main"><h3>{complaint.street}</h3><p>{complaint.bags} detected · {complaint.time}</p><button className="complaint-details-button" onClick={() => setSelectedComplaint(complaint)} type="button">View details <Icon name="arrow" size={14} /></button></div><div className="complaint-meta"><span>Date</span><strong>{complaint.date}</strong></div><div className="complaint-meta"><span>Reported by</span><strong>{complaint.reporter}</strong></div><AppSelect aria-label={`Update ${complaint.street} status`} className={`complaint-status status-${complaint.status}`} onChange={(nextStatus) => updateComplaintStatus(complaint.id, nextStatus)} options={[{ label: 'Pending', value: 'pending' }, { label: 'Verified', value: 'verified' }, { label: 'Resolved', value: 'resolved' }, { label: 'Rejected', value: 'rejected' }]} value={complaint.status} /></Card>)}</div>{selectedComplaint ? <ComplaintDetailsModal complaint={selectedComplaint} onClose={() => setSelectedComplaint(null)} /> : null}</>;
 
@@ -716,15 +937,197 @@ export default function Dashboard() {
 
   const activity = <>
     <PageHeader action={<Button className="outline-button" isDisabled={isRefreshing} onPress={refreshDashboard} variant="secondary">{isRefreshing ? 'Refreshing…' : 'Refresh data'}</Button>} description={apiData.usingPlaceholder ? 'Sample activity while the admin API is unavailable' : `${totalLoads} recorded truckload${totalLoads === 1 ? '' : 's'} · click a submission to view its audit photo`} title="Staff activity log" />
-    <Card className="table-card staff-activity-card"><div className="table-scroll"><table className="standard-data-table admin-data-table"><thead><tr><th>Area</th><th>Driver</th><th>L (m)</th><th>W (m)</th><th>H (m)</th><th>Slope</th><th>Tonnage</th><th>Time</th></tr></thead><tbody>{activityRows.map((row) => <tr aria-label={`View truckload from ${row.area}`} className="activity-row" key={row.id} onClick={() => row.photoUrl || row.notes ? setSelectedActivity(row) : null} onKeyDown={(event) => { if ((event.key === 'Enter' || event.key === ' ') && (row.photoUrl || row.notes)) { event.preventDefault(); setSelectedActivity(row); } }} tabIndex={row.photoUrl || row.notes ? 0 : undefined}><td>{row.area}</td><td><strong>{row.driver}</strong></td><td>{row.length}</td><td>{row.width}</td><td>{row.height}</td><td>{row.slope}</td><td className="tonnage-cell">{row.tonnage}</td><td>{row.time}</td></tr>)}</tbody></table></div></Card>
+    <Card className="table-card staff-activity-card"><div className="table-scroll"><table className="standard-data-table admin-data-table"><thead><tr><th>Staff submitted</th><th>Area</th><th>L (m)</th><th>W (m)</th><th>H (m)</th><th>Slope</th><th>Tonnage</th></tr></thead><tbody>{activityRows.map((row) => <tr aria-label={`View truckload from ${row.area}`} className="activity-row" key={row.id} onClick={() => row.photoUrl || row.notes ? setSelectedActivity(row) : null} onKeyDown={(event) => { if ((event.key === 'Enter' || event.key === ' ') && (row.photoUrl || row.notes)) { event.preventDefault(); setSelectedActivity(row); } }} tabIndex={row.photoUrl || row.notes ? 0 : undefined}><td><strong>{row.driver}</strong></td><td>{row.area}</td><td>{row.length}</td><td>{row.width}</td><td>{row.height}</td><td>{row.slope}</td><td className="tonnage-cell">{row.tonnage}</td></tr>)}</tbody></table></div></Card>
   </>;
 
-  const assignments = <><PageHeader description="Assign each collection route to a driver" title="Collector assignments" /><RouteAssignmentPanel token={token} /></>;
+  const assignments = <><PageHeader description="Assign collection routes and registered trucks to each collector" title="Collector assignments" /><RouteAssignmentPanel token={token} /></>;
 
   const trucks = <><PageHeader description="Register fleet vehicles and review their dimensions" title="Truck management" /><TruckManagementPanel token={token} /></>;
 
   const accountPage = <Card className="table-card accounts-table-card"><div className="table-scroll"><table className="standard-data-table admin-data-table"><thead><tr><th>Name</th><th>Role</th><th>Assigned area</th><th>Contact</th><th>Email</th><th className="accounts-action-header"><Button className="primary-button accounts-action-button" onPress={() => { setSubmissionState({ loading: false, error: '', message: '' }); setShowAccountForm(true); }}><Icon name="plus" size={16} />Add account</Button></th></tr></thead><tbody>{accountRows.map((account) => <tr key={account.id}><td><AvatarName name={account.name} photoUrl={account.profilePhotoUrl} /></td><td><Chip className={`role-chip role-${account.role}`} size="sm">{titleCase(account.role)}</Chip></td><td>{account.area}</td><td>{account.contact}</td><td>{account.email}</td><td aria-hidden="true" /></tr>)}</tbody></table></div></Card>;
 
   const pageContent = { overview, routes: routeHistory, complaints: complaintInbox, activity, assignments, accounts: accountPage, trucks }[activePage];
-  return <main className="admin-shell"><aside className="admin-sidebar"><div className="brand"><img alt="ResiKlean logo" className="brand-logo" src="/swmo-resiklean-logo.svg" /></div><nav>{NAV_ITEMS.map((item) => <button aria-current={activePage === item.id ? 'page' : undefined} className={activePage === item.id ? 'nav-link active' : 'nav-link'} key={item.id} onClick={() => selectPage(item.id)}><Icon name={item.icon} />{item.label}</button>)}</nav><button className="signout-button" onClick={() => setShowLogoutConfirm(true)}><Icon name="logout" />Sign out</button></aside><section className="admin-workspace"><header className="topbar"><div className="topbar-actions"><button aria-label="Notifications" className="notification-button"><Icon name="bell" size={19} /><i /></button><div className="topbar-avatar">{initials(storedUser.name || 'Admin')}</div><strong className="admin-name">{storedUser.name || 'Admin'}</strong></div></header><section className="dashboard-content">{apiData.usingPlaceholder ? <p className="data-note">Live dashboard data is unavailable. Sample records are shown for the tables; the tonnage chart intentionally stays empty.</p> : null}{pageContent}</section></section>{showAccountForm ? <div className="modal-layer" role="presentation"><div aria-modal="true" className="account-modal" role="dialog"><form onSubmit={createAccount}><div className="modal-header"><div><p className="eyebrow">Account management</p><h2>Add new account</h2></div><button aria-label="Close account form" onClick={() => setShowAccountForm(false)} type="button">×</button></div><div className="modal-body"><label>Full name<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. Juan dela Cruz" required value={newAccount.name} /></label><label>Contact number<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, contact: event.target.value }))} placeholder="09XXXXXXXXX" value={newAccount.contact} /></label><label>Email address<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, email: event.target.value }))} placeholder="user@nagacity.gov.ph" value={newAccount.email} /></label><label>Temporary password<Input fullWidth minLength="6" onChange={(event) => setNewAccount((current) => ({ ...current, password: event.target.value }))} placeholder="At least 6 characters" required type="password" value={newAccount.password} /></label><label>Role<select onChange={(event) => setNewAccount((current) => ({ ...current, role: event.target.value }))} value={newAccount.role}><option value="collector">Collector</option><option value="staff">Staff</option></select></label><p className="field-note">Contact number is dashboard-only until the backend stores it.</p>{submissionState.error ? <p className="feedback error-feedback">{submissionState.error}</p> : null}</div><div className="modal-footer"><Button className="outline-button" onPress={() => setShowAccountForm(false)} type="button" variant="secondary">Cancel</Button><Button className="primary-button" isDisabled={submissionState.loading} type="submit">{submissionState.loading ? 'Creating…' : 'Create account'}</Button></div></form></div></div> : null}{selectedActivity ? <div className="modal-layer" onClick={() => setSelectedActivity(null)} role="presentation"><div aria-modal="true" className="activity-detail-modal" onClick={(event) => event.stopPropagation()} role="dialog"><div className="modal-header"><div><p className="eyebrow">Landfill operations</p><h2>Truckload submission</h2></div><button aria-label="Close truckload details" onClick={() => setSelectedActivity(null)} type="button">×</button></div><div className="activity-detail-body">{selectedActivity.photoUrl ? <img alt={`Audit photo for ${selectedActivity.area}`} className="activity-detail-photo" src={selectedActivity.photoUrl} /> : <div className="activity-photo-empty"><Icon name="image" size={28} /><p>No audit photo available</p></div>}<div className="activity-detail-grid"><div><span>Area</span><strong>{selectedActivity.area}</strong></div><div><span>Staff</span><strong>{selectedActivity.driver}</strong></div><div><span>Truck</span><strong>{selectedActivity.truckPlate}</strong></div><div><span>Submitted</span><strong>{selectedActivity.date} · {selectedActivity.time}</strong></div><div><span>Measurements</span><strong>{selectedActivity.length} m × {selectedActivity.width} m × {selectedActivity.height} m</strong></div><div><span>Slope</span><strong>{selectedActivity.slope}</strong></div><div><span>Estimated tonnage</span><strong className="tonnage-cell">{selectedActivity.tonnage}</strong></div></div>{selectedActivity.notes ? <div className="activity-detail-notes"><span>Notes</span><p>{selectedActivity.notes}</p></div> : null}</div><div className="modal-footer"><Button className="outline-button" onPress={() => setSelectedActivity(null)} type="button" variant="secondary">Close</Button></div></div></div> : null}{showLogoutConfirm ? <LogoutConfirmation onCancel={() => setShowLogoutConfirm(false)} onConfirm={confirmSignOut} /> : null}</main>;
+  return <main className="admin-shell"><aside className="admin-sidebar"><div className="brand"><img alt="ResiKlean logo" className="brand-logo" src="/swmo-resiklean-logo.svg" /></div><nav>{NAV_ITEMS.map((item) => <button aria-current={activePage === item.id ? 'page' : undefined} className={activePage === item.id ? 'nav-link active' : 'nav-link'} key={item.id} onClick={() => selectPage(item.id)}><Icon name={item.icon} />{item.label}</button>)}</nav><button className="signout-button" onClick={() => setShowLogoutConfirm(true)}><Icon name="logout" />Sign out</button></aside><section className="admin-workspace"><header className="topbar"><div className="topbar-actions"><button aria-label="Notifications" className="notification-button"><Icon name="bell" size={19} /><i /></button><div className="topbar-avatar">{initials(storedUser.name || 'Admin')}</div><strong className="admin-name">{storedUser.name || 'Admin'}</strong></div></header><section className="dashboard-content">{apiData.usingPlaceholder ? <p className="data-note">Live dashboard data is unavailable. Sample records are shown for the tables; the tonnage chart intentionally stays empty.</p> : null}{pageContent}</section></section>{showAccountForm ? <div className="modal-layer" role="presentation"><div aria-modal="true" className="account-modal" role="dialog"><form onSubmit={createAccount}><div className="modal-header"><div><p className="eyebrow">Account management</p><h2>Add new account</h2></div><button aria-label="Close account form" onClick={() => setShowAccountForm(false)} type="button">×</button></div><div className="modal-body"><label>Full name<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. Juan dela Cruz" required value={newAccount.name} /></label><label>Contact number<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, contact: event.target.value }))} placeholder="09XXXXXXXXX" value={newAccount.contact} /></label><label>Email address<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, email: event.target.value }))} placeholder="user@nagacity.gov.ph" value={newAccount.email} /></label><label>Temporary password<Input fullWidth minLength="6" onChange={(event) => setNewAccount((current) => ({ ...current, password: event.target.value }))} placeholder="At least 6 characters" required type="password" value={newAccount.password} /></label><label>Role<select onChange={(event) => setNewAccount((current) => ({ ...current, role: event.target.value }))} value={newAccount.role}><option value="collector">Collector</option><option value="staff">Staff</option></select></label><p className="field-note">Contact number is dashboard-only until the backend stores it.</p>{submissionState.error ? <p className="feedback error-feedback">{submissionState.error}</p> : null}</div><div className="modal-footer"><Button className="outline-button" onPress={() => setShowAccountForm(false)} type="button" variant="secondary">Cancel</Button><Button className="primary-button" isDisabled={submissionState.loading} type="submit">{submissionState.loading ? 'Creating…' : 'Create account'}</Button></div></form></div></div> : null}{selectedActivity ? <div className="modal-layer" onClick={() => setSelectedActivity(null)} role="presentation"><div aria-modal="true" className="activity-detail-modal" onClick={(event) => event.stopPropagation()} role="dialog"><div className="modal-header"><div><p className="eyebrow">Landfill operations</p><h2>Truckload submission</h2></div><button aria-label="Close truckload details" onClick={() => setSelectedActivity(null)} type="button">×</button></div><div className="activity-detail-body">{selectedActivity.photoUrl ? <img alt={`Audit photo for ${selectedActivity.area}`} className="activity-detail-photo" src={selectedActivity.photoUrl} /> : <div className="activity-photo-empty"><Icon name="image" size={28} /><p>No audit photo available</p></div>}<div className="activity-detail-grid"><div><span>Area</span><strong>{selectedActivity.area}</strong></div><div><span>Staff</span><strong>{selectedActivity.driver}</strong></div><div><span>Truck</span><strong>{selectedActivity.truckPlate}</strong></div><div><span>Submitted</span><strong>{selectedActivity.date} · {selectedActivity.time}</strong></div><div><span>Measurements</span><strong>{selectedActivity.length} m × {selectedActivity.width} m × {selectedActivity.height} m</strong></div><div><span>Slope</span><strong>{selectedActivity.slope}</strong></div><div><span>Estimated tonnage</span><strong className="tonnage-cell">{selectedActivity.tonnage}</strong></div></div>{selectedActivity.notes ? <div className="activity-detail-notes"><span>Notes</span><p>{selectedActivity.notes}</p></div> : null}</div><div className="modal-footer"><Button className="outline-button" onPress={() => setSelectedActivity(null)} type="button" variant="secondary">Close</Button></div></div></div> : null}{isRouteHistoryDetailVisible ? (() => {
+    const d = selectedRouteHistory;
+    const placeholderData = !d ? {
+      id: 'sample-id',
+      routeName: 'Gen. Luna St., Barangay Triangulo',
+      barangay: 'Triangulo',
+      eventDate: '2025-06-28',
+      collectorName: 'Roel Macaraeg',
+      collectorEmployeeId: 'COL-001',
+      truckPlate: 'NGA-001',
+      truckModel: 'NGC-001 Isuzu Elf NLR',
+      shiftStart: '2025-06-28T05:30:00',
+      shiftEnd: '2025-06-28T13:30:00',
+      geofenceEntryAt: '2025-06-28T06:05:00',
+      geofenceExitAt: null,
+      flagged: 1,
+      collected: 2,
+      totalStops: 3,
+      status: 'partial',
+      referenceId: 'RH-2025-0628-TRI-014',
+      reportDate: 'June 28, 2025',
+      generatedBy: 'Admin — Ana Lim, SWMO',
+      exported: new Intl.DateTimeFormat('en-PH', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Asia/Manila' }).format(new Date()).replace(',', ' · ') + ' PHT',
+    } : d;
+    const data = d || placeholderData;
+    const summary = data.recordSummary || {};
+    const reference = data.documentReference || {};
+    const flaggedCount = Number(data.flaggedCount ?? data.flagged ?? (Array.isArray(data.logs) ? data.logs.filter((log) => log.flaggedForReview).length : 0));
+    const segmentStatus = summary.segmentStatus || data.segmentStatus || data.status || 'Partial collection';
+    const routeLabel = summary.streetSegment || data.street || data.routeName || '—';
+    const areaLabel = reference.area || (getRhArea(data) !== '—' ? `${getRhArea(data)}, Naga City` : 'Naga City');
+    const entryTime = summary.geofenceEntry || data.geofenceEntry || data.geofenceEntryAt || null;
+    const exitTime = summary.geofenceExit || data.geofenceExit || data.geofenceExitAt || null;
+    const shiftStart = summary.shiftStart || getRhShiftStart(data);
+    const shiftEnd = summary.shiftEnd || getRhShiftEnd(data);
+    const collectorName = summary.collectorName || getRhCollectorName(data);
+    const collectorSubtitle = summary.collectorSubtitle || `${data.collectorEmployeeId || 'COL-001'} · SWMO Naga City`;
+    const truckAssigned = summary.truckAssigned || `${getRhTruckSubtitle(data) || 'No truck recorded'}${getRhTruckTitle(data) !== '—' ? ` · Plate No. ${getRhTruckTitle(data)}` : ''}`;
+    const isIncomplete = /flag|partial|not collect/i.test(String(segmentStatus)) || !exitTime || flaggedCount > 0;
+    const stopLogs = Array.isArray(data.logs) ? data.logs : Array.isArray(data.stopLogs) ? data.stopLogs : [];
+    const trailCoordinates = mapCoordinateList(data.trailPoints);
+    const routeGeometry = data.route?.routePath;
+    const expectedCoordinates = routeGeometry?.type === 'LineString'
+      ? mapCoordinateList(routeGeometry.coordinates)
+      : routeGeometry?.type === 'MultiLineString'
+        ? routeGeometry.coordinates.flatMap((line) => mapCoordinateList(line))
+        : [];
+    const mapBounds = [...expectedCoordinates, ...trailCoordinates];
+    const trailPolyline = projectRouteCoordinates(trailCoordinates, 620, 280, mapBounds);
+    const expectedPolyline = projectRouteCoordinates(expectedCoordinates, 620, 280, mapBounds);
+    const parseSvgPoint = (value) => value ? value.split(',').map(Number) : null;
+    const trailStartPoint = parseSvgPoint(trailPolyline ? trailPolyline.split(' ')[0] : null);
+    const trailEndPoint = parseSvgPoint(trailPolyline ? trailPolyline.split(' ').at(-1) : null);
+    return (
+      <div className="modal-layer modal-layer-wide" role="presentation" onClick={() => setIsRouteHistoryDetailVisible(false)}>
+        <div aria-modal="true" className="activity-detail-modal route-history-detail-modal" onClick={(event) => event.stopPropagation()} role="dialog">
+          <div className="modal-header">
+            <div>
+              <p className="eyebrow">NAGA CITY SOLID WASTE MANAGEMENT OFFICE · GEOFENCE-VERIFIED</p>
+              <h2>Route History Report</h2>
+              <p className="modal-subtitle">{routeLabel} · {areaLabel} · {data.eventDate || data.date || reference.reportDate || '—'}</p>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Button className="route-history-export-button" isDisabled={isExportingPdf || routeDetailLoading} onPress={() => void exportRouteHistoryPDF()} type="button" variant="primary">
+                <Icon name={isExportingPdf ? 'refresh' : 'inbox'} size={16} />
+                <span>{isExportingPdf ? 'Exporting PDF…' : 'Export to PDF'}</span>
+              </Button>
+              <button aria-label="Close route history details" onClick={() => setIsRouteHistoryDetailVisible(false)} type="button">×</button>
+            </div>
+          </div>
+          <div className="modal-body route-history-modal-body">
+            {routeDetailError ? <p className="feedback error-feedback">{routeDetailError}</p> : null}
+            {routeDetailLoading ? <div style={{ padding: 48, textAlign: 'center' }}><Icon name="refresh" size={24} />Loading route record…</div> : (
+              <>
+                <div className="rh-two-col">
+                  <section className="rh-col">
+                    <h3 className="rh-section-label">RECORD SUMMARY</h3>
+                    <div className="detail-table-web">
+                      <div className="dt-row"><span className="dt-label">Street Segment</span><span className="dt-value">{routeLabel}</span></div>
+                      <div className="dt-row"><span className="dt-label">Collector Name</span><span className="dt-value"><strong>{collectorName}</strong><br /><span style={{ color: '#718279', fontSize: 11 }}>{collectorSubtitle}</span></span></div>
+                      <div className="dt-row"><span className="dt-label">Truck Assigned</span><span className="dt-value">{truckAssigned}</span></div>
+                      <div className="dt-row dt-row-split">
+                        <div className="dt-cell"><span className="dt-label">Shift Start</span><span className="dt-value">{shiftStart || new Intl.DateTimeFormat('en-PH', { hour: 'numeric', minute: '2-digit', hour12: true, month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(placeholderData.shiftStart)).replace(',', '')}</span></div>
+                        <div className="dt-cell"><span className="dt-label">Shift End</span><span className="dt-value">{shiftEnd || new Intl.DateTimeFormat('en-PH', { hour: 'numeric', minute: '2-digit', hour12: true, month: 'short', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(placeholderData.shiftEnd)).replace(',', '')}</span></div>
+                      </div>
+                      <div className="dt-row dt-row-split">
+                        <div className="dt-cell"><span className="dt-label">Geofence Entry</span><span className="dt-value">{typeof entryTime === 'string' && !entryTime.includes('T') ? entryTime : formatRHShiftTime(entryTime)}</span></div>
+                        <div className="dt-cell"><span className="dt-label">Geofence Exit</span><span className="dt-value dt-value-red">{typeof exitTime === 'string' && !exitTime.includes('T') ? exitTime : exitTime ? formatRHShiftTime(exitTime) : 'Not logged — no exit event recorded'}</span></div>
+                      </div>
+                      <div className="dt-row"><span className="dt-label">Segment Status</span><span className={`dt-value ${isIncomplete ? 'dt-value-red' : 'dt-value-green'}`}><strong>{segmentStatus}</strong></span></div>
+                    </div>
+                  </section>
+                  <section className="rh-col rh-col-ref">
+                    <h3 className="rh-section-label">DOCUMENT REFERENCE</h3>
+                    <div className="detail-table-web detail-table-ref-web">
+                      <div className="dt-row"><span className="dt-label">REFERENCE ID</span><span className="dt-value dt-mono">{reference.referenceId || data.referenceId || `RH-${(data.eventDate || '0000-00-00').replace(/-/g, '').slice(0, 4)}-${(data.eventDate || '').replace(/-/g, '').slice(4)}-${String(getRhArea(data) || 'UNK').slice(0, 3).toUpperCase()}-001`}</span></div>
+                      <div className="dt-row"><span className="dt-label">REPORT DATE</span><span className="dt-value">{reference.reportDate || data.reportDate || new Intl.DateTimeFormat('en-PH', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'Asia/Manila' }).format(new Date(data.eventDate || Date.now()))}</span></div>
+                      <div className="dt-row"><span className="dt-label">AREA</span><span className="dt-value">{areaLabel}</span></div>
+                      <div className="dt-row"><span className="dt-label">STATUS</span><span className={`dt-value ${isIncomplete ? 'dt-value-red dt-value-bold' : 'dt-value-green dt-value-bold'}`}>{reference.status || segmentStatus}</span></div>
+                      <div className="dt-row"><span className="dt-label">GENERATED BY</span><span className="dt-value">{reference.generatedBy || data.generatedBy || `${storedUser.role === 'collector' ? 'Collector' : 'Admin'} — ${storedUser.name || 'Unknown'}, SWMO`}</span></div>
+                      <div className="dt-row"><span className="dt-label">EXPORTED</span><span className="dt-value">{reference.exportedAt || data.exported || new Intl.DateTimeFormat('en-PH', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZone: 'Asia/Manila' }).format(new Date()).replace(',', ' · ') + ' PHT'}</span></div>
+                    </div>
+                  </section>
+                </div>
+                <section className="rh-segment-section">
+                  <h3 className="rh-section-label">SEGMENT TRAIL</h3>
+                  <div className="rh-trail-panel">
+                    <div className="rh-trail-diagram">
+                      <svg viewBox="0 0 620 280" xmlns="http://www.w3.org/2000/svg">
+                        <defs>
+                          <pattern id="rhGrid" height="30" patternUnits="userSpaceOnUse" width="30">
+                            <path d="M 30 0 L 0 0 0 30" fill="none" stroke="#dbe4de" strokeWidth="0.7" />
+                          </pattern>
+                        </defs>
+                        <rect fill="#f3f9f5" height="280" width="620" />
+                        <rect fill="url(#rhGrid)" height="280" width="620" />
+                        <text fill="#6d7d74" fontFamily="system-ui" fontSize="10" x="70" y="55">Peñafrancia Ave.</text>
+                        <text fill="#6d7d74" fontFamily="system-ui" fontSize="10" x="230" y="145">Gen. Luna St.</text>
+                        <text fill="#6d7d74" fontFamily="system-ui" fontSize="10" x="80" y="235">Elias Angeles St.</text>
+                        <line stroke="#a4b3aa" strokeDasharray="6 4" strokeWidth="0.9" x1="220" x2="220" y1="20" y2="260" />
+                        <line stroke="#a4b3aa" strokeDasharray="6 4" strokeWidth="0.9" x1="420" x2="420" y1="20" y2="260" />
+                        <line stroke="#a4b3aa" strokeDasharray="6 4" strokeWidth="0.9" x1="30" x2="600" y1="75" y2="75" />
+                        <line stroke="#a4b3aa" strokeDasharray="6 4" strokeWidth="0.9" x1="30" x2="600" y1="195" y2="195" />
+                        {expectedPolyline ? <polyline fill="none" points={expectedPolyline} stroke="#9ca9a2" strokeDasharray="7 5" strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" /> : null}
+                        {trailPolyline ? <polyline fill="none" points={trailPolyline} stroke="#c53030" strokeLinecap="round" strokeLinejoin="round" strokeWidth="5" /> : <text fill="#6d7d74" fontFamily="system-ui" fontSize="12" textAnchor="middle" x="310" y="145">No GPS trail recorded</text>}
+                        {trailStartPoint ? (
+                          <g transform={`translate(${trailStartPoint[0]} ${trailStartPoint[1]})`}>
+                            <circle cx="0" cy="0" fill="#c53030" r="8" stroke="#ffffff" strokeWidth="2" />
+                            <text fill="#c53030" fontFamily="system-ui" fontSize="9" fontWeight="700" x="-20" y="-16">Entry</text>
+                          </g>
+                        ) : null}
+                        {trailEndPoint && trailEndPoint.join(',') !== trailStartPoint?.join(',') ? (
+                          <g transform={`translate(${trailEndPoint[0]} ${trailEndPoint[1]})`}>
+                            <circle cx="0" cy="0" fill="#ffffff" r="7" stroke="#c53030" strokeWidth="2.5" />
+                            <text fill="#c53030" fontFamily="system-ui" fontSize="9" fontWeight="700" x="-15" y="-16">Exit</text>
+                          </g>
+                        ) : null}
+                        <text fill="#6d7d74" fontFamily="system-ui" fontSize="9" textAnchor="end" x="605" y="270">N ↑</text>
+                      </svg>
+                    </div>
+                    <div className="rh-legend-panel">
+                      <h4 className="rh-legend-title">LEGEND</h4>
+                      <div className="rh-legend-row"><span className="rh-legend-line-solid" /><span>Truck path — covered</span></div>
+                      <div className="rh-legend-row"><span className="rh-legend-line-dashed" /><span>Expected path — not covered</span></div>
+                      <div className="rh-legend-row"><span className="rh-legend-dot rh-legend-entry" /><span>Entry time: {typeof entryTime === 'string' && !entryTime.includes('T') ? entryTime : formatRHShiftTime(entryTime)}</span></div>
+                      <div className="rh-legend-row"><span className="rh-legend-dot rh-legend-exit" /><span className={!exitTime ? 'dt-value-red' : ''}>Exit: {typeof exitTime === 'string' && !exitTime.includes('T') ? exitTime : exitTime ? formatRHShiftTime(exitTime) : 'Not recorded'}</span></div>
+                      {flaggedCount > 0 ? (<div className="rh-legend-row"><svg height="12" viewBox="0 0 24 24" width="12"><path d="M4 15V4m0 11 0 6M6 4h11l-2 4 2 4H6" fill="none" stroke="#c53030" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" /></svg><span>Dwell: No exit event — segment flagged ({flaggedCount})</span></div>) : null}
+                    </div>
+                  </div>
+                  <p className="rh-fig-caption">Fig. 1 — Segment traced via on-device geofencing. Red solid line: truck path. Dashed: uncovered portion.</p>
+                </section>
+                {stopLogs.length ? (
+                  <section className="rh-stop-logs">
+                    <h3 className="rh-section-label">STOP LOGS</h3>
+                    <div className="rh-stop-log-list">
+                      {stopLogs.map((log, i) => (
+                        <div className="rh-stop-card" key={`${log.stopId || 'stop'}-${i}`}>
+                          <span className={`rh-stop-bar ${log.flaggedForReview ? 'rh-stop-flagged' : 'rh-stop-done'}`} />
+                          <div style={{ flex: 1 }}>
+                            <div className="rh-stop-row">
+                              <strong>{log.stopName || `Stop #${i + 1}`}</strong>
+                              {log.flaggedForReview ? <span className="rh-stop-badge-flag">Flagged</span> : null}
+                            </div>
+                            <p className="rh-stop-meta">
+                              {formatRHShiftTime(log.collectedAt)} — {log.exitedAt ? formatRHShiftTime(log.exitedAt) : 'No exit'}
+                              {typeof log.dwellSeconds === 'number' ? ` · ${log.dwellSeconds}s dwell` : ''}
+                            </p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+              </>
+            )}
+          </div>
+          <div className="modal-footer">
+            <Button className="outline-button" onPress={() => setIsRouteHistoryDetailVisible(false)} type="button" variant="secondary">Close</Button>
+          </div>
+        </div>
+      </div>
+    );
+  })() : null}{showLogoutConfirm ? <LogoutConfirmation onCancel={() => setShowLogoutConfirm(false)} onConfirm={confirmSignOut} /> : null}</main>;
 }

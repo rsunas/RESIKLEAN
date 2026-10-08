@@ -99,7 +99,7 @@ function formatDate(value: string | Date | null | undefined, options: Intl.DateT
   if (!value) return 'No upcoming collection';
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return 'Date unavailable';
-  return date.toLocaleDateString('en-PH', options);
+  return date.toLocaleString('en-PH', options);
 }
 
 function dateKey(value: string | Date) {
@@ -153,6 +153,17 @@ function getDetectedBagCount(report: ApiReport) {
     ?? report.aiResult?.bagCount;
 
   return typeof count === 'number' ? `${count} bag${count === 1 ? '' : 's'}` : 'Not available';
+}
+
+function getReportSubject(report: ApiReport) {
+  const firstLine = (report.description || '').split(/\r?\n/)[0]?.trim();
+  return firstLine || 'Uncollected waste report';
+}
+
+function getReportBody(report: ApiReport) {
+  const lines = (report.description || '').split(/\r?\n/);
+  const body = lines.slice(1).join('\n').trim();
+  return body || lines[0]?.trim() || 'No message provided.';
 }
 
 function normalizeId(value: unknown): string {
@@ -225,6 +236,33 @@ function normalizeScheduleData(data: ScheduleData | LegacyScheduleData | null, f
   };
 }
 
+function parseTimeString(timeStr: string): { hours: number; minutes: number } | null {
+  const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+  if (!match) return null;
+  let hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  const period = match[3].toUpperCase();
+  if (period === 'AM' && hours === 12) hours = 0;
+  else if (period === 'PM' && hours !== 12) hours += 12;
+  return { hours, minutes };
+}
+
+function isWithinAnyTimeWindow(timeWindows: string[]): boolean {
+  if (!timeWindows.length) return true;
+  const now = new Date();
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+  return timeWindows.some((window) => {
+    const parts = window.split(/\s*[-–]\s*/);
+    if (parts.length !== 2) return false;
+    const start = parseTimeString(parts[0]);
+    const end = parseTimeString(parts[1]);
+    if (!start || !end) return false;
+    const startMin = start.hours * 60 + start.minutes;
+    const endMin = end.hours * 60 + end.minutes;
+    return currentMinutes >= startMin && currentMinutes <= endMin;
+  });
+}
+
 function CollectionBanner({
   barangay,
   collection,
@@ -236,9 +274,9 @@ function CollectionBanner({
 }) {
   return (
     <View style={styles.collectionBanner}>
-      <View style={styles.bannerCheck}><Feather color="#ffffff" name="check" size={18} strokeWidth={3} /></View>
+      <View style={styles.bannerCheck}><Feather color="#ffffff" name="truck" size={18} /></View>
       <View style={styles.bannerTextWrap}>
-        <Text style={styles.bannerTitle}>Collection scheduled today</Text>
+        <Text style={styles.bannerTitle}>Collection is happening right now</Text>
         <Text style={styles.bannerSubtitle}>{barangay} · {toWasteLabel(collection.wasteType)}</Text>
       </View>
       <Pressable accessibilityLabel="Dismiss collection update" hitSlop={10} onPress={onDismiss}>
@@ -362,6 +400,18 @@ function StatusPill({ status }: { status: string }) {
 }
 
 function RealtimeStatus({ status }: { status: SocketStatus }) {
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    setVisible(true);
+    if (status === 'connected') {
+      const timer = setTimeout(() => setVisible(false), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [status]);
+
+  if (!visible) return null;
+
   const statusStyle = status === 'connected'
     ? styles.realtimeConnected
     : status === 'connecting'
@@ -408,8 +458,8 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: ResidentTab; onC
   const insets = useSafeAreaInsets();
   const tabs = [
     { key: 'home' as const, label: 'Home', icon: House },
-    { key: 'schedule' as const, label: 'Schedule', icon: Newspaper },
-    { key: 'report' as const, label: 'Report', icon: MessageCircleWarning },
+    { key: 'schedule' as const, label: 'News', icon: Newspaper },
+    { key: 'report' as const, label: 'Complaint', icon: MessageCircleWarning },
     { key: 'profile' as const, label: 'Profile', icon: UserRound },
   ];
 
@@ -420,7 +470,7 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: ResidentTab; onC
         const Icon = tab.icon;
         return (
           <Pressable accessibilityRole="tab" accessibilityState={{ selected: active }} key={tab.key} onPress={() => onChange(tab.key)} style={styles.navItem}>
-            <Icon color={active ? '#008c68' : '#9aa8a0'} size={25} />
+            <Icon color={active ? '#008c68' : '#4A4A4A'} size={24} strokeWidth={1.5} />
             <Text style={[styles.navText, active && styles.navTextActive]}>{tab.label}</Text>
             {active ? <View style={styles.navIndicator} /> : <View style={styles.navIndicatorPlaceholder} />}
           </Pressable>
@@ -430,31 +480,54 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: ResidentTab; onC
   );
 }
 
-function ReportList({ reports, onSelect }: { reports: ApiReport[]; onSelect: (report: ApiReport) => void }) {
+function HomeSectionLabel({ label, onViewAll }: { label: string; onViewAll?: () => void }) {
+  return (
+    <View style={styles.homeSectionRow}>
+      <View style={styles.homeSectionBar} />
+      <View style={styles.homeSectionContent}>
+        <Text style={styles.homeSectionLabel}>{label}</Text>
+        {onViewAll ? (
+          <Pressable accessibilityRole="button" onPress={onViewAll}>
+            <Text style={styles.viewAll}>View All</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+function ReportList({ reports, onSelect, showPhoto }: { reports: ApiReport[]; onSelect: (report: ApiReport) => void; showPhoto?: boolean }) {
   if (!reports.length) {
-    return <Text style={styles.emptyReportText}>No reports submitted yet.</Text>;
+    return <Text style={styles.complaintsEmpty}>No complaints yet. Tap + to message SWMO Support.</Text>;
   }
 
   return (
     <>
       {reports.map((report) => (
         <Pressable
-          accessibilityHint="Opens the report details"
+          accessibilityHint="Opens the complaint conversation"
           accessibilityRole="button"
           key={report._id}
           onPress={() => onSelect(report)}
-          style={styles.reportRowPressable}>
-          <View style={styles.pastReportRow}>
-            <View style={styles.reportThumbnail}>
-              {report.photoUrl ? <Image source={{ uri: report.photoUrl }} style={styles.reportThumbnailImage} /> : <Feather color="#9aa69f" name="image" size={17} />}
+          style={styles.complaintRowPressable}>
+          <View style={styles.complaintRow}>
+            {showPhoto ? (
+              <View style={styles.reportThumbnail}>
+                {report.photoUrl
+                  ? <Image source={{ uri: report.photoUrl }} style={styles.reportThumbnailImage} />
+                  : <Feather color="#07815f" name="image" size={18} />}
+              </View>
+            ) : (
+              <View style={styles.complaintIcon}><Feather color="#ffffff" name="message-circle" size={20} /></View>
+            )}
+            <View style={styles.complaintCopy}>
+              <Text numberOfLines={1} style={styles.complaintSubject}>{getReportSubject(report)}</Text>
+              <Text numberOfLines={1} style={styles.complaintPreview}>{formatDate(report.createdAt, { month: 'short', day: 'numeric', year: 'numeric' })} · {getReportBody(report)}</Text>
             </View>
-            <View style={styles.reportMain}>
-              <Text numberOfLines={1} style={styles.reportLocation}>{report.barangay || 'Location not recorded'}</Text>
-              <Text numberOfLines={1} style={styles.reportMeta}>{formatDate(report.createdAt, { month: 'short', day: 'numeric', year: 'numeric' })} · Detected bags: {getDetectedBagCount(report)}</Text>
-              {report.description ? <Text numberOfLines={1} style={styles.reportDescription}>{report.description}</Text> : null}
+            <View style={styles.complaintMeta}>
+              <StatusPill status={report.status} />
             </View>
-            <StatusPill status={report.status} />
-            <Feather color="#9aa69f" name="chevron-right" size={16} />
+            <Feather color="#8a9b92" name="chevron-right" size={17} />
           </View>
         </Pressable>
       ))}
@@ -480,7 +553,9 @@ export default function ResidentScreen() {
   const [reportError, setReportError] = useState('');
   const [selectedPhoto, setSelectedPhoto] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [photoMetadata, setPhotoMetadata] = useState<ApiReport['photoMetadata'] | null>(null);
+  const [reportSubject, setReportSubject] = useState('');
   const [description, setDescription] = useState('');
+  const [isCreatingReport, setIsCreatingReport] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [reportMessage, setReportMessage] = useState('');
   const [isEditingProfile, setIsEditingProfile] = useState(false);
@@ -723,13 +798,14 @@ export default function ResidentScreen() {
           <Pressable accessibilityLabel="Close report details" onPress={() => setSelectedReport(null)} style={styles.reportModalDismissArea} />
           <View style={[styles.reportDetailsSheet, { paddingBottom: insets.bottom + 12 }]}>
             <View style={styles.reportDetailsHeader}>
-              <View style={styles.reportDetailsHeaderText}>
-                <Text style={styles.reportDetailsEyebrow}>MY REPORT</Text>
-                <Text style={styles.reportDetailsTitle}>Report details</Text>
-              </View>
-              <Pressable accessibilityLabel="Close report details" accessibilityRole="button" onPress={() => setSelectedReport(null)} style={styles.reportDetailsClose}>
-                <Feather color="#314238" name="x" size={20} />
+              <Pressable accessibilityLabel="Back to complaints" accessibilityRole="button" onPress={() => setSelectedReport(null)} style={styles.reportDetailsBack}>
+                <Feather color="#07815f" name="chevron-left" size={23} />
               </Pressable>
+              <View style={styles.reportDetailsHeaderText}>
+                <Text style={styles.reportDetailsEyebrow}>SWMO SUPPORT</Text>
+                <Text numberOfLines={1} style={styles.reportDetailsTitle}>{getReportSubject(selectedReport)}</Text>
+              </View>
+              <StatusPill status={selectedReport.status} />
             </View>
 
             <ScrollView contentContainerStyle={styles.reportDetailsContent} showsVerticalScrollIndicator={false}>
@@ -768,7 +844,7 @@ export default function ResidentScreen() {
               {selectedReport.description ? (
                 <View style={styles.reportDescriptionCard}>
                   <Text style={styles.reportDetailLabel}>Your note</Text>
-                  <Text style={styles.reportDescriptionDetail}>{selectedReport.description}</Text>
+                  <Text style={styles.reportDescriptionDetail}>{getReportBody(selectedReport)}</Text>
                 </View>
               ) : null}
 
@@ -779,10 +855,11 @@ export default function ResidentScreen() {
                 </View>
               ) : null}
 
-              <Text style={styles.reportDetailsSectionTitle}>CONVERSATION</Text>
+              <Text style={styles.reportDetailsSectionTitle}>CHAT WITH SWMO</Text>
               <View style={styles.reportChatCard}>
                 {isLoadingMessages ? <ActivityIndicator color="#07815f" style={styles.reportChatLoader} /> : null}
                 {!isLoadingMessages && !reportMessages.length ? <Text style={styles.reportChatEmpty}>No messages yet. Send a message to the collection team.</Text> : null}
+                {!isLoadingMessages && !reportMessages.some((message) => message.senderRole === 'resident') ? <View style={[styles.reportChatMessage, styles.reportChatMessageResident]}><Text style={styles.reportChatSender}>You</Text><Text style={styles.reportChatBody}>{getReportBody(selectedReport)}</Text><Text style={styles.reportChatTime}>{formatDate(selectedReport.createdAt, { dateStyle: 'medium', timeStyle: 'short' })}</Text></View> : null}
                 {reportMessages.map((message) => {
                   const sender = typeof message.senderId === 'object' ? message.senderId.name || 'Collection team' : message.senderRole === 'resident' ? 'You' : 'Collection team';
                   return <View key={message._id} style={[styles.reportChatMessage, message.senderRole === 'resident' ? styles.reportChatMessageResident : styles.reportChatMessageAdmin]}><Text style={styles.reportChatSender}>{sender}</Text><Text style={styles.reportChatBody}>{message.body}</Text><Text style={styles.reportChatTime}>{formatDate(message.createdAt, { dateStyle: 'medium', timeStyle: 'short' })}</Text></View>;
@@ -836,6 +913,14 @@ export default function ResidentScreen() {
       setReportMessage('Take a photo before submitting your report.');
       return;
     }
+    if (!reportSubject.trim()) {
+      setReportMessage('Add a subject for your complaint.');
+      return;
+    }
+    if (!description.trim()) {
+      setReportMessage('Write a message describing the issue.');
+      return;
+    }
     if (selectedPhoto.fileSize && selectedPhoto.fileSize > 5 * 1024 * 1024) {
       setReportMessage('Choose a photo smaller than 5 MB.');
       return;
@@ -849,7 +934,7 @@ export default function ResidentScreen() {
     setReportMessage('');
     try {
       const formData = new FormData();
-      formData.append('description', description.trim());
+      formData.append('description', `${reportSubject.trim()}\n\n${description.trim()}`);
       formData.append('photo', {
         uri: selectedPhoto.uri,
         name: selectedPhoto.fileName || 'missed-collection.jpg',
@@ -873,8 +958,10 @@ export default function ResidentScreen() {
 
       setSelectedPhoto(null);
       setPhotoMetadata(null);
+      setReportSubject('');
       setDescription('');
-      setReportMessage('Report submitted. We will review it shortly.');
+      setIsCreatingReport(false);
+      setReportMessage('Complaint sent. SWMO will reply here.');
       await loadReports(session.token);
     } catch (error) {
       setReportMessage(error instanceof Error ? error.message : 'Unable to submit your report.');
@@ -945,8 +1032,10 @@ export default function ResidentScreen() {
     setPastReports([]);
     setSelectedPhoto(null);
     setPhotoMetadata(null);
+    setReportSubject('');
     setDescription('');
     setReportMessage('');
+    setIsCreatingReport(false);
     setIsEditingProfile(false);
     setProfileMessage('');
     router.replace('/login');
@@ -965,16 +1054,17 @@ export default function ResidentScreen() {
     return date >= currentWeekStart && date <= currentWeekEnd;
   });
   const todayCollection = upcomingByDate.get(dateKey(new Date()));
+  const isCollectionTimeNow = todayCollection ? isWithinAnyTimeWindow(todayCollection.timeWindows) : false;
   const bannerSlide = useRef(new Animated.Value(-90)).current;
 
   useEffect(() => {
     Animated.timing(bannerSlide, {
-      toValue: showBanner && todayCollection ? 0 : -90,
+      toValue: showBanner && todayCollection && isCollectionTimeNow ? 0 : -90,
       duration: 280,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start();
-  }, [bannerSlide, showBanner, todayCollection]);
+  }, [bannerSlide, showBanner, todayCollection, isCollectionTimeNow]);
 
   const upcomingCollections = useMemo(() => schedule?.upcomingCollections || [], [schedule?.upcomingCollections]);
   useEffect(() => {
@@ -995,8 +1085,8 @@ export default function ResidentScreen() {
 
   const homeScreen = (
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <HomeSectionLabel label="Next collection" />
       <Card style={styles.nextCollectionCard}>
-        <Text style={styles.darkCardEyebrow}>NEXT COLLECTION</Text>
         {isLoadingSchedule ? <ActivityIndicator color="#ffffff" style={styles.scheduleLoader} /> : schedule?.nextCollection ? <>
           <Text style={styles.nextDate}>{formatDate(schedule.nextCollection, { weekday: 'long', month: 'long', day: 'numeric' })}</Text>
           <View style={styles.nextInfoRow}><WastePill type={toWasteLabel(schedule.nextWasteType)} /><Text style={styles.nextTime}>{nextTimeWindows.length ? nextTimeWindows.join(' · ') : 'Time unavailable'}</Text></View>
@@ -1005,14 +1095,15 @@ export default function ResidentScreen() {
         <Text style={styles.reminder}>Segregate food waste, garden waste, and paper into green bags.</Text>
       </Card>
 
+      <HomeSectionLabel label="Weekly schedule" />
       <Card style={styles.card}>
-        <Text style={styles.cardHeading}>WEEKLY SCHEDULE</Text>
         {isLoadingSchedule ? <ActivityIndicator color="#07815f" style={styles.loadingSchedule} /> : scheduleError ? <Text style={styles.errorMessage}>{scheduleError}</Text> : weeklyCollections.length ? weeklyCollections.map((collection) => <View key={collection.date} style={styles.weeklyRow}><Text style={styles.rowDay}>{collection.dayName}</Text><WastePill type={toWasteLabel(collection.wasteType)} /></View>) : <Text style={styles.emptyScheduleText}>No collections scheduled this week.</Text>}
       </Card>
 
+      <HomeSectionLabel label="My recent reports" onViewAll={() => setActiveTab('report')} />
       <Card style={styles.card}>
-        <View style={styles.cardTopRow}><Text style={styles.cardHeading}>MY RECENT REPORTS</Text><Pressable onPress={() => setActiveTab('report')}><Text style={styles.viewAll}>View All</Text></Pressable></View>
-        {isLoadingReports ? <ActivityIndicator color="#07815f" style={styles.loadingReports} /> : reportError ? <Text style={styles.errorMessage}>{reportError}</Text> : <ReportList onSelect={setSelectedReport} reports={pastReports.slice(0, 2)} />}
+        {isLoadingReports ? <ActivityIndicator color="#07815f" style={styles.loadingReports} /> : reportError ? <Text style={styles.errorMessage}>{reportError}</Text> : <ReportList onSelect={setSelectedReport} reports={pastReports.slice(0, 2)} showPhoto />
+        }
       </Card>
     </ScrollView>
   );
@@ -1032,7 +1123,7 @@ export default function ResidentScreen() {
     </ScrollView>
   );
 
-  const reportScreen = (
+  const legacyReportScreen = (
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
       <Text style={styles.screenTitle}>Report center</Text>
       <Text style={styles.screenSubtitle}>Message the collection team about uncollected waste</Text>
@@ -1065,6 +1156,57 @@ export default function ResidentScreen() {
         {!isLoadingReports && !reportError ? <ReportList onSelect={setSelectedReport} reports={pastReports} /> : null}
       </Card>
     </ScrollView>
+  );
+
+  const reportScreen = isCreatingReport ? (
+    <View style={styles.complaintsPage}>
+      <View style={styles.newComplaintHeader}>
+        <Pressable accessibilityLabel="Back to complaints" accessibilityRole="button" onPress={() => { setIsCreatingReport(false); setReportMessage(''); }} style={styles.newComplaintBack}>
+          <Feather color="#07815f" name="chevron-left" size={23} />
+        </Pressable>
+        <View style={styles.newComplaintHeaderText}>
+          <Text style={styles.newComplaintTitle}>New complaint</Text>
+          <Text style={styles.newComplaintSubtitle}>SWMO Support · Naga City</Text>
+        </View>
+      </View>
+      <ScrollView contentContainerStyle={styles.newComplaintContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+        <Text style={styles.fieldLabel}>SUBJECT</Text>
+        <TextInput onChangeText={setReportSubject} placeholder="e.g. Missed collection on Gen. Luna St." placeholderTextColor="#9aa69f" style={styles.newComplaintInput} value={reportSubject} />
+        <Text style={styles.fieldLabel}>MESSAGE</Text>
+        <TextInput multiline onChangeText={setDescription} placeholder="Describe the issue — street, number of bags, how long it has been there..." placeholderTextColor="#9aa69f" style={[styles.newComplaintInput, styles.newComplaintMessageInput]} value={description} />
+        <Text style={styles.fieldLabel}>PHOTO PROOF</Text>
+        <Pressable accessibilityRole="button" onPress={capturePhoto} style={[styles.reportAttachment, !selectedPhoto && styles.reportAttachmentEmpty]}>
+          {selectedPhoto ? <Image source={{ uri: selectedPhoto.uri }} style={styles.reportAttachmentImage} /> : <><View style={styles.reportAttachmentIcon}><Feather color="#07815f" name="image" size={18} /></View><View style={styles.reportAttachmentCopy}><Text style={styles.reportAttachmentTitle}>Attach photo</Text><Text style={styles.reportAttachmentSubtitle}>Required · helps SWMO verify your report.</Text></View><Feather color="#8a9b92" name="plus" size={18} /></>}
+          {selectedPhoto ? <View style={styles.reportAttachmentOverlay}><Feather color="#ffffff" name="check-circle" size={15} /><Text style={styles.reportAttachmentOverlayText}>Photo attached · Tap to retake</Text></View> : null}
+        </Pressable>
+        {selectedPhoto ? <View style={styles.photoMetadataHint}><Feather color="#07815f" name="info" size={14} /><Text style={styles.photoMetadataHintText}>Capture time, location, size, and file type will be included.</Text></View> : null}
+        {reportMessage ? <Text accessibilityRole="alert" style={reportMessage.startsWith('Complaint sent') ? styles.successMessage : styles.errorMessage}>{reportMessage}</Text> : null}
+        <Pressable accessibilityRole="button" disabled={isSubmitting} onPress={submitReport} style={[styles.newComplaintSendButton, isSubmitting && styles.disabledButton]}>
+          {isSubmitting ? <ActivityIndicator color="#ffffff" /> : <><Feather color="#ffffff" name="send" size={16} /><Text style={styles.submitButtonText}>Send complaint</Text></>}
+        </Pressable>
+      </ScrollView>
+    </View>
+  ) : (
+    <View style={styles.complaintsPage}>
+      <View style={styles.complaintsHeader}>
+        <View>
+          <Text style={styles.complaintsTitle}>Complaints</Text>
+          <Text style={styles.complaintsSubtitle}>Direct line to SWMO Support</Text>
+        </View>
+        <Pressable accessibilityLabel="New complaint" accessibilityRole="button" onPress={() => { setReportSubject(''); setDescription(''); setSelectedPhoto(null); setPhotoMetadata(null); setReportMessage(''); setIsCreatingReport(true); }} style={styles.complaintPlusButton}>
+          <Feather color="#ffffff" name="plus" size={24} />
+        </Pressable>
+      </View>
+      <RealtimeStatus status={socketStatus} />
+      <ScrollView contentContainerStyle={styles.complaintsListContent} showsVerticalScrollIndicator={false}>
+        {reportMessage ? <Text accessibilityRole="alert" style={reportMessage.startsWith('Complaint sent') ? styles.successMessage : styles.errorMessage}>{reportMessage}</Text> : null}
+        <Card style={styles.complaintsListCard}>
+          {isLoadingReports ? <ActivityIndicator color="#07815f" style={styles.loadingReports} /> : null}
+          {reportError ? <Text style={styles.errorMessage}>{reportError}</Text> : null}
+          {!isLoadingReports && !reportError ? <ReportList onSelect={setSelectedReport} reports={pastReports} /> : null}
+        </Card>
+      </ScrollView>
+    </View>
   );
 
   const profileScreen = (
@@ -1105,18 +1247,20 @@ export default function ResidentScreen() {
 
   return (
     <SafeAreaView edges={['left', 'right']} style={styles.safeArea}>
-      <StatusBar backgroundColor="#eaf6f3" style="dark" translucent={false} />
-      <View style={styles.residentHeader}>
-        <View style={[styles.brandHeader, { paddingTop: insets.top + 8 }]}>
-          <BrandMark height={116} width={206} />
-          <View style={styles.headerGreeting}>
-            <Text style={styles.headerGreetingText}>Good morning,</Text>
-            <Text numberOfLines={1} style={styles.headerName}>{displayName}</Text>
+      <StatusBar backgroundColor={activeTab === 'home' ? '#EBF7F5' : '#f4f7f5'} style="dark" translucent={false} />
+      {activeTab === 'home' && (
+        <View style={[styles.residentHeader, { paddingTop: insets.top }]}>
+          <View style={styles.brandHeader}>
+            <BrandMark height={116} width={206} />
+            <View style={styles.headerGreeting}>
+              <Text style={styles.headerGreetingText}>Good morning,</Text>
+              <Text numberOfLines={1} style={styles.headerName}>{displayName}</Text>
+            </View>
           </View>
         </View>
-      </View>
-      <View style={styles.content}>{tabScreen}</View>
-      {showBanner && todayCollection ? <Animated.View pointerEvents="box-none" style={[styles.floatingBannerLayer, { top: insets.top + 42 }, { transform: [{ translateY: bannerSlide }] }]}><View style={styles.bannerWrap}><CollectionBanner barangay={location} collection={todayCollection} onDismiss={() => setShowBanner(false)} /></View></Animated.View> : null}
+      )}
+      <View style={[styles.content, activeTab !== 'home' && { paddingTop: insets.top }]}>{tabScreen}</View>
+      {showBanner && todayCollection && isCollectionTimeNow ? <Animated.View pointerEvents="box-none" style={[styles.floatingBannerLayer, { top: insets.top + 42 }, { transform: [{ translateY: bannerSlide }] }]}><View style={styles.bannerWrap}><CollectionBanner barangay={location} collection={todayCollection} onDismiss={() => setShowBanner(false)} /></View></Animated.View> : null}
       <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
       {renderReportDetails()}
       <SignOutConfirmModal visible={isSignOutConfirmVisible} onCancel={() => setIsSignOutConfirmVisible(false)} onConfirm={completeSignOut} />
@@ -1126,11 +1270,11 @@ export default function ResidentScreen() {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#f4f7f5' },
-  residentHeader: { backgroundColor: '#eaf6f3' },
-  brandHeader: { alignItems: 'center', flexDirection: 'row', minHeight: 124, paddingHorizontal: 18 },
+  residentHeader: { backgroundColor: '#EBF7F5' },
+  brandHeader: { alignItems: 'center', flexDirection: 'row', height: 70, paddingHorizontal: 20 },
   headerGreeting: { alignItems: 'flex-end', flex: 1, marginLeft: 8 },
-  headerGreetingText: { color: '#5d7066', fontSize: 11, textAlign: 'right' },
-  headerName: { color: '#20372a', fontSize: 17, fontWeight: '800', marginTop: 2, textAlign: 'right' },
+  headerGreetingText: { color: '#5d7066', fontSize: 12, textAlign: 'right' },
+  headerName: { color: '#20372a', fontSize: 18, fontWeight: '800', marginTop: 1, textAlign: 'right' },
   floatingBannerLayer: { left: 0, position: 'absolute', right: 0, zIndex: 20 },
   bannerWrap: { paddingHorizontal: 24 },
   collectionBanner: { alignItems: 'center', backgroundColor: '#06a86c', borderRadius: 13, flexDirection: 'row', minHeight: 52, paddingHorizontal: 12, shadowColor: '#075b3d', shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.2, shadowRadius: 10, elevation: 8 },
@@ -1190,7 +1334,11 @@ const styles = StyleSheet.create({
   reminder: { color: '#b7dacb', fontSize: 10, lineHeight: 15, marginTop: 10 },
   cardHeading: { color: '#61746a', fontSize: 10, fontWeight: '800', letterSpacing: 0.3 },
   cardTopRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  viewAll: { color: '#07815f', fontSize: 10, fontWeight: '800' },
+  viewAll: { color: '#07815f', fontSize: 11, fontWeight: '700' },
+  homeSectionRow: { alignItems: 'stretch', flexDirection: 'row', marginTop: 20, marginBottom: 2 },
+  homeSectionBar: { backgroundColor: '#07815f', borderRadius: 3, width: 4, marginRight: 0 },
+  homeSectionContent: { alignItems: 'center', flex: 1, flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 10 },
+  homeSectionLabel: { color: '#20372a', fontSize: 14, fontWeight: '800' },
   loadingSchedule: { marginTop: 14 },
   emptyScheduleText: { color: '#89978f', fontSize: 11, marginTop: 13 },
   weeklyRow: { alignItems: 'center', borderBottomColor: '#eff2f0', borderBottomWidth: 1, flexDirection: 'row', justifyContent: 'space-between', minHeight: 36 },
@@ -1244,6 +1392,31 @@ const styles = StyleSheet.create({
   photoMetadataHintText: { color: '#6f8277', flex: 1, fontSize: 9, lineHeight: 13 },
   reportChatComposerActions: { flexDirection: 'row', gap: 9, marginTop: 11 },
   reportCount: { color: '#07815f', fontSize: 10, fontWeight: '800' },
+  complaintsPage: { backgroundColor: '#ffffff', flex: 1 },
+  complaintsHeader: { alignItems: 'center', backgroundColor: '#ffffff', flexDirection: 'row', justifyContent: 'space-between', paddingBottom: 12, paddingHorizontal: 18, paddingTop: 14 },
+  complaintsTitle: { color: '#102c20', fontSize: 22, fontWeight: '800' },
+  complaintsSubtitle: { color: '#6d7f76', fontSize: 11, marginTop: 3 },
+  complaintPlusButton: { alignItems: 'center', backgroundColor: '#07815f', borderRadius: 22, height: 44, justifyContent: 'center', width: 44 },
+  complaintsListContent: { paddingBottom: 100 },
+  complaintsListCard: { backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 0, borderWidth: 1, marginTop: 0, paddingHorizontal: 13 },
+  complaintsEmpty: { color: '#89978f', fontSize: 12, paddingVertical: 24, textAlign: 'center' },
+  complaintRowPressable: { borderBottomColor: '#edf1ef', borderBottomWidth: 1 },
+  complaintRow: { alignItems: 'center', flexDirection: 'row', minHeight: 76, paddingVertical: 10 },
+  complaintIcon: { alignItems: 'center', backgroundColor: '#07815f', borderRadius: 22, height: 44, justifyContent: 'center', marginRight: 10, width: 44 },
+  complaintCopy: { flex: 1, minWidth: 0 },
+  complaintSubject: { color: '#203d2f', fontSize: 13, fontWeight: '800' },
+  complaintPreview: { color: '#63766c', fontSize: 10, marginTop: 3 },
+  complaintMeta: { alignItems: 'flex-end', marginLeft: 5 },
+  complaintDate: { color: '#87958e', fontSize: 9, marginBottom: 5 },
+  newComplaintHeader: { alignItems: 'center', backgroundColor: '#ffffff', borderBottomColor: '#e5e9e7', borderBottomWidth: 1, flexDirection: 'row', paddingHorizontal: 15, paddingVertical: 12 },
+  newComplaintBack: { alignItems: 'center', height: 38, justifyContent: 'center', width: 32 },
+  newComplaintHeaderText: { flex: 1, marginLeft: 4 },
+  newComplaintTitle: { color: '#102c20', fontSize: 17, fontWeight: '800' },
+  newComplaintSubtitle: { color: '#718077', fontSize: 10, marginTop: 2 },
+  newComplaintContent: { padding: 18, paddingBottom: 110 },
+  newComplaintInput: { backgroundColor: '#ffffff', borderColor: '#dbe5df', borderRadius: 12, borderWidth: 1, color: '#243f31', fontSize: 12, marginTop: 6, minHeight: 44, paddingHorizontal: 12 },
+  newComplaintMessageInput: { minHeight: 116, paddingTop: 12, textAlignVertical: 'top' },
+  newComplaintSendButton: { alignItems: 'center', backgroundColor: '#07815f', borderRadius: 12, flexDirection: 'row', gap: 7, height: 48, justifyContent: 'center', marginTop: 14 },
   photoPreview: { borderRadius: 12, height: 176, marginTop: 10, overflow: 'hidden', position: 'relative' },
   photoEmpty: { alignItems: 'center', backgroundColor: '#f3faf6', borderColor: '#bfe8d0', borderStyle: 'dashed', borderWidth: 1.5, justifyContent: 'center' },
   photoImage: { height: '100%', width: '100%' },
@@ -1294,6 +1467,7 @@ const styles = StyleSheet.create({
   reportModalDismissArea: { bottom: 0, left: 0, position: 'absolute', right: 0, top: 0 },
   reportDetailsSheet: { backgroundColor: '#ffffff', borderTopLeftRadius: 24, borderTopRightRadius: 24, flexShrink: 1, maxHeight: '90%', paddingHorizontal: 18, paddingTop: 18, width: '100%' },
   reportDetailsHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  reportDetailsBack: { alignItems: 'center', height: 36, justifyContent: 'center', marginRight: 6, width: 30 },
   reportDetailsHeaderText: { flex: 1 },
   reportDetailsEyebrow: { color: '#07815f', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
   reportDetailsTitle: { color: '#20362a', fontSize: 20, fontWeight: '800', marginTop: 4 },
@@ -1338,8 +1512,8 @@ const styles = StyleSheet.create({
   reportChatSendText: { color: '#ffffff', fontSize: 10, fontWeight: '800' },
   bottomNav: { backgroundColor: '#ffffff', borderTopColor: '#e2e9e5', borderTopWidth: 1, flexDirection: 'row', height: 78, paddingTop: 9 },
   navItem: { alignItems: 'center', flex: 1 },
-  navText: { color: '#99a7a0', fontSize: 10, fontWeight: '600', marginTop: 4 },
-  navTextActive: { color: '#008c68', fontWeight: '800' },
+  navText: { color: '#99a7a0', fontSize: 10, fontWeight: '400', marginTop: 4 },
+  navTextActive: { color: '#008c68', fontWeight: '600' },
   navIndicator: { backgroundColor: '#008c68', borderRadius: 3, height: 4, marginTop: 5, width: 5 },
   navIndicatorPlaceholder: { height: 4, marginTop: 5, width: 5 },
 });

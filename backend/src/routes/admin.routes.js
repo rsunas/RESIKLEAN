@@ -19,6 +19,9 @@ const {
   archiveTruck,
   createCycleLog,
   getCycleLogs,
+  getAllRouteHistory,
+  getRouteHistoryDetail,
+  exportRouteHistoryPDF,
 } = require('../controllers/admin.controller');
 const { getMessages, sendMessage } = require('../controllers/message.controller');
 
@@ -56,5 +59,10 @@ router.delete('/trucks/:truckId', archiveTruck);
 // Cycle Logs (driver-truck-shift mapping)
 router.post('/cycle-logs', createCycleLog);
 router.get('/cycle-logs', getCycleLogs);
+
+// Route History
+router.get('/route-history', getAllRouteHistory);
+router.get('/route-history/:id/pdf', exportRouteHistoryPDF);
+router.get('/route-history/:id', getRouteHistoryDetail);
 
 module.exports = router;

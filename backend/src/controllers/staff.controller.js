@@ -9,10 +9,24 @@ const { sendSuccess, sendError } = require('../utils/response');
 // Staff submits a truckload entry at the sanitary landfill.
 // Volume (m³) and tonnage estimate are auto-calculated by the model's pre-save hook.
 // Body: { truckPlate, routeId?, length, width, height, slope?, notes? }
-// Measurements are in centimetres.
+// Measurements are in metres.
 const submitTruckLoad = async (req, res) => {
   try {
-    const { truckPlate, routeId, length, width, height, slope, notes } = req.body;
+    const { truckPlate, routeId, length, width, height, slope, notes, clientSubmissionId } = req.body;
+    const normalizedClientSubmissionId = typeof clientSubmissionId === 'string'
+      ? clientSubmissionId.trim()
+      : '';
+
+    // A mobile retry can happen after the server has already saved the upload but
+    // before the response reaches the device. Return the original record instead
+    // of creating a second truckload.
+    if (normalizedClientSubmissionId) {
+      const existingLoad = await TruckLoad.findOne({
+        clientSubmissionId: normalizedClientSubmissionId,
+        staffId: req.user._id,
+      });
+      if (existingLoad) return sendSuccess(res, existingLoad, 200);
+    }
 
     if (!truckPlate || !length || !width || !height) {
       return sendError(res, 'truckPlate, length, width, and height are required', 400);
@@ -61,6 +75,7 @@ const submitTruckLoad = async (req, res) => {
 
     const load = await TruckLoad.create({
       staffId: req.user._id,
+      clientSubmissionId: normalizedClientSubmissionId || undefined,
       truckPlate: truckPlate.toUpperCase(),
       routeId: validatedRouteId,
       length: Number(length),
@@ -77,6 +92,15 @@ const submitTruckLoad = async (req, res) => {
 
     sendSuccess(res, load, 201);
   } catch (err) {
+    // Handle a concurrent retry that reaches the unique index before the first
+    // request has returned. Treat it as an idempotent success as well.
+    if (err?.code === 11000 && err?.keyPattern?.clientSubmissionId && req.body?.clientSubmissionId) {
+      const existingLoad = await TruckLoad.findOne({
+        clientSubmissionId: String(req.body.clientSubmissionId).trim(),
+        staffId: req.user._id,
+      });
+      if (existingLoad) return sendSuccess(res, existingLoad, 200);
+    }
     sendError(res, err.message, 500);
   }
 };
@@ -100,15 +124,33 @@ const getMyTruckLoads = async (req, res) => {
       .sort({ arrivedAt: -1 })
       .lean();
 
+    // Normalize legacy rows that were saved before the model's pre-save
+    // calculation existed. Dimensions are metres and slope is cubic metres.
+    // Keeping this fallback on read makes old history entries consistent with
+    // new entries without requiring a destructive database migration.
+    const normalizedLoads = loads.map((load) => {
+      const length = Number(load.length || 0);
+      const width = Number(load.width || 0);
+      const height = Number(load.height || 0);
+      const slope = Number(load.slope || 0);
+      const densityFactor = Number(load.densityFactor) > 0 ? Number(load.densityFactor) : 0.294;
+      const volumeCubicM = length > 0 && width > 0 && height > 0 ? length * width * height : Number(load.volumeCubicM || 0);
+      const tonnesEstimate = volumeCubicM > 0
+        ? (volumeCubicM + slope) * densityFactor
+        : Number(load.tonnesEstimate || 0);
+
+      return { ...load, volumeCubicM, tonnesEstimate, densityFactor };
+    });
+
     // Summary totals
-    const totalVolume = loads.reduce((sum, l) => sum + (l.volumeCubicM || 0), 0);
-    const totalTonnes = loads.reduce((sum, l) => sum + (l.tonnesEstimate || 0), 0);
+    const totalVolume = normalizedLoads.reduce((sum, l) => sum + (l.volumeCubicM || 0), 0);
+    const totalTonnes = normalizedLoads.reduce((sum, l) => sum + (l.tonnesEstimate || 0), 0);
 
     sendSuccess(res, {
       count: loads.length,
       totalVolumeCubicM: +totalVolume.toFixed(3),
       totalTonnesEstimate: +totalTonnes.toFixed(3),
-      loads,
+      loads: normalizedLoads,
     });
   } catch (err) {
     sendError(res, err.message, 500);

@@ -11,9 +11,12 @@ const DEFAULT_DENSITY_FACTOR = 0.294;
 const truckLoadSchema = new mongoose.Schema(
   {
     staffId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    // Stable client-generated key used to make offline retries idempotent.
+    // Sparse keeps existing records valid while enforcing uniqueness on new submissions.
+    clientSubmissionId: { type: String, index: true, unique: true, sparse: true },
     truckPlate: { type: String, required: true },
     routeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Route' },
-    // Triangulation measurements (centimetres)
+    // Triangulation measurements (metres)
     length: { type: Number, required: true },
     width: { type: Number, required: true },
     height: { type: Number, required: true },
@@ -36,8 +39,8 @@ const truckLoadSchema = new mongoose.Schema(
 
 // Auto-calculate volume and tonnage before saving
 truckLoadSchema.pre('save', function (next) {
-  // cm³ → m³ (division by 1,000,000)
-  this.volumeCubicM = (this.length * this.width * this.height) / 1_000_000;
+  // Truck dimensions are already stored in metres.
+  this.volumeCubicM = this.length * this.width * this.height;
   // Apply slope correction (slope is already in m³)
   const adjustedVolume = this.volumeCubicM + (this.slope || 0);
   // Snapshot the density factor and calculate tonnage

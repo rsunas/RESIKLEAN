@@ -1,5 +1,7 @@
 import { Feather, MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-icons';
+import * as Crypto from 'expo-crypto';
 import * as ImagePicker from 'expo-image-picker';
+import NetInfo from '@react-native-community/netinfo';
 import { StatusBar } from 'expo-status-bar';
 import { Button, Card } from 'heroui-native';
 import { useEffect, useMemo, useState } from 'react';
@@ -19,6 +21,11 @@ import { BrandMark } from '@/components/brand-mark';
 import { SignOutConfirmModal } from '@/components/sign-out-confirm-modal';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { clearSession, getSession } from '@/lib/session';
+import {
+  enqueueStaffTruckload,
+  getStaffTruckloadQueueStats,
+  subscribeToStaffTruckloadSync,
+} from '@/lib/staff-truckload-queue';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 const MAX_AUDIT_PHOTO_SIZE = 5 * 1024 * 1024;
@@ -74,7 +81,9 @@ type TruckLoadResponse = {
   width?: number;
   height?: number;
   slope?: number;
+  volumeCubicM?: number;
   tonnesEstimate?: number;
+  densityFactor?: number;
   arrivedAt?: string;
   notes?: string;
   photoUrl?: string;
@@ -146,6 +155,13 @@ const slopeValue = (selection: string) => {
   const value = Number.parseFloat(selection);
   return Number.isFinite(value) ? value : 0;
 };
+const calculateTonnage = (length: number, width: number, height: number, slope: number, densityFactor = DENSITY_FACTOR) => {
+  const volumeCubicM = length * width * height;
+  const slopeCubicM = Number.isFinite(slope) ? slope : 0;
+  return Number.isFinite(volumeCubicM) && volumeCubicM > 0
+    ? (volumeCubicM + slopeCubicM) * densityFactor
+    : 0;
+};
 const formatSlope = (value?: number) => `${Number(value || 0).toFixed(1)} m³`;
 const formatSubmissionDate = (value?: string) => {
   if (!value) return 'Date unavailable';
@@ -158,17 +174,28 @@ const formatRole = (value?: string) => value ? `${value.charAt(0).toUpperCase()}
 const initials = (name?: string) => name?.split(' ').filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'S';
 
 function mapTruckLoad(load: TruckLoadResponse, staffName = 'You', fallbackArea = ''): Submission {
+  const length = Number(load.length || 0);
+  const width = Number(load.width || 0);
+  const height = Number(load.height || 0);
+  const slope = Number(load.slope || 0);
+  const densityFactor = Number(load.densityFactor);
+  const effectiveDensity = Number.isFinite(densityFactor) && densityFactor > 0 ? densityFactor : DENSITY_FACTOR;
+
+  // Recalculate from the stored metre dimensions so older records that were
+  // saved before the tonnage hook (and therefore have tonnesEstimate = 0)
+  // still display the correct value.
+  const calculatedTonnage = calculateTonnage(length, width, height, slope, effectiveDensity);
   return {
     id: load._id || `${load.truckPlate || 'load'}-${load.arrivedAt || Date.now()}`,
     barangay: load.routeId?.barangay || fallbackArea.split(' · ')[0] || 'No area assigned',
     truckPlate: load.truckPlate || 'Unknown truck',
     driver: staffName,
     submittedAt: formatSubmissionDate(load.arrivedAt),
-    length: Number(load.length || 0),
-    width: Number(load.width || 0),
-    height: Number(load.height || 0),
-    slope: formatSlope(load.slope),
-    tonnes: Number(load.tonnesEstimate || 0),
+    length,
+    width,
+    height,
+    slope: formatSlope(slope),
+    tonnes: calculatedTonnage,
     status: 'Synced',
     notes: load.notes || '',
     photoUrl: load.photoUrl,
@@ -335,7 +362,7 @@ export default function StaffScreen() {
   const [profileLoading, setProfileLoading] = useState(true);
   const [profileError, setProfileError] = useState('');
   const [isSignOutConfirmVisible, setIsSignOutConfirmVisible] = useState(false);
-  const pendingSync = 0;
+  const [pendingSync, setPendingSync] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -384,6 +411,58 @@ export default function StaffScreen() {
     loadRegisteredTrucks();
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unsubscribe: (() => void) | undefined;
+
+    const refreshHistory = async (token: string, staffName: string) => {
+      if (!API_URL) return;
+      try {
+        const response = await fetch(`${API_URL}/staff/truckloads`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const result = await response.json();
+        if (!cancelled && response.ok && result.success) {
+          const loads = (result.data?.loads || []) as TruckLoadResponse[];
+          setHistory(loads.map((load) => mapTruckLoad(load, staffName)));
+          setHistoryError('');
+          setHistoryLoading(false);
+        }
+      } catch {
+        // The queue remains local when the reconnect is unstable. The next
+        // connectivity event will retry without interrupting the staff UI.
+      }
+    };
+
+    const setupQueueSync = async () => {
+      if (!API_URL) return;
+      const session = await getSession();
+      const staffId = session?.user?._id || session?.user?.id;
+      if (!session?.token || !staffId) return;
+
+      const context = { apiUrl: API_URL, token: session.token, staffId };
+      const stats = await getStaffTruckloadQueueStats(staffId);
+      if (!cancelled) setPendingSync(stats.pending);
+
+      unsubscribe = subscribeToStaffTruckloadSync(context, async (result) => {
+        if (cancelled) return;
+        setPendingSync(result.pending);
+        if (result.synced > 0) {
+          await refreshHistory(session.token, session.user.name || profile?.name || 'You');
+        }
+      });
+    };
+
+    void setupQueueSync().catch(() => {
+      // Local queue initialization should never block the staff screen.
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe?.();
+    };
+  }, [profile?.name]);
 
   useEffect(() => {
     let cancelled = false;
@@ -572,11 +651,11 @@ export default function StaffScreen() {
       return;
     }
 
-    const volumeCubicM = (numericLength * numericWidth * numericHeight) / 1_000_000;
+    const volumeCubicM = numericLength * numericWidth * numericHeight;
     setTonnagePreview({
       volumeCubicM,
       slopeCubicM,
-      tonnes: (volumeCubicM + slopeCubicM) * DENSITY_FACTOR,
+      tonnes: calculateTonnage(numericLength, numericWidth, numericHeight, slopeCubicM),
     });
     setMessage('');
   };
@@ -654,10 +733,61 @@ export default function StaffScreen() {
       const session = await getSession();
       if (!session?.token) throw new Error('Sign in again before submitting this truckload.');
 
+      const staffId = session.user._id || session.user.id;
+      if (!staffId) throw new Error('Your staff account is missing an ID. Sign in again before submitting.');
+
+      const clientSubmissionId = Crypto.randomUUID();
+      const queueSubmission = async (notice: string) => {
+        await enqueueStaffTruckload({
+          clientSubmissionId,
+          staffId,
+          truckPlate,
+          routeId,
+          length,
+          width,
+          height,
+          slope: String(slopeValue(slope)),
+          notes: notes.trim(),
+          sidePhoto,
+          backPhoto,
+        });
+        const queueStats = await getStaffTruckloadQueueStats(staffId);
+        const pendingSubmission: Submission = {
+          id: clientSubmissionId,
+          barangay: area || 'No area assigned',
+          truckPlate,
+          driver: profile?.name || 'You',
+          submittedAt: formatSubmissionDate(new Date().toISOString()),
+          length: numericLength,
+          width: numericWidth,
+          height: numericHeight,
+          slope: formatSlope(slopeValue(slope)),
+          tonnes: tonnagePreview?.tonnes || calculateTonnage(numericLength, numericWidth, numericHeight, slopeValue(slope)),
+          status: 'Pending',
+          notes: notes.trim(),
+        };
+        setHistory((current) => [pendingSubmission, ...current]);
+        setPendingSync(queueStats.pending);
+        setHistoryError('');
+        setHistoryLoading(false);
+        setSidePhoto(null);
+        setBackPhoto(null);
+        setNotes('');
+        setMessage(notice);
+        setActiveTab('history');
+      };
+
+      const network = await NetInfo.fetch();
+      if (!network.isConnected || network.isInternetReachable === false) {
+        await queueSubmission('No connection. Measurement saved locally and will sync automatically.');
+        return;
+      }
+
       const formData = new FormData();
+      formData.append('clientSubmissionId', clientSubmissionId);
       formData.append('truckPlate', truckPlate);
       if (routeId) formData.append('routeId', routeId);
-      // Keep the exact dimensions registered by the admin. The backend stores these values as cm.
+      // Keep the exact dimensions registered by the admin. Truck dimensions are metres.
       formData.append('length', length);
       formData.append('width', width);
       formData.append('height', height);
@@ -669,13 +799,25 @@ export default function StaffScreen() {
       formData.append('sidePhotoMetadata', auditPhotoMetadata(sidePhoto));
       formData.append('backPhotoMetadata', auditPhotoMetadata(backPhoto));
 
-      const response = await fetch(`${API_URL}/staff/truckloads`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${session.token}` },
-        body: formData,
-      });
-      const result = await response.json();
-      if (!response.ok || !result.success) throw new Error(result.error || 'Unable to submit the truckload.');
+      let response: Response;
+      try {
+        response = await fetch(`${API_URL}/staff/truckloads`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${session.token}` },
+          body: formData,
+        });
+      } catch {
+        await queueSubmission('Connection lost. Measurement saved locally and will sync automatically.');
+        return;
+      }
+      const result = await response.json().catch(() => ({} as { error?: string }));
+      if (!response.ok || !result.success) {
+        if (response.status >= 500) {
+          await queueSubmission('Server unavailable. Measurement saved locally and will sync automatically.');
+          return;
+        }
+        throw new Error(result.error || 'Unable to submit the truckload.');
+      }
 
       const savedLoad = result.data as TruckLoadResponse;
       setHistory((current) => [mapTruckLoad(savedLoad, profile?.name || 'You', area), ...current]);
@@ -695,7 +837,15 @@ export default function StaffScreen() {
 
   const renderInput = () => (
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-      <Text style={styles.sectionEyebrow}>NEW MEASUREMENT</Text>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 11 }}>
+        <Text style={[styles.sectionEyebrow, { marginBottom: 0 }]}>NEW MEASUREMENT</Text>
+        {pendingSync > 0 && (
+          <View style={styles.syncBadge}>
+            <MaterialCommunityIcons color="#e2c84b" name="sync" size={15} />
+            <Text style={styles.syncText}>{pendingSync} pending sync</Text>
+          </View>
+        )}
+      </View>
       <Card style={styles.formCard}>
         <SelectField
           disabled={isLoadingTrucks || Boolean(truckLoadError) || trucks.length === 0}
@@ -710,7 +860,7 @@ export default function StaffScreen() {
               setTonnagePreview(null);
             }
           }}
-          options={trucks.map((truck) => ({ label: `${truck.plate} · ${truck.length}×${truck.width}×${truck.height} cm`, value: truck.plate }))}
+          options={trucks.map((truck) => ({ label: `${truck.plate} · ${truck.length}×${truck.width}×${truck.height} m`, value: truck.plate }))}
           placeholder={isLoadingTrucks ? 'Loading registered trucks…' : trucks.length ? 'Select truck' : 'No registered trucks available'}
           value={truckPlate}
         />
@@ -739,9 +889,9 @@ export default function StaffScreen() {
         {driverLoadError ? <Text style={styles.truckLoadError}>{driverLoadError}</Text> : null}
 
         <View style={styles.measurementRow}>
-          <MeasurementField label="Length (cm)" value={length} />
-          <MeasurementField label="Width (cm)" value={width} />
-          <MeasurementField label="Height (cm)" value={height} />
+          <MeasurementField label="Length (m)" value={length} />
+          <MeasurementField label="Width (m)" value={width} />
+          <MeasurementField label="Height (m)" value={height} />
         </View>
         <Text style={styles.helperText}>{selectedTruck ? `Dimensions are locked to the admin registration for ${truckPlate}.` : 'Register a truck in the dashboard, then reopen this screen to select it.'}</Text>
 
@@ -762,7 +912,7 @@ export default function StaffScreen() {
             <View style={styles.tonnagePreviewDetails}>
               <Text style={styles.tonnagePreviewLabel}>ESTIMATED TONNAGE</Text>
               <Text style={styles.tonnagePreviewFormula}>
-                {tonnagePreview.volumeCubicM.toFixed(2)} m³ + {tonnagePreview.slopeCubicM.toFixed(1)} m³ slope at {DENSITY_FACTOR} t/m³
+                ({tonnagePreview.volumeCubicM.toFixed(2)} m³ + {tonnagePreview.slopeCubicM.toFixed(1)} m³ slope) × 294 kg/m³
               </Text>
             </View>
             <Text style={styles.tonnagePreviewValue}>{formatTonnage(tonnagePreview.tonnes)}</Text>
@@ -849,25 +999,25 @@ export default function StaffScreen() {
           onPress={() => setSelectedSubmission(submission)}
           style={styles.historyCardPressable}>
           <Card style={styles.historyCard}>
-          <View style={styles.historyTopRow}>
-            <View style={styles.loadIcon}><MaterialCommunityIcons color="#07815f" name="truck-outline" size={20} /></View>
-            <View style={styles.historyMain}>
-              <Text style={styles.historyBarangay}>{submission.barangay}</Text>
-              <Text style={styles.historyDriver}>{submission.driver}</Text>
+            <View style={styles.historyTopRow}>
+              <View style={styles.loadIcon}><MaterialCommunityIcons color="#07815f" name="truck-outline" size={20} /></View>
+              <View style={styles.historyMain}>
+                <Text style={styles.historyBarangay}>{submission.barangay}</Text>
+                <Text style={styles.historyDriver}>{submission.driver}</Text>
+              </View>
+              <View style={styles.historyAmount}>
+                <Text style={styles.tonnage}>{formatTonnage(submission.tonnes)}</Text>
+                <Text style={styles.historyDate}>{submission.submittedAt}</Text>
+              </View>
+              <Feather color="#9aa9a1" name="chevron-right" size={18} />
             </View>
-            <View style={styles.historyAmount}>
-              <Text style={styles.tonnage}>{formatTonnage(submission.tonnes)}</Text>
-              <Text style={styles.historyDate}>{submission.submittedAt}</Text>
+            <View style={styles.historyDetailRow}>
+              <Text style={styles.historyDetail}>L {submission.length} m</Text>
+              <Text style={styles.historyDetail}>W {submission.width} m</Text>
+              <Text style={styles.historyDetail}>H {submission.height} m</Text>
+              <Text style={styles.historyDetail}>Slope {submission.slope}</Text>
+              {submission.status === 'Pending' ? <Text style={styles.pendingPill}>Pending</Text> : null}
             </View>
-            <Feather color="#9aa9a1" name="chevron-right" size={18} />
-          </View>
-          <View style={styles.historyDetailRow}>
-            <Text style={styles.historyDetail}>L {submission.length} cm</Text>
-            <Text style={styles.historyDetail}>W {submission.width} cm</Text>
-            <Text style={styles.historyDetail}>H {submission.height} cm</Text>
-            <Text style={styles.historyDetail}>Slope {submission.slope}</Text>
-            {submission.status === 'Pending' ? <Text style={styles.pendingPill}>Pending</Text> : null}
-          </View>
           </Card>
         </Pressable>
       )) : null}
@@ -980,15 +1130,15 @@ export default function StaffScreen() {
               <View style={styles.detailsMeasurementGrid}>
                 <View style={styles.detailsMeasurementItem}>
                   <Text style={styles.detailsMeasurementLabel}>Length</Text>
-                  <Text style={styles.detailsMeasurementValue}>{selectedSubmission.length} cm</Text>
+                  <Text style={styles.detailsMeasurementValue}>{selectedSubmission.length} m</Text>
                 </View>
                 <View style={styles.detailsMeasurementItem}>
                   <Text style={styles.detailsMeasurementLabel}>Width</Text>
-                  <Text style={styles.detailsMeasurementValue}>{selectedSubmission.width} cm</Text>
+                  <Text style={styles.detailsMeasurementValue}>{selectedSubmission.width} m</Text>
                 </View>
                 <View style={styles.detailsMeasurementItem}>
                   <Text style={styles.detailsMeasurementLabel}>Height</Text>
-                  <Text style={styles.detailsMeasurementValue}>{selectedSubmission.height} cm</Text>
+                  <Text style={styles.detailsMeasurementValue}>{selectedSubmission.height} m</Text>
                 </View>
               </View>
               <DetailRow label="Slope" value={selectedSubmission.slope} />
@@ -1009,20 +1159,20 @@ export default function StaffScreen() {
 
   return (
     <SafeAreaView edges={['left', 'right']} style={styles.safeArea}>
-      <StatusBar backgroundColor="#eaf6f3" style="dark" translucent={false} />
-      <View style={[styles.header, { paddingTop: 8 + insets.top }]}>
-        <BrandMark height={70} width={150} />
-        <View style={styles.headerCopy}>
-          <Text style={styles.headerTitle}>Volumetric Input</Text>
-          <Text style={styles.headerSubtitle}>Staff · Tonnage Audit</Text>
+      <StatusBar backgroundColor={activeTab === 'profile' ? '#f4f7f5' : '#EBF7F5'} style="dark" translucent={false} />
+      {activeTab !== 'profile' && (
+        <View style={[styles.header, { paddingTop: insets.top }]}>
+          <View style={styles.brandHeader}>
+            <BrandMark height={116} width={206} />
+            <View style={styles.headerCopy}>
+              <Text style={styles.headerSubtitle}>Staff · Tonnage Audit</Text>
+              <Text style={styles.headerTitle}>Volumetric Input</Text>
+            </View>
+          </View>
         </View>
-        <View style={styles.syncBadge}>
-          <MaterialCommunityIcons color="#e2c84b" name="sync" size={15} />
-          <Text style={styles.syncText}>{pendingSync} pending sync</Text>
-        </View>
-      </View>
+      )}
 
-      <View style={styles.content}>
+      <View style={[styles.content, activeTab === 'profile' && { paddingTop: insets.top }]}>
         {activeTab === 'input' ? renderInput() : null}
         {activeTab === 'history' ? renderHistory() : null}
         {activeTab === 'profile' ? renderProfile() : null}
@@ -1046,10 +1196,11 @@ function DetailRow({ label, value }: { label: string; value: string }) {
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: '#f4f7f5' },
-  header: { alignItems: 'center', backgroundColor: '#eaf6f3', flexDirection: 'row', gap: 10, justifyContent: 'space-between', paddingBottom: 14, paddingHorizontal: 17, paddingTop: 10 },
-  headerCopy: { flex: 1 },
-  headerTitle: { color: '#17382c', fontSize: 16, fontWeight: '800' },
-  headerSubtitle: { color: '#61786d', fontSize: 12, marginTop: 3 },
+  header: { backgroundColor: '#EBF7F5' },
+  brandHeader: { alignItems: 'center', flexDirection: 'row', height: 70, paddingHorizontal: 20 },
+  headerCopy: { alignItems: 'flex-end', flex: 1, marginLeft: 8 },
+  headerTitle: { color: '#20372a', fontSize: 14, fontWeight: '800', marginTop: 1, textAlign: 'right' },
+  headerSubtitle: { color: '#5d7066', fontSize: 10, textAlign: 'right' },
   syncBadge: { alignItems: 'center', backgroundColor: '#4d4b18', borderColor: '#81742a', borderRadius: 18, borderWidth: 1, flexDirection: 'row', gap: 5, paddingHorizontal: 10, paddingVertical: 6 },
   syncText: { color: '#e7d768', fontSize: 11, fontWeight: '700' },
   content: { flex: 1 },

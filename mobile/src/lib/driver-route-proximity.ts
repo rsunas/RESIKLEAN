@@ -3,6 +3,7 @@ import * as Location from 'expo-location';
 import * as SQLite from 'expo-sqlite';
 import * as TaskManager from 'expo-task-manager';
 import { AppState, Platform } from 'react-native';
+import { finishDriverTrailSession, recordDriverTrailLocation, startDriverTrailSession } from '@/lib/driver-trail-queue';
 
 export const DRIVER_ROUTE_PROXIMITY_TASK = 'resiklean-driver-route-proximity';
 export const ROUTE_ENTER_TOLERANCE_METERS = 45;
@@ -45,10 +46,11 @@ export type RoutePresenceEvent = {
   accuracyMeters?: number;
 };
 
-type RouteTrackingConfig = {
+export type RouteTrackingConfig = {
   routeId: string;
   routeName: string;
   routePath: RoutePath;
+  collectorId?: string;
 };
 
 type TrackingStateRow = {
@@ -82,6 +84,7 @@ const getDatabase = () => {
         PRAGMA journal_mode = WAL;
         CREATE TABLE IF NOT EXISTS driver_route_tracking_config (
           id INTEGER PRIMARY KEY CHECK (id = 1),
+          collector_id TEXT,
           route_id TEXT NOT NULL,
           route_name TEXT NOT NULL,
           route_path_json TEXT NOT NULL,
@@ -116,6 +119,10 @@ const getDatabase = () => {
           updated_at TEXT NOT NULL
         );
       `);
+      const columns = await database.getAllAsync<{ name: string }>('PRAGMA table_info(driver_route_tracking_config)');
+      if (!columns.some((column) => column.name === 'collector_id')) {
+        await database.execAsync('ALTER TABLE driver_route_tracking_config ADD COLUMN collector_id TEXT');
+      }
       return database;
     });
   }
@@ -199,14 +206,14 @@ export const getDistanceToRouteMeters = (latitude: number, longitude: number, ro
 
 const getConfig = async (): Promise<RouteTrackingConfig | null> => {
   const database = await getDatabase();
-  const row = await database.getFirstAsync<{ route_id: string; route_name: string; route_path_json: string }>(
-    'SELECT route_id, route_name, route_path_json FROM driver_route_tracking_config WHERE id = 1',
+  const row = await database.getFirstAsync<{ collector_id: string | null; route_id: string; route_name: string; route_path_json: string }>(
+    'SELECT collector_id, route_id, route_name, route_path_json FROM driver_route_tracking_config WHERE id = 1',
   );
   if (!row) return null;
 
   try {
     const routePath = JSON.parse(row.route_path_json) as RoutePath;
-    return getRouteLines(routePath).length ? { routeId: row.route_id, routeName: row.route_name, routePath } : null;
+    return getRouteLines(routePath).length ? { collectorId: row.collector_id ?? undefined, routeId: row.route_id, routeName: row.route_name, routePath } : null;
   } catch {
     return null;
   }
@@ -296,14 +303,17 @@ const savePresence = async (location: Location.LocationObject) => {
   }
 
   const status = await getStoredStatus();
-  const enabled = Platform.OS !== 'web' && await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK);
-  emitStatus({ ...status, enabled });
+  emitStatus({ ...status, enabled: true });
 };
 
 if (Platform.OS !== 'web' && !TaskManager.isTaskDefined(DRIVER_ROUTE_PROXIMITY_TASK)) {
   TaskManager.defineTask(DRIVER_ROUTE_PROXIMITY_TASK, async ({ data, error }) => {
     if (error || !data) return;
     const locations = (data as { locations?: Location.LocationObject[] }).locations || [];
+    const config = await getConfig();
+    for (const location of locations) {
+      await recordDriverTrailLocation(location, config?.collectorId);
+    }
     const latestLocation = locations[locations.length - 1];
     if (latestLocation) await savePresence(latestLocation);
   });
@@ -346,7 +356,15 @@ export async function getRouteProximityStatus(): Promise<RoutePresenceStatus> {
   const status = await getStoredStatus();
   if (Platform.OS === 'web' || !await TaskManager.isAvailableAsync()) return status;
 
-  return { ...status, enabled: await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK) };
+  const config = await getConfig();
+  const shouldBeEnabled = config !== null;
+  const isActuallyEnabled = await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK);
+
+  if (shouldBeEnabled && !isActuallyEnabled && AppState.currentState === 'active') {
+    enableRouteProximityTracking(config).catch(() => {});
+  }
+
+  return { ...status, enabled: shouldBeEnabled };
 }
 
 export async function getRouteProximityEvents(routeId: string, limit = 6): Promise<RoutePresenceEvent[]> {
@@ -378,12 +396,13 @@ export function subscribeToRouteProximityStatus(listener: (status: RoutePresence
   return () => statusListeners.delete(listener);
 }
 
-async function persistRouteTrackingConfig({ routeId, routeName, routePath }: RouteTrackingConfig) {
+async function persistRouteTrackingConfig({ collectorId, routeId, routeName, routePath }: RouteTrackingConfig) {
   const database = await getDatabase();
   await database.runAsync(
-    `INSERT INTO driver_route_tracking_config (id, route_id, route_name, route_path_json, updated_at)
-     VALUES (1, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET route_id = excluded.route_id, route_name = excluded.route_name, route_path_json = excluded.route_path_json, updated_at = excluded.updated_at`,
+    `INSERT INTO driver_route_tracking_config (id, collector_id, route_id, route_name, route_path_json, updated_at)
+     VALUES (1, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET collector_id = excluded.collector_id, route_id = excluded.route_id, route_name = excluded.route_name, route_path_json = excluded.route_path_json, updated_at = excluded.updated_at`,
+    collectorId ?? null,
     routeId,
     routeName,
     JSON.stringify(routePath),
@@ -391,14 +410,18 @@ async function persistRouteTrackingConfig({ routeId, routeName, routePath }: Rou
   );
 }
 
-export async function enableRouteProximityTracking({ routeId, routeName, routePath }: RouteTrackingConfig): Promise<RouteTrackingSetupResult> {
+export async function enableRouteProximityTracking({ collectorId, routeId, routeName, routePath }: RouteTrackingConfig): Promise<RouteTrackingSetupResult> {
   if (Platform.OS === 'web') return { enabled: false, message: 'Route monitoring is available only in the Android or iOS app.' };
   if (!await TaskManager.isAvailableAsync()) return { enabled: false, message: 'Use a rebuilt development app to run route monitoring in the background.' };
   if (!getRouteLines(routePath).length) return { enabled: false, message: 'This assigned route does not include a valid traced road line yet.' };
 
   const alreadyRunning = await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK);
-  await persistRouteTrackingConfig({ routeId, routeName, routePath });
+  await persistRouteTrackingConfig({ collectorId, routeId, routeName, routePath });
   if (alreadyRunning) {
+    if (collectorId) {
+      await startDriverTrailSession({ collectorId, routeId, routeName });
+    }
+    Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }).then(savePresence).catch(() => {});
     return { enabled: true, message: `Monitoring the assigned road route within ${ROUTE_ENTER_TOLERANCE_METERS} m.` };
   }
 
@@ -431,6 +454,12 @@ export async function enableRouteProximityTracking({ routeId, routeName, routePa
     return { enabled: false, message: 'Android could not start route monitoring. Open the app and try Enable again.' };
   }
 
+  if (collectorId) {
+    await startDriverTrailSession({ collectorId, routeId, routeName });
+  }
+
+  Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }).then(savePresence).catch(() => {});
+
   return { enabled: true, message: `Monitoring the assigned road route within ${ROUTE_ENTER_TOLERANCE_METERS} m.` };
 }
 
@@ -442,6 +471,7 @@ export async function updateRouteProximityTracking(config: RouteTrackingConfig) 
 }
 
 export async function stopRouteProximityTracking({ forgetConfiguration = false }: { forgetConfiguration?: boolean } = {}) {
+  await finishDriverTrailSession();
   if (Platform.OS !== 'web' && await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK)) {
     await Location.stopLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK);
   }

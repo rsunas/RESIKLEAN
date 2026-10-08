@@ -209,7 +209,7 @@ const styles = StyleSheet.create({
   input: { color: '#173322', flex: 1, fontSize: 15, height: '100%', marginLeft: 11, paddingVertical: 0 },
   forgotPassword: { alignSelf: 'flex-end', color: '#176b3a', fontSize: 12, fontWeight: '700', marginTop: 14 },
   error: { color: '#b42318', fontSize: 13, lineHeight: 18, marginTop: 12 },
-  button: { alignItems: 'center', backgroundColor: '#176b3a', borderRadius: 14, height: 52, justifyContent: 'center', marginTop: 18 },
+  button: { alignItems: 'center', backgroundColor: '#2F8F46', borderRadius: 14, height: 52, justifyContent: 'center', marginTop: 18 },
   buttonDisabled: { opacity: 0.65 },
   buttonContent: { alignItems: 'center', flexDirection: 'row', gap: 9 },
   buttonText: { color: '#ffffff', fontSize: 16, fontWeight: '800' },

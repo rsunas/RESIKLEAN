@@ -1,5 +1,9 @@
+const mongoose = require('mongoose');
 const Route = require('../models/Route');
 const RouteLog = require('../models/RouteLog');
+const RouteTrailSession = require('../models/RouteTrailSession');
+const RouteTrailPoint = require('../models/RouteTrailPoint');
+const DailyCycleLog = require('../models/DailyCycleLog');
 const MissedReport = require('../models/MissedReport');
 const ReportMessage = require('../models/ReportMessage');
 const socketService = require('../services/socket.service');
@@ -33,14 +37,39 @@ const getAssignedRoute = async (req, res) => {
     const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
     const todayNum = dayMap[manilaDay];
 
-    if (!route.schedule.includes(todayNum)) {
-      return sendError(res, 'Your route is not scheduled for today', 404);
-    }
+    const isScheduledToday = route.schedule.includes(todayNum);
+
+    // Use Manila midnight for "start of today" to avoid UTC offset issues
+    const manilaDateStr = new Intl.DateTimeFormat('en-CA', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      timeZone: 'Asia/Manila',
+    }).format(now);
+    const startOfToday = new Date(manilaDateStr + 'T00:00:00+08:00');
+    const completedSession = await RouteTrailSession.findOne({
+      collectorId: req.user._id,
+      routeId: route._id,
+      status: 'completed',
+      startedAt: { $gte: startOfToday }
+    }).lean();
+
+    const isCompletedToday = !!completedSession;
+    const activeCycle = await DailyCycleLog.findOne({
+      driverId: req.user._id,
+      shiftStatus: 'active',
+    })
+      .sort({ shiftStart: -1 })
+      .populate('truckId', 'plateNumber truckNumber color')
+      .lean();
 
     // Sort stops by order field
     route.stops.sort((a, b) => a.order - b.order);
 
-    sendSuccess(res, route);
+    sendSuccess(res, {
+      ...route,
+      isScheduledToday,
+      isCompletedToday,
+      assignedTruck: activeCycle?.truckId || null,
+    });
   } catch (err) {
     sendError(res, err.message, 500);
   }
@@ -113,6 +142,65 @@ const markStop = async (req, res) => {
     if (err.code === 11000 && err.message.includes('eventDate')) {
       return sendError(res, 'Stop already logged today', 409);
     }
+    sendError(res, err.message, 500);
+  }
+};
+
+// ── POST /api/collector/route/complete ──────────────────────────────────────
+// Marks the active route as completed for today.
+const completeRoute = async (req, res) => {
+  try {
+    const { routeId, remarks } = req.body;
+    if (!routeId) return sendError(res, 'Route ID is required', 400);
+
+    // Use Manila midnight for "start of today" to avoid UTC offset issues
+    const now = new Date();
+    const manilaDateStr = new Intl.DateTimeFormat('en-CA', {
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      timeZone: 'Asia/Manila',
+    }).format(now);
+    const startOfToday = new Date(manilaDateStr + 'T00:00:00+08:00');
+
+    let session = await RouteTrailSession.findOne({
+      collectorId: req.user._id,
+      routeId,
+      startedAt: { $gte: startOfToday },
+      status: { $in: ['active', 'completed'] },
+    }).sort({ startedAt: -1 });
+
+    if (!session) {
+      const crypto = require('crypto');
+      const route = await Route.findById(routeId).lean();
+      if (!route) return sendError(res, 'Route not found', 404);
+
+      session = new RouteTrailSession({
+        clientSessionId: crypto.randomUUID(),
+        collectorId: req.user._id,
+        routeId,
+        routeName: route.name || 'Manual Submission',
+        startedAt: new Date(),
+        status: 'active'
+      });
+    }
+
+    session.status = 'completed';
+    session.endedAt = new Date();
+    if (remarks) session.remarks = remarks;
+    await session.save();
+
+    // Finishing a route also closes the driver's active shift assignment so
+    // route-history reports have a real Shift End timestamp.
+    await DailyCycleLog.updateMany(
+      {
+        driverId: req.user._id,
+        shiftStatus: 'active',
+        shiftStart: { $gte: startOfToday },
+      },
+      { $set: { shiftStatus: 'completed', shiftEnd: session.endedAt } },
+    );
+
+    sendSuccess(res, { message: 'Route successfully completed.' });
+  } catch (err) {
     sendError(res, err.message, 500);
   }
 };
@@ -281,34 +369,199 @@ const getTodayProgress = async (req, res) => {
 // Returns the logged-in Driver's own past RouteLog entries.
 // Mirrors the pattern used by Staff's GET /api/staff/truckloads.
 // Supports ?from=YYYY-MM-DD&to=YYYY-MM-DD date range filter.
+// Supports ?grouped=true → returns cards per (routeId + eventDate) for mobile UI.
+const haversineMi = (a, b) => {
+  if (!a || !b) return 0;
+  const R = 3958.8;
+  const rad = (v) => v * Math.PI / 180;
+  const dLat = rad(b.latitude - a.latitude);
+  const dLon = rad(b.longitude - a.longitude);
+  const lat1 = rad(a.latitude);
+  const lat2 = rad(b.latitude);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+};
+
+const barangaySeed = (barangay) => {
+  const name = String(Array.isArray(barangay) ? barangay.join(' ') : barangay || '').toLowerCase();
+  let h = 0;
+  for (let i = 0; i < name.length; i += 1) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return h;
+};
+
 const getRouteHistory = async (req, res) => {
   try {
-    const { from, to } = req.query;
+    const { from, to, grouped = false } = req.query;
     const filter = { collectorId: req.user._id };
 
-    // Filter by eventDate range (Manila-TZ YYYY-MM-DD strings)
     if (from || to) {
       filter.eventDate = {};
-      if (from) filter.eventDate.$gte = from;  // e.g. '2026-09-01'
-      if (to) filter.eventDate.$lte = to;      // e.g. '2026-09-18'
+      if (from) filter.eventDate.$gte = from;
+      if (to) filter.eventDate.$lte = to;
     }
 
     const logs = await RouteLog.find(filter)
-      .populate('routeId', 'name barangay')
+      .populate('routeId', 'name barangay routePath stops')
       .sort({ collectedAt: -1 })
       .lean();
 
-    // Summary totals
     const totalStops = logs.length;
     const flaggedCount = logs.filter((l) => l.flaggedForReview).length;
     const avgDwell = totalStops
       ? +(logs.reduce((sum, l) => sum + (l.dwellSeconds || 0), 0) / totalStops).toFixed(1)
       : 0;
 
-    sendSuccess(res, {
+    if (!grouped) {
+      return sendSuccess(res, {
+        count: totalStops,
+        flaggedCount,
+        avgDwellSeconds: avgDwell,
+        logs,
+      });
+    }
+
+    const groupsMap = new Map();
+    logs.forEach((log) => {
+      const route = log.routeId || {};
+      const routeId = String(route._id || log.routeId);
+      const key = `${log.eventDate}|${routeId}`;
+      if (!groupsMap.has(key)) {
+        groupsMap.set(key, {
+          id: key,
+          date: log.eventDate,
+          routeId,
+          routeName: route.name || 'Unnamed route',
+          barangay: route.barangay || [],
+          routePath: route.routePath || null,
+          totalStops: route.stops?.length || 0,
+          collected: 0,
+          flagged: 0,
+          dwellSecondsTotal: 0,
+          stopLogs: [],
+          firstEntry: null,
+          lastExit: null,
+          sessionId: null,
+          sessionStartedAt: null,
+          sessionEndedAt: null,
+        });
+      }
+      const group = groupsMap.get(key);
+      group.stopLogs.push(log);
+      if (log.status === 'collected') group.collected += 1;
+      if (log.flaggedForReview) group.flagged += 1;
+      group.dwellSecondsTotal += log.dwellSeconds || 0;
+      const entryTs = log.collectedAt ? new Date(log.collectedAt).getTime() : 0;
+      const exitTs = log.exitedAt ? new Date(log.exitedAt).getTime() : 0;
+      if (entryTs && (!group.firstEntry || entryTs < group.firstEntry)) group.firstEntry = entryTs;
+      if (exitTs && (!group.lastExit || exitTs > group.lastExit)) group.lastExit = exitTs;
+    });
+
+    // Completed trail sessions are history records even when the driver did
+    // not log an individual stop. This keeps route completion visible in the
+    // driver's history and in the admin dashboard using real session data.
+    const sessionCandidates = await RouteTrailSession.find({
+      collectorId: req.user._id,
+      status: 'completed',
+    })
+      .sort({ startedAt: -1 })
+      .limit(50)
+      .lean();
+    const sessionRouteIds = sessionCandidates
+      .map((session) => session.routeId)
+      .filter((routeId) => mongoose.Types.ObjectId.isValid(routeId));
+    const sessionRoutes = sessionRouteIds.length
+      ? await Route.find({ _id: { $in: sessionRouteIds } }).select('name barangay routePath stops').lean()
+      : [];
+    const sessionRouteById = new Map(sessionRoutes.map((route) => [String(route._id), route]));
+    sessionCandidates.forEach((session) => {
+      const dateKey = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date(session.startedAt));
+      const routeId = String(session.routeId);
+      const key = `${dateKey}|${routeId}`;
+      const route = sessionRouteById.get(routeId) || {};
+      if (!groupsMap.has(key)) {
+        groupsMap.set(key, {
+          id: key,
+          date: dateKey,
+          routeId,
+          routeName: route.name || session.routeName || 'Unnamed route',
+          barangay: route.barangay || [],
+          routePath: route.routePath || null,
+          totalStops: route.stops?.length || 0,
+          collected: 0,
+          flagged: 0,
+          dwellSecondsTotal: 0,
+          stopLogs: [],
+          firstEntry: null,
+          lastExit: null,
+          sessionId: null,
+          sessionStartedAt: null,
+          sessionEndedAt: null,
+        });
+      }
+      const group = groupsMap.get(key);
+      if (!group.sessionId) group.sessionId = session.clientSessionId;
+      if (!group.sessionStartedAt || new Date(session.startedAt) < new Date(group.sessionStartedAt)) group.sessionStartedAt = session.startedAt;
+      if (!group.sessionEndedAt || (session.endedAt && new Date(session.endedAt) > new Date(group.sessionEndedAt))) group.sessionEndedAt = session.endedAt;
+    });
+
+    const groups = await Promise.all([...groupsMap.values()].map(async (group) => {
+      const sessionId = group.sessionId;
+      const avgDwellSeconds = group.stopLogs.length ? +(group.dwellSecondsTotal / group.stopLogs.length).toFixed(1) : 0;
+
+      let distanceMi = 0;
+      let elevationGainFt = 0;
+      let elevationLossFt = 0;
+      let trailPoints = [];
+      if (sessionId) {
+        trailPoints = await RouteTrailPoint.find({ clientSessionId: sessionId, collectorId: req.user._id })
+          .sort({ recordedAt: 1 })
+          .select('latitude longitude altitudeMeters recordedAt')
+          .limit(2000)
+          .lean();
+        for (let i = 1; i < trailPoints.length; i += 1) {
+          distanceMi += haversineMi(trailPoints[i - 1], trailPoints[i]);
+          const prevAltFt = (trailPoints[i - 1].altitudeMeters || 0) * 3.28084;
+          const currAltFt = (trailPoints[i].altitudeMeters || 0) * 3.28084;
+          const diff = currAltFt - prevAltFt;
+          if (diff > 0) elevationGainFt += diff;
+          else elevationLossFt += -diff;
+        }
+      }
+      const trailPath = trailPoints.length >= 2
+        ? { type: 'LineString', coordinates: trailPoints.map((point) => [point.longitude, point.latitude]) }
+        : null;
+
+      return {
+        id: group.id,
+        date: group.date,
+        routeId: group.routeId,
+        routeName: group.routeName,
+        barangay: Array.isArray(group.barangay) ? group.barangay.filter(Boolean) : [group.barangay].filter(Boolean),
+        totalStops: group.totalStops,
+        collected: group.collected,
+        flagged: group.flagged,
+        avgDwellSeconds,
+        distanceMi: +distanceMi.toFixed(1),
+        greeneryPct: null,
+        elevationGainFt: Math.round(elevationGainFt),
+        elevationLossFt: Math.round(elevationLossFt),
+        firstEntry: group.firstEntry ? new Date(group.firstEntry).toISOString() : null,
+        lastExit: group.lastExit ? new Date(group.lastExit).toISOString() : null,
+        sessionStartedAt: group.sessionStartedAt ? new Date(group.sessionStartedAt).toISOString() : null,
+        sessionEndedAt: group.sessionEndedAt ? new Date(group.sessionEndedAt).toISOString() : null,
+        sessionId: sessionId || null,
+        routePath: group.routePath,
+        trailPath,
+        stopLogs: group.stopLogs.sort((a, b) => new Date(a.collectedAt) - new Date(b.collectedAt)),
+      };
+    }));
+
+    groups.sort((a, b) => (a.date < b.date ? 1 : -1));
+    return sendSuccess(res, {
       count: totalStops,
       flaggedCount,
       avgDwellSeconds: avgDwell,
+      groups,
       logs,
     });
   } catch (err) {
@@ -436,4 +689,218 @@ const getComplaints = async (req, res) => {
   }
 };
 
-module.exports = { getAssignedRoute, markStop, batchSyncLogs, getTodayProgress, getRouteHistory, resolveComplaint, getComplaints };
+const parseTrailDate = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const validTrailCoordinate = (latitude, longitude) => (
+  Number.isFinite(latitude)
+  && Number.isFinite(longitude)
+  && latitude >= -90
+  && latitude <= 90
+  && longitude >= -180
+  && longitude <= 180
+);
+
+const batchSyncTrails = async (req, res) => {
+  const sessions = Array.isArray(req.body?.sessions) ? req.body.sessions : [];
+  if (!sessions.length) return sendError(res, 'sessions must be a non-empty array', 400);
+
+  const syncedSessionIds = [];
+  const syncedPointIds = [];
+  const skippedPoints = [];
+  const rejectedSessions = [];
+
+  for (const payload of sessions) {
+    const clientSessionId = String(payload?.clientSessionId || '').trim();
+    const routeId = String(payload?.routeId || '').trim();
+    const startedAt = parseTrailDate(payload?.startedAt);
+    if (!clientSessionId || !mongoose.Types.ObjectId.isValid(routeId) || !startedAt) continue;
+
+    const route = await Route.findOne({ _id: routeId, collectorId: req.user._id, isActive: true }).select('name');
+    if (!route) continue;
+
+    const endedAt = parseTrailDate(payload?.endedAt);
+    const isCompleted = payload?.status === 'completed';
+    const sessionIdentity = {
+      clientSessionId,
+      collectorId: req.user._id,
+      routeId: route._id,
+    };
+    let session = await RouteTrailSession.findOne({ clientSessionId });
+
+    // A client session is immutable: a delayed or duplicated request must never
+    // reassign it to another collector or route.
+    if (session && (!session.collectorId.equals(req.user._id) || !session.routeId.equals(route._id))) {
+      rejectedSessions.push({ clientSessionId, reason: 'session identity conflict' });
+      continue;
+    }
+
+    if (!session) {
+      try {
+        session = await RouteTrailSession.create({
+          ...sessionIdentity,
+          routeName: route.name,
+          startedAt,
+          ...(endedAt ? { endedAt } : {}),
+          status: isCompleted ? 'completed' : 'active',
+          lastSyncedAt: new Date(),
+        });
+      } catch (error) {
+        // Another device may have inserted the same session between the read
+        // and create. Re-read it and apply the same immutable-identity check.
+        if (error?.code !== 11000) throw error;
+        session = await RouteTrailSession.findOne({ clientSessionId });
+        if (!session || !session.collectorId.equals(req.user._id) || !session.routeId.equals(route._id)) {
+          rejectedSessions.push({ clientSessionId, reason: 'session identity conflict' });
+          continue;
+        }
+      }
+    }
+
+    // Completion is monotonic. An older "active" replay may update sync
+    // metadata, but can never revert a completed session.
+    const sessionUpdate = { $set: { lastSyncedAt: new Date() } };
+    if (isCompleted) sessionUpdate.$set.status = 'completed';
+    if (endedAt) sessionUpdate.$max = { endedAt };
+    await RouteTrailSession.updateOne(sessionIdentity, sessionUpdate);
+
+    const points = Array.isArray(payload?.points) ? payload.points : [];
+    const seenTimes = new Set();
+    const validPoints = [];
+    const rejectedPointIds = [];
+    for (const point of points) {
+      const clientId = String(point?.clientId || '').trim();
+      const recordedAt = parseTrailDate(point?.recordedAt);
+      const latitude = Number(point?.latitude);
+      const longitude = Number(point?.longitude);
+      const timeKey = recordedAt?.toISOString();
+      if (!clientId || !recordedAt || !timeKey || !validTrailCoordinate(latitude, longitude) || seenTimes.has(timeKey)) {
+        if (clientId) {
+          skippedPoints.push(clientId);
+          rejectedPointIds.push(clientId);
+        }
+        continue;
+      }
+      seenTimes.add(timeKey);
+      validPoints.push({
+        clientId,
+        clientSessionId,
+        collectorId: req.user._id,
+        routeId,
+        routeName: route.name,
+        recordedAt,
+        latitude,
+        longitude,
+        accuracyMeters: Number.isFinite(Number(point?.accuracyMeters)) ? Number(point.accuracyMeters) : undefined,
+        altitudeMeters: Number.isFinite(Number(point?.altitudeMeters)) ? Number(point.altitudeMeters) : undefined,
+        headingDegrees: Number.isFinite(Number(point?.headingDegrees)) ? Number(point.headingDegrees) : undefined,
+        speedMetersPerSecond: Number.isFinite(Number(point?.speedMetersPerSecond)) ? Number(point.speedMetersPerSecond) : undefined,
+      });
+    }
+
+    if (validPoints.length) {
+      const existingPoints = await RouteTrailPoint.find({
+        clientId: { $in: validPoints.map((point) => point.clientId) },
+      }).select('clientId clientSessionId collectorId routeId').lean();
+      const existingByClientId = new Map(existingPoints.map((point) => [point.clientId, point]));
+      const candidates = validPoints.filter((point) => {
+        const existing = existingByClientId.get(point.clientId);
+        const belongsToSession = !existing
+          || (existing.clientSessionId === clientSessionId
+            && String(existing.collectorId) === String(req.user._id)
+            && String(existing.routeId) === routeId);
+        if (!belongsToSession) {
+          skippedPoints.push(point.clientId);
+          rejectedPointIds.push(point.clientId);
+        }
+        return belongsToSession;
+      });
+
+      if (candidates.length) {
+        try {
+          await RouteTrailPoint.bulkWrite(
+            candidates.map((point) => ({
+              updateOne: {
+                filter: { clientId: point.clientId },
+                update: { $setOnInsert: point },
+                upsert: true,
+              },
+            })),
+            { ordered: false },
+          );
+        } catch (error) {
+          if (error?.code !== 11000 && !error?.writeErrors?.every((writeError) => writeError.code === 11000)) throw error;
+        }
+      }
+      // Do not acknowledge a point merely because bulkWrite completed. A
+      // concurrent insert can lose a unique-index race (for example the
+      // session/timestamp index); only durably stored matching points count.
+      const confirmedPoints = candidates.length
+        ? await RouteTrailPoint.find({ clientId: { $in: candidates.map((point) => point.clientId) } })
+          .select('clientId clientSessionId collectorId routeId')
+          .lean()
+        : [];
+      const confirmedIds = new Set(confirmedPoints
+        .filter((point) => point.clientSessionId === clientSessionId
+          && String(point.collectorId) === String(req.user._id)
+          && String(point.routeId) === routeId)
+        .map((point) => point.clientId));
+      syncedPointIds.push(...confirmedIds);
+      rejectedPointIds.push(...candidates
+        .map((point) => point.clientId)
+        .filter((clientId) => !confirmedIds.has(clientId)));
+      skippedPoints.push(...rejectedPointIds.filter((clientId) => !skippedPoints.includes(clientId)));
+      if (rejectedPointIds.length) {
+        rejectedSessions.push({ clientSessionId, reason: 'one or more trail points were not stored' });
+        continue;
+      }
+    } else if (rejectedPointIds.length) {
+      rejectedSessions.push({ clientSessionId, reason: 'one or more trail points were invalid' });
+      continue;
+    }
+
+    const pointCount = await RouteTrailPoint.countDocuments({ clientSessionId });
+    await RouteTrailSession.updateOne(
+      { clientSessionId },
+      { $set: { pointCount, lastSyncedAt: new Date() } },
+    );
+    syncedSessionIds.push(clientSessionId);
+  }
+
+  return sendSuccess(res, { syncedSessionIds, syncedPointIds, skippedPoints, rejectedSessions });
+};
+
+const getTrailHistory = async (req, res) => {
+  const sessionFilter = { collectorId: req.user._id };
+  if (req.query.sessionId) sessionFilter.clientSessionId = req.query.sessionId;
+  if (req.query.routeId && mongoose.Types.ObjectId.isValid(req.query.routeId)) sessionFilter.routeId = req.query.routeId;
+
+  const from = parseTrailDate(req.query.from);
+  const to = parseTrailDate(req.query.to);
+  if (from || to) sessionFilter.startedAt = { ...(from ? { $gte: from } : {}), ...(to ? { $lte: to } : {}) };
+
+  const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 100);
+  const sessions = await RouteTrailSession.find(sessionFilter).sort({ startedAt: -1 }).limit(limit).lean();
+  const sessionIds = sessions.map((session) => session.clientSessionId);
+  const points = sessionIds.length
+    ? await RouteTrailPoint.find({ collectorId: req.user._id, clientSessionId: { $in: sessionIds } }).sort({ recordedAt: 1 }).lean()
+    : [];
+
+  return sendSuccess(res, { sessions, points, count: sessions.length });
+};
+
+module.exports = {
+  getAssignedRoute,
+  markStop,
+  batchSyncLogs,
+  getTodayProgress,
+  getRouteHistory,
+  resolveComplaint,
+  getComplaints,
+  batchSyncTrails,
+  getTrailHistory,
+  completeRoute,
+};

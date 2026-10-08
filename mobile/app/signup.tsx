@@ -15,10 +15,19 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import Svg, { Path } from 'react-native-svg';
+import Svg, { Circle as SvgCircle, Path } from 'react-native-svg';
 import { BarangayPicker } from '@/components/barangay-picker';
 import { BrandMark } from '@/components/brand-mark';
 import { saveSession, type AccountUser } from '@/lib/session';
+
+function BadgeCheckIcon({ color = '#176b3a', size = 18 }: { color?: string; size?: number }) {
+  return (
+    <Svg fill="none" height={size} stroke={color} strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} viewBox="0 0 24 24" width={size}>
+      <Path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z" />
+      <Path d="m9 12 2 2 4-4" />
+    </Svg>
+  );
+}
 
 type RegisterResponse = {
   success: boolean;
@@ -53,6 +62,8 @@ export default function SignupScreen() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [location, setLocation] = useState('');
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -79,6 +90,7 @@ export default function SignupScreen() {
     setIsGoogleSubmitting(true);
     try {
       await GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+      try { await GoogleSignin.signOut(); } catch { /* ignore if not signed in */ }
       const signInResponse = await GoogleSignin.signIn();
 
       if (!isSuccessResponse(signInResponse)) {
@@ -119,6 +131,11 @@ export default function SignupScreen() {
       return;
     }
 
+    if (!password.trim() || password.trim().length < 6) {
+      setError('Please set a password with at least 6 characters.');
+      return;
+    }
+
     if (!location) {
       setError('Please select your collection location.');
       return;
@@ -148,6 +165,7 @@ export default function SignupScreen() {
         body: JSON.stringify({
           name: name.trim(),
           phone: phone.trim(),
+          password: password.trim(),
           location,
           barangay: location,
         }),
@@ -262,7 +280,7 @@ export default function SignupScreen() {
                       <View style={[styles.inputRow, styles.readOnlyInput]}>
                         <Feather color="#83938a" name="mail" size={19} />
                         <Text style={styles.readOnlyText}>{email}</Text>
-                        <Feather color="#176b3a" name="check-circle" size={18} />
+                        <BadgeCheckIcon />
                       </View>
                     </View>
 
@@ -284,13 +302,28 @@ export default function SignupScreen() {
                     </View>
 
                     <View style={styles.fieldGroup}>
-                      <Text style={styles.label}>Collection Location</Text>
-                      <BarangayPicker onChange={setLocation} value={location} />
+                      <Text style={styles.label}>Password</Text>
+                      <View style={styles.inputRow}>
+                        <Feather color="#83938a" name="lock" size={19} />
+                        <TextInput
+                          accessibilityLabel="Password"
+                          autoComplete="password-new"
+                          onChangeText={setPassword}
+                          placeholder="Set a password (min. 6 chars)"
+                          placeholderTextColor="#8c9b93"
+                          secureTextEntry={!showPassword}
+                          style={styles.input}
+                          value={password}
+                        />
+                        <Pressable onPress={() => setShowPassword((v) => !v)}>
+                          <Feather color="#83938a" name={showPassword ? 'eye-off' : 'eye'} size={19} />
+                        </Pressable>
+                      </View>
                     </View>
 
-                    <View style={styles.infoNote}>
-                      <Feather color="#176b3a" name="shield" size={17} />
-                      <Text style={styles.infoNoteText}>Your Google account manages your password securely.</Text>
+                    <View style={styles.fieldGroup}>
+                      <Text style={styles.label}>Collection Location</Text>
+                      <BarangayPicker onChange={setLocation} value={location} />
                     </View>
 
                     {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
