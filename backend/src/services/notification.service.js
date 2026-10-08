@@ -58,7 +58,7 @@ const sendPushNotifications = async (messages) => {
   // In a production app, receipt checking should ideally be done asynchronously 
   // later on, but we'll handle immediate 'DeviceNotRegistered' errors here.
   const invalidTokens = [];
-  
+
   for (let i = 0; i < tickets.length; i++) {
     const ticket = tickets[i];
     if (ticket.status === 'error' && ticket.details && ticket.details.error === 'DeviceNotRegistered') {
