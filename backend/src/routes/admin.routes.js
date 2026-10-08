@@ -22,6 +22,7 @@ const {
   getAllRouteHistory,
   getRouteHistoryDetail,
   exportRouteHistoryPDF,
+  getActiveCyclesMonitoring,
 } = require('../controllers/admin.controller');
 const { getMessages, sendMessage } = require('../controllers/message.controller');
 
@@ -59,6 +60,9 @@ router.delete('/trucks/:truckId', archiveTruck);
 // Cycle Logs (driver-truck-shift mapping)
 router.post('/cycle-logs', createCycleLog);
 router.get('/cycle-logs', getCycleLogs);
+
+// Monitoring
+router.get('/monitoring/capacity', getActiveCyclesMonitoring);
 
 // Route History
 router.get('/route-history', getAllRouteHistory);

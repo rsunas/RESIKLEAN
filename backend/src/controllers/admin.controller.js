@@ -9,10 +9,12 @@ const MissedReport = require('../models/MissedReport');
 const TruckLoad = require('../models/TruckLoad');
 const Truck = require('../models/Truck');
 const DailyCycleLog = require('../models/DailyCycleLog');
+const CapacityLog = require('../models/CapacityLog');
 const socketService = require('../services/socket.service');
 const { uploadPhoto } = require('../services/cloudinary.service');
 const { sendSuccess, sendError } = require('../utils/response');
 const { buildRouteHistoryPayload, generateRouteHistoryPDF } = require('../services/pdf/routeHistoryReport');
+const { calculateProjection, STATUS_OK, STATUS_WARNING, STATUS_CRITICAL } = require('../utils/capacityProjection');
 
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
 // Returns all users. Supports ?role= filter.
@@ -825,6 +827,76 @@ const exportRouteHistoryPDF = async (req, res) => {
   }
 };
 
+// ── GET /api/admin/monitoring/capacity ─────────────────────────────────────────
+// Returns every active cycle with its latest capacity log, projection, and status
+// without an Alert model or push notifications. Includes TruckLoad comparison
+// only when truck plates match, load arrival is after shift start, and both dates match in Manila time.
+const getActiveCyclesMonitoring = async (req, res) => {
+  try {
+    // Get all active cycles
+    const activeCycles = await DailyCycleLog.find({ shiftStatus: 'active' })
+      .populate('driverId', 'name employeeId')
+      .populate('truckId', 'plateNumber truckNumber capacity')
+      .lean();
+
+    const result = await Promise.all(activeCycles.map(async (cycle) => {
+      // Find latest capacity log for this cycle
+      const latestLog = await CapacityLog.findOne({ dailyCycle: cycle._id })
+        .sort({ timestamp: -1 })
+        .lean();
+
+      let projection = null;
+      let status = STATUS_OK;
+
+      if (latestLog) {
+        projection = calculateProjection(latestLog);
+        status = projection ? projection.status : STATUS_OK;
+      }
+
+      // Format cycle shift start in Manila time for date matching
+      let truckLoadMatch = null;
+      if (cycle.truckId?.plateNumber && cycle.shiftStart) {
+        const cycleStartDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date(cycle.shiftStart));
+        
+        // Find matching truck load
+        // Must match plate number, arrived after shift start, and be on the same Manila date
+        const loads = await TruckLoad.find({
+          'truck.plateNumber': cycle.truckId.plateNumber,
+          arrivedAt: { $gte: cycle.shiftStart }
+        }).sort({ arrivedAt: -1 }).lean();
+
+        for (const load of loads) {
+          const loadDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date(load.arrivedAt));
+          if (loadDateStr === cycleStartDateStr) {
+            truckLoadMatch = {
+              arrivedAt: load.arrivedAt,
+              tonnesEstimate: load.tonnesEstimate,
+              volumeCubicM: load.volumeCubicM,
+              wasteType: load.wasteType
+            };
+            break; // found the match
+          }
+        }
+      }
+
+      return {
+        cycleId: cycle._id,
+        driver: cycle.driverId,
+        truck: cycle.truckId,
+        shiftStart: cycle.shiftStart,
+        latestCapacityLog: latestLog || null,
+        projection,
+        status,
+        truckLoadMatch
+      };
+    }));
+
+    sendSuccess(res, result);
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
 module.exports = {
   getAllUsers,
   createUser,
@@ -844,4 +916,5 @@ module.exports = {
   getAllRouteHistory,
   getRouteHistoryDetail,
   exportRouteHistoryPDF,
+  getActiveCyclesMonitoring,
 };
