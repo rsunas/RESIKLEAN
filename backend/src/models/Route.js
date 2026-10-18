@@ -7,6 +7,10 @@ const stopSchema = new mongoose.Schema({
   longitude: { type: Number, required: false }, // Optional
   order: { type: Number, required: true },   // sequence in the route
   expectedTime: { type: String, required: false }, // e.g., "4:25 AM"
+  // Soft-archive: removed stops are never hard-deleted so historical logs
+  // can still reference them.  Active queries filter these out.
+  isArchived: { type: Boolean, default: false },
+  archivedAt: { type: Date, default: null },
 });
 
 const routeSchema = new mongoose.Schema(

@@ -275,9 +275,22 @@ async function main() {
   await mongoose.connect(process.env.MONGODB_URI);
   console.log('✅ Connected to MongoDB\n');
 
-  // ── Step 1: Delete ALL existing routes ──────────────────────────────────
+  // ── Step 1: Protection guard — require --force flag to delete existing routes ──
+  const existingCount = await Route.countDocuments({});
+  const hasForceFlag = process.argv.includes('--force');
+
+  if (existingCount > 0 && !hasForceFlag) {
+    console.warn(`⚠️  SAFETY GUARD: Database contains ${existingCount} existing route(s).`);
+    console.warn('   Running this seed script will permanently delete existing routes and stops.');
+    console.warn('   To proceed, rerun the command with the --force flag:');
+    console.warn('   node src/seeds/unifiedRoutes.seed.js --force\n');
+    await mongoose.disconnect();
+    console.log('🔌 Disconnected from MongoDB (No changes made)');
+    process.exit(1);
+  }
+
   const deleted = await Route.deleteMany({});
-  console.log('🗑️  Deleted ' + deleted.deletedCount + ' old route(s)\n');
+  console.log(`🗑️  Deleted ${deleted.deletedCount} old route(s)\n`);
 
   // ── Step 2: Insert unified routes ───────────────────────────────────────
   let withMap = 0;

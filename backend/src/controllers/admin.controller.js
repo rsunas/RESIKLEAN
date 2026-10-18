@@ -17,6 +17,7 @@ const { buildRouteHistoryPayload, generateRouteHistoryPDF } = require('../servic
 const { calculateProjection, STATUS_OK, STATUS_WARNING, STATUS_CRITICAL } = require('../utils/capacityProjection');
 const { getTonnageTrendData } = require('../services/tonnageService');
 const { generateTonnageTrendPDF } = require('../services/pdf/tonnageTrendReport');
+const { validateRoutePath, validateStops, getStopProximityWarnings } = require('../utils/routeValidation');
 
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
 // Returns all users. Supports ?role= filter.
@@ -94,18 +95,53 @@ const getAllRoutes = async (req, res) => {
 };
 
 // ── POST /api/admin/routes ────────────────────────────────────────────────────
-// Creates a new collection route.
-// Body: { name, barangay, schedule: [0-6], stops: [{ name, latitude, longitude, order }], collectorId? }
+// Creates a new collection route with validated routePath and ordered stops.
+// Body: { name, barangay, schedule: [0-6], routePath: { type, coordinates }, stops: [{ name, latitude?, longitude?, order, expectedTime? }], collectorId? }
+// Do NOT accept areaBoundary. Do NOT hard-delete routes or stops.
 const createRoute = async (req, res) => {
   try {
-    const { name, barangay, schedule, stops, collectorId, areaBoundary } = req.body;
+    const { name, barangay, schedule, stops, collectorId, routePath } = req.body;
 
-    if (!name || !barangay || !schedule || !stops) {
-      return sendError(res, 'name, barangay, schedule, and stops are required', 400);
+    // ── Reject deprecated/disallowed fields ───────────────────────────────
+    if (req.body.areaBoundary !== undefined) {
+      return sendError(res, 'areaBoundary is not supported. Use routePath instead', 400);
     }
 
-    const route = await Route.create({ name, barangay, schedule, stops, collectorId, areaBoundary });
-    sendSuccess(res, route, 201);
+    // ── Basic field validation ─────────────────────────────────────────────
+    if (!name || !barangay || !schedule) {
+      return sendError(res, 'name, barangay, and schedule are required', 400);
+    }
+
+    // ── routePath validation (required for new routes) ────────────────────
+    const pathResult = validateRoutePath(routePath);
+    if (!pathResult.valid) {
+      return sendError(res, pathResult.error, 400);
+    }
+
+    // ── Stops validation ──────────────────────────────────────────────────
+    const stopsResult = validateStops(stops);
+    if (!stopsResult.valid) {
+      return sendError(res, stopsResult.error, 400);
+    }
+
+    // ── Proximity warnings (warn, do not reject) ──────────────────────────
+    const warnings = getStopProximityWarnings(stops, routePath);
+
+    const route = await Route.create({
+      name,
+      barangay,
+      schedule,
+      stops,
+      routePath,
+      collectorId: collectorId || undefined,
+      isActive: true,
+    });
+
+    const populated = await Route.findById(route._id)
+      .populate('collectorId', 'name email')
+      .lean();
+
+    sendSuccess(res, { ...populated, warnings }, 201);
   } catch (err) {
     sendError(res, err.message, 500);
   }
@@ -137,31 +173,152 @@ const assignCollector = async (req, res) => {
 };
 
 // ── PATCH /api/admin/routes/:routeId ──────────────────────────────────────────
-// Updates an existing route's details (schedule, name, barangay, stops, etc.)
-// Body: any combination of { name, barangay, schedule, stops, routePath, isActive }
+// Updates an existing route's details.
+// Key behaviors per Trello card:
+//   • Accept routePath as LineString or MultiLineString (validated)
+//   • Preserve _id for unchanged stops on update
+//   • Soft-archive removed stops (isArchived: true, archivedAt)
+//   • Never hard-delete stops or routes
+//   • Warn (don't reject) on stop distance > 100m from routePath
+//   • Warn (don't reject) on > 100 active stops
+// Body: any combination of { name, barangay, schedule, stops, routePath }
+// NOTE: isActive is NOT settable through this endpoint — use archiveRoute.
 const updateRoute = async (req, res) => {
   try {
     const { routeId } = req.params;
 
-    // Only allow these fields to be updated
-    const allowedFields = ['name', 'barangay', 'schedule', 'stops', 'routePath', 'isActive'];
-    const updates = {};
-    for (const field of allowedFields) {
+    const route = await Route.findById(routeId);
+    if (!route) return sendError(res, 'Route not found', 404);
+
+    // ── Reject deprecated/disallowed fields ───────────────────────────────
+    if (req.body.areaBoundary !== undefined) {
+      return sendError(res, 'areaBoundary is not supported. Use routePath instead', 400);
+    }
+
+    // ── Collect simple field updates ──────────────────────────────────────
+    const simpleFields = ['name', 'barangay', 'schedule'];
+    for (const field of simpleFields) {
       if (req.body[field] !== undefined) {
-        updates[field] = req.body[field];
+        route[field] = req.body[field];
       }
     }
 
-    if (Object.keys(updates).length === 0) {
-      return sendError(res, 'No valid fields provided to update', 400);
+    // ── routePath update ─────────────────────────────────────────────────
+    if (req.body.routePath !== undefined) {
+      const pathResult = validateRoutePath(req.body.routePath);
+      if (!pathResult.valid) {
+        return sendError(res, pathResult.error, 400);
+      }
+      route.routePath = req.body.routePath;
     }
 
-    const route = await Route.findByIdAndUpdate(routeId, updates, { new: true })
-      .populate('collectorId', 'name email');
+    // ── Stops update (the complex part) ──────────────────────────────────
+    const warnings = [];
 
+    if (req.body.stops !== undefined) {
+      const incomingStops = req.body.stops;
+
+      // Validate incoming stops
+      const stopsResult = validateStops(incomingStops);
+      if (!stopsResult.valid) {
+        return sendError(res, stopsResult.error, 400);
+      }
+
+      // Build a map of existing stops by _id for stable ID preservation
+      const existingById = new Map();
+      for (const stop of route.stops) {
+        existingById.set(String(stop._id), stop);
+      }
+
+      // Build the merged stops array
+      const mergedStops = [];
+      const incomingIds = new Set();
+
+      for (const incoming of incomingStops) {
+        if (incoming._id && existingById.has(String(incoming._id))) {
+          // Existing stop — preserve _id, update fields
+          const existing = existingById.get(String(incoming._id));
+          existing.name = incoming.name;
+          existing.order = incoming.order;
+          if (incoming.latitude != null) existing.latitude = incoming.latitude;
+          if (incoming.longitude != null) existing.longitude = incoming.longitude;
+          if (incoming.expectedTime !== undefined) existing.expectedTime = incoming.expectedTime;
+          // Un-archive if it was previously archived and is being re-added
+          existing.isArchived = false;
+          existing.archivedAt = null;
+          mergedStops.push(existing);
+          incomingIds.add(String(incoming._id));
+        } else {
+          // New stop — will get a fresh _id from Mongoose
+          mergedStops.push({
+            name: incoming.name,
+            order: incoming.order,
+            latitude: incoming.latitude,
+            longitude: incoming.longitude,
+            expectedTime: incoming.expectedTime,
+            isArchived: false,
+            archivedAt: null,
+          });
+        }
+      }
+
+      // Soft-archive any existing stops not present in the incoming set
+      for (const [id, existingStop] of existingById) {
+        if (!incomingIds.has(id) && !existingStop.isArchived) {
+          existingStop.isArchived = true;
+          existingStop.archivedAt = new Date();
+          mergedStops.push(existingStop);
+        } else if (!incomingIds.has(id) && existingStop.isArchived) {
+          // Already archived, keep as-is
+          mergedStops.push(existingStop);
+        }
+      }
+
+      route.stops = mergedStops;
+
+      // Proximity warnings against the routePath (current or incoming)
+      const activeRoutePath = req.body.routePath || route.routePath;
+      if (activeRoutePath) {
+        const activeStops = mergedStops.filter((s) => !s.isArchived);
+        warnings.push(...getStopProximityWarnings(activeStops, activeRoutePath));
+      }
+    }
+
+    await route.save();
+
+    const populated = await Route.findById(route._id)
+      .populate('collectorId', 'name email')
+      .lean();
+
+    sendSuccess(res, { ...populated, warnings });
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
+// ── PATCH /api/admin/routes/:routeId/archive ──────────────────────────────────
+// Archives a route via isActive: false. Never hard-deletes.
+// Archived routes remain available for history and assignment views
+// but are excluded from new operations and active Driver assignments.
+const archiveRoute = async (req, res) => {
+  try {
+    const { routeId } = req.params;
+
+    const route = await Route.findById(routeId);
     if (!route) return sendError(res, 'Route not found', 404);
 
-    sendSuccess(res, route);
+    if (!route.isActive) {
+      return sendError(res, 'Route is already archived', 400);
+    }
+
+    route.isActive = false;
+    await route.save();
+
+    const populated = await Route.findById(route._id)
+      .populate('collectorId', 'name email')
+      .lean();
+
+    sendSuccess(res, populated);
   } catch (err) {
     sendError(res, err.message, 500);
   }
@@ -193,7 +350,9 @@ const getComplianceReport = async (req, res) => {
           eventDate,
         }).lean();
 
-        const totalStops = route.stops.length;
+        // Only count active (non-archived) stops for compliance
+        const activeStops = route.stops.filter((s) => !s.isArchived);
+        const totalStops = activeStops.length;
         const collected = logs.filter((l) => l.status === 'collected').length;
 
         return {
@@ -618,10 +777,10 @@ const getAllRouteHistory = async (req, res) => {
           routeId: log.routeId,
           routeName: route?.name || 'Unknown route',
           barangay: route?.barangay || [],
-          streetList: route?.stops?.map((s) => s.name) || [],
+          streetList: (route?.stops || []).filter((s) => !s.isArchived).map((s) => s.name),
           eventDate: log.eventDate,
           logs: [],
-          totalStops: route?.stops?.length || 0,
+          totalStops: (route?.stops || []).filter((s) => !s.isArchived).length,
           trailSession: null,
         });
       }
@@ -644,10 +803,10 @@ const getAllRouteHistory = async (req, res) => {
           routeId: session.routeId,
           routeName: route.name || session.routeName || 'Unknown route',
           barangay: route.barangay || [],
-          streetList: route.stops?.map((stop) => stop.name) || [],
+          streetList: (route.stops || []).filter((s) => !s.isArchived).map((stop) => stop.name),
           eventDate,
           logs: [],
-          totalStops: route.stops?.length || 0,
+          totalStops: (route.stops || []).filter((s) => !s.isArchived).length,
           trailSession: session,
         });
       } else if (!groups.get(key).trailSession) {
@@ -958,6 +1117,7 @@ module.exports = {
   getAllRoutes,
   createRoute,
   updateRoute,
+  archiveRoute,
   assignCollector,
   getComplianceReport,
   getAllReports,

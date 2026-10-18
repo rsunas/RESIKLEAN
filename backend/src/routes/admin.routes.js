@@ -9,6 +9,7 @@ const {
   getAllRoutes,
   createRoute,
   updateRoute,
+  archiveRoute,
   assignCollector,
   getComplianceReport,
   getAllReports,
@@ -38,6 +39,7 @@ router.post('/users', upload.single('avatar'), createUser);
 router.get('/routes', getAllRoutes);
 router.post('/routes', createRoute);
 router.patch('/routes/:routeId', updateRoute);
+router.patch('/routes/:routeId/archive', archiveRoute);
 router.patch('/routes/:routeId/assign', assignCollector);
 
 // Compliance

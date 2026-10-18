@@ -63,8 +63,10 @@ const getAssignedRoute = async (req, res) => {
       .populate('truckId', 'plateNumber truckNumber color length width height')
       .lean();
 
-    // Sort stops by order field
-    route.stops.sort((a, b) => a.order - b.order);
+    // Filter out archived stops so drivers only see active stops, ordered by sequence
+    route.stops = (route.stops || [])
+      .filter((s) => !s.isArchived)
+      .sort((a, b) => a.order - b.order);
 
     sendSuccess(res, {
       ...route,
@@ -347,7 +349,8 @@ const getTodayProgress = async (req, res) => {
       eventDate: todayDate,
     }).lean();
 
-    const totalStops = route.stops.length;
+    const activeStops = (route.stops || []).filter((s) => !s.isArchived);
+    const totalStops = activeStops.length;
     const completedIds = new Set(logs.map((l) => l.stopId.toString()));
     const completed = logs.filter((l) => l.status === 'collected').length;
 
@@ -435,7 +438,7 @@ const getRouteHistory = async (req, res) => {
           routeName: route.name || 'Unnamed route',
           barangay: route.barangay || [],
           routePath: route.routePath || null,
-          totalStops: route.stops?.length || 0,
+          totalStops: (route.stops || []).filter((s) => !s.isArchived).length,
           collected: 0,
           flagged: 0,
           dwellSecondsTotal: 0,
@@ -488,7 +491,7 @@ const getRouteHistory = async (req, res) => {
           routeName: route.name || session.routeName || 'Unnamed route',
           barangay: route.barangay || [],
           routePath: route.routePath || null,
-          totalStops: route.stops?.length || 0,
+          totalStops: (route.stops || []).filter((s) => !s.isArchived).length,
           collected: 0,
           flagged: 0,
           dwellSecondsTotal: 0,
@@ -917,7 +920,7 @@ const batchSyncCapacity = async (req, res) => {
       return sendError(res, 'No active route assigned to you', 403);
     }
 
-    const totalStops = route.stops ? route.stops.length : 0;
+    const totalStops = route.stops ? route.stops.filter((s) => !s.isArchived).length : 0;
 
     const clientIds = logs.map(l => l.clientId).filter(Boolean);
     const existingLogs = clientIds.length
