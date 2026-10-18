@@ -355,6 +355,11 @@ const removePushToken = async (req, res) => {
     });
 
     sendSuccess(res, { message: 'Push token removed successfully' });
+  } catch (err) {
+    sendError(res, err.message, 500);
+  }
+};
+
 // ── POST /api/resident/reports/verify-photo ───────────────────────────────────
 // Pre-scans a photo with Roboflow AI before report submission and returns detection result
 const verifyPhotoOnly = async (req, res) => {
