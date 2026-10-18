@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PageHeader from '../components/PageHeader.jsx';
 import AppSelect from '../components/AppSelect.jsx';
 import TruckManagementPanel from '../components/TruckManagementPanel.jsx';
+import RouteManagementPanel from '../components/RouteManagementPanel.jsx';
 import RouteAssignmentPanel from '../components/RouteAssignmentPanel.jsx';
 import TonnageExportPopover from '../components/TonnageExportPopover.jsx';
 
@@ -17,6 +18,7 @@ const NAV_ITEMS = [
   { id: 'routes', label: 'Route History', icon: 'route' },
   { id: 'complaints', label: 'Complaints', icon: 'alert' },
   { id: 'activity', label: 'Staff Activity', icon: 'chart' },
+  { id: 'manage-routes', label: 'Manage Routes', icon: 'map' },
   { id: 'assignments', label: 'Collector Assignments', icon: 'operations' },
   { id: 'accounts', label: 'Manage Accounts', icon: 'id-card' },
   { id: 'trucks', label: 'Manage Trucks', icon: 'truck' },
@@ -214,6 +216,7 @@ function Icon({ name, size = 18 }) {
     account: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>,
     'id-card': <><rect height="16" rx="2" width="18" x="3" y="4" /><circle cx="8" cy="10" r="2" /><path d="M13 9h5M13 13h5" /></>,
     operations: <><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="2" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" /></>,
+    map: <><path d="m9 18-6 3V6l6-3 6 3 6-3v15l-6 3-6-3Z" /><path d="M9 3v15M15 6v15" /></>,
     truck: <><path d="M3 7h11v10H3zM14 10h4l3 3v4h-7z" /><circle cx="7" cy="19" r="2" /><circle cx="18" cy="19" r="2" /></>,
     search: <><circle cx="11" cy="11" r="6" /><path d="m20 20-4.2-4.2" /></>,
     bell: <><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></>,
@@ -471,6 +474,8 @@ export default function Dashboard() {
   const [rhDateFrom, setRhDateFrom] = useState('');
   const [rhDateTo, setRhDateTo] = useState('');
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const socketRef = useRef(null);
   const [realtimeMessagesByReport, setRealtimeMessagesByReport] = useState({});
   const [apiData, setApiData] = useState({ users: null, routes: null, reports: null, loads: null, tonnage: null, compliance: null, usingPlaceholder: true });
@@ -904,6 +909,104 @@ export default function Dashboard() {
     return undefined;
   }, [selectedActivity]);
 
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+
+    const sidebar = document.querySelector('.admin-sidebar');
+    if (!sidebar) return undefined;
+
+    const control = document.createElement('button');
+    const icon = document.createElement('span');
+    const mobileControl = document.createElement('button');
+    const mobileIcon = document.createElement('span');
+    const mobileBackdrop = document.createElement('button');
+    control.className = 'sidebar-collapse-toggle';
+    control.type = 'button';
+    icon.className = 'sidebar-collapse-toggle-icon';
+    icon.setAttribute('aria-hidden', 'true');
+    control.append(icon);
+    mobileControl.className = 'mobile-sidebar-toggle';
+    mobileControl.type = 'button';
+    mobileIcon.className = 'mobile-sidebar-toggle-icon';
+    mobileIcon.setAttribute('aria-hidden', 'true');
+    mobileControl.append(mobileIcon);
+    mobileBackdrop.className = 'mobile-sidebar-backdrop';
+    mobileBackdrop.type = 'button';
+    mobileBackdrop.setAttribute('aria-label', 'Close navigation');
+
+    const setNavigationLabels = () => {
+      sidebar.querySelectorAll('.nav-link, .signout-button').forEach((button) => {
+        const label = button.textContent?.trim();
+        if (label) {
+          button.setAttribute('aria-label', label);
+          button.setAttribute('title', label);
+        }
+      });
+    };
+
+    const toggleSidebar = () => setIsSidebarCollapsed((current) => !current);
+    const toggleMobileSidebar = () => setIsMobileSidebarOpen((current) => !current);
+    const closeMobileSidebar = () => setIsMobileSidebarOpen(false);
+    control.addEventListener('click', toggleSidebar);
+    mobileControl.addEventListener('click', toggleMobileSidebar);
+    mobileBackdrop.addEventListener('click', closeMobileSidebar);
+    sidebar.querySelectorAll('.nav-link, .signout-button').forEach((button) => button.addEventListener('click', closeMobileSidebar));
+    document.body.append(control, mobileControl, mobileBackdrop);
+    setNavigationLabels();
+
+    return () => {
+      control.removeEventListener('click', toggleSidebar);
+      mobileControl.removeEventListener('click', toggleMobileSidebar);
+      mobileBackdrop.removeEventListener('click', closeMobileSidebar);
+      sidebar.querySelectorAll('.nav-link, .signout-button').forEach((button) => button.removeEventListener('click', closeMobileSidebar));
+      control.remove();
+      mobileControl.remove();
+      mobileBackdrop.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+
+    document.body.classList.toggle('sidebar-is-collapsed', isSidebarCollapsed);
+    const control = document.querySelector('.sidebar-collapse-toggle');
+    const icon = control?.querySelector('.sidebar-collapse-toggle-icon');
+    const action = isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar';
+    if (control) {
+      control.setAttribute('aria-label', action);
+      control.setAttribute('aria-pressed', String(isSidebarCollapsed));
+      control.setAttribute('title', action);
+    }
+    if (icon) icon.textContent = isSidebarCollapsed ? '›' : '‹';
+
+    return () => document.body.classList.remove('sidebar-is-collapsed');
+  }, [isSidebarCollapsed]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+
+    document.body.classList.toggle('mobile-sidebar-is-open', isMobileSidebarOpen);
+    const control = document.querySelector('.mobile-sidebar-toggle');
+    const icon = control?.querySelector('.mobile-sidebar-toggle-icon');
+    const action = isMobileSidebarOpen ? 'Close navigation' : 'Open navigation';
+    if (control) {
+      control.setAttribute('aria-expanded', String(isMobileSidebarOpen));
+      control.setAttribute('aria-label', action);
+      control.setAttribute('title', action);
+    }
+    if (icon) icon.textContent = isMobileSidebarOpen ? '×' : '☰';
+
+    const closeWhenViewportExpands = () => {
+      if (window.innerWidth > 640) setIsMobileSidebarOpen(false);
+    };
+    window.addEventListener('resize', closeWhenViewportExpands);
+
+    return () => {
+      window.removeEventListener('resize', closeWhenViewportExpands);
+      document.body.classList.remove('mobile-sidebar-is-open');
+    };
+  }, [isMobileSidebarOpen]);
+
   if (!token) return <Navigate replace to="/login" />;
 
   const overview = <>
@@ -913,42 +1016,62 @@ export default function Dashboard() {
       <MetricCard caption={apiData.usingPlaceholder ? 'Connect the admin API to view totals' : `${totalLoads} submitted truckload${totalLoads === 1 ? '' : 's'}`} icon="truck" label="Recorded tonnage" tone="teal" trend={tonnageSeries} value={apiData.usingPlaceholder ? '—' : formatTonnes(totalTonnage)} />
       <MetricCard caption="Reports awaiting review" icon="alert" label="Pending complaints" tone="amber" value={String(complaintRows.filter((item) => item.status === 'pending').length)} />
     </div>
-    <Card className="chart-card">
-      <div className="card-heading-row">
-        <div>
-          <h3>Tonnage trend</h3>
-          <p>Volume collected per day · {formatTrendRange(tonnageSeries)}</p>
-        </div>
-        <TonnageExportPopover 
-          onExport={async (start, end) => {
-            const token = sessionStorage.getItem('resiklean_admin_token');
-            if (!token) return;
-            try {
-              const res = await fetch(`${API_URL.replace(/\/$/, '')}/admin/reports/tonnage-trend/pdf?start=${start}&end=${end}`, {
-                headers: { Authorization: `Bearer ${token}` }
-              });
-              if (!res.ok) {
-                const errorData = await res.json().catch(() => null);
-                throw new Error(errorData?.error || 'Failed to generate PDF');
+    <div className="tonnage-overview-grid">
+      <Card className="chart-card">
+        <div className="card-heading-row">
+          <div>
+            <h3>Tonnage trend</h3>
+            <p>Volume collected per day · {formatTrendRange(tonnageSeries)}</p>
+          </div>
+          <TonnageExportPopover 
+            onExport={async (start, end) => {
+              const token = sessionStorage.getItem('resiklean_admin_token');
+              if (!token) return;
+              try {
+                const res = await fetch(`${API_URL.replace(/\/$/, '')}/admin/reports/tonnage-trend/pdf?start=${start}&end=${end}`, {
+                  headers: { Authorization: `Bearer ${token}` }
+                });
+                if (!res.ok) {
+                  const errorData = await res.json().catch(() => null);
+                  throw new Error(errorData?.error || 'Failed to generate PDF');
+                }
+                const blob = await res.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `Tonnage-Trend-Report-${start}-to-${end}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(url);
+              } catch (err) {
+                alert('Error exporting PDF: ' + err.message);
+                throw err;
               }
-              const blob = await res.blob();
-              const url = window.URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = `Tonnage-Trend-Report-${start}-to-${end}.pdf`;
-              document.body.appendChild(a);
-              a.click();
-              a.remove();
-              window.URL.revokeObjectURL(url);
-            } catch (err) {
-              alert('Error exporting PDF: ' + err.message);
-              throw err;
-            }
-          }} 
-        />
+            }} 
+          />
+        </div>
+        <TonnageChart series={tonnageSeries} />
+      </Card>
+      <div className="tonnage-summary-grid">
+        <Card className="tonnage-summary-card">
+          <div className="tonnage-summary-icon"><Icon name="chart" size={18} /></div>
+          <div>
+            <p>Daily average</p>
+            <strong>{tonnageSeries.length ? formatTonnes(tonnageStats.dailyAverage) : '—'}</strong>
+            <span>Across the last 7 days</span>
+          </div>
+        </Card>
+        <Card className="tonnage-summary-card peak-day-card">
+          <div className="tonnage-summary-icon"><Icon name="truck" size={18} /></div>
+          <div>
+            <p>Peak day</p>
+            <strong>{tonnageSeries.length ? formatTonnes(tonnageStats.peakDay) : '—'}</strong>
+            <span>{tonnageStats.peakDate ? tonnageStats.peakDate.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' }) : 'No collection data yet'}</span>
+          </div>
+        </Card>
       </div>
-      <TonnageChart series={tonnageSeries} />
-    </Card>
+    </div>
     <Card className="overview-routes"><div className="card-heading-row overview-route-heading"><div><p className="eyebrow">Collection tracking</p><h3>Recent route activity</h3><p>Street-level collection status</p></div><button className="text-button" onClick={() => selectPage('routes')}>View route history <Icon name="arrow" size={15} /></button></div>{routeRows.slice(0, 4).map((route) => <RoutePreview key={route.id} route={route} />)}<button className="view-more" onClick={() => selectPage('routes')}>View all {routeRows.length} entries <Icon name="arrow" size={15} /></button></Card>
   </>;
 
@@ -995,10 +1118,11 @@ export default function Dashboard() {
   const assignments = <><PageHeader description="Assign collection routes and registered trucks to each collector" title="Collector assignments" /><RouteAssignmentPanel token={token} /></>;
 
   const trucks = <><PageHeader description="Register fleet vehicles and review their dimensions" title="Truck management" /><TruckManagementPanel token={token} /></>;
+  const manageRoutes = <><PageHeader description="Trace collection paths and maintain ordered collection stops." title="Route management" /><RouteManagementPanel token={token} /></>;
 
   const accountPage = <Card className="table-card accounts-table-card"><div className="table-scroll"><table className="standard-data-table admin-data-table"><thead><tr><th>Name</th><th>Role</th><th>Assigned area</th><th>Contact</th><th>Email</th><th className="accounts-action-header"><Button className="primary-button accounts-action-button" onPress={() => { setSubmissionState({ loading: false, error: '', message: '' }); setShowAccountForm(true); }}><Icon name="plus" size={16} />Add account</Button></th></tr></thead><tbody>{accountRows.map((account) => <tr key={account.id}><td><AvatarName name={account.name} photoUrl={account.profilePhotoUrl} /></td><td><Chip className={`role-chip role-${account.role}`} size="sm">{titleCase(account.role)}</Chip></td><td>{account.area}</td><td>{account.contact}</td><td>{account.email}</td><td aria-hidden="true" /></tr>)}</tbody></table></div></Card>;
 
-  const pageContent = { overview, routes: routeHistory, complaints: complaintInbox, activity, assignments, accounts: accountPage, trucks }[activePage];
+  const pageContent = { overview, routes: routeHistory, complaints: complaintInbox, activity, 'manage-routes': manageRoutes, assignments, accounts: accountPage, trucks }[activePage];
   return <main className="admin-shell"><aside className="admin-sidebar"><div className="brand"><img alt="ResiKlean logo" className="brand-logo" src="/swmo-resiklean-logo.svg" /></div><nav>{NAV_ITEMS.map((item) => <button aria-current={activePage === item.id ? 'page' : undefined} className={activePage === item.id ? 'nav-link active' : 'nav-link'} key={item.id} onClick={() => selectPage(item.id)}><Icon name={item.icon} />{item.label}</button>)}</nav><button className="signout-button" onClick={() => setShowLogoutConfirm(true)}><Icon name="logout" />Sign out</button></aside><section className="admin-workspace"><header className="topbar"><div className="topbar-actions"><button aria-label="Notifications" className="notification-button"><Icon name="bell" size={19} /><i /></button><div className="topbar-avatar">{initials(storedUser.name || 'Admin')}</div><strong className="admin-name">{storedUser.name || 'Admin'}</strong></div></header><section className="dashboard-content">{apiData.usingPlaceholder ? <p className="data-note">Live dashboard data is unavailable. Sample records are shown for the tables; the tonnage chart intentionally stays empty.</p> : null}{pageContent}</section></section>{showAccountForm ? <div className="modal-layer" role="presentation"><div aria-modal="true" className="account-modal" role="dialog"><form onSubmit={createAccount}><div className="modal-header"><div><p className="eyebrow">Account management</p><h2>Add new account</h2></div><button aria-label="Close account form" onClick={() => setShowAccountForm(false)} type="button">×</button></div><div className="modal-body"><label>Full name<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. Juan dela Cruz" required value={newAccount.name} /></label><label>Contact number<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, contact: event.target.value }))} placeholder="09XXXXXXXXX" value={newAccount.contact} /></label><label>Email address<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, email: event.target.value }))} placeholder="user@nagacity.gov.ph" value={newAccount.email} /></label><label>Temporary password<Input fullWidth minLength="6" onChange={(event) => setNewAccount((current) => ({ ...current, password: event.target.value }))} placeholder="At least 6 characters" required type="password" value={newAccount.password} /></label><label>Role<select onChange={(event) => setNewAccount((current) => ({ ...current, role: event.target.value }))} value={newAccount.role}><option value="collector">Collector</option><option value="staff">Staff</option></select></label><p className="field-note">Contact number is dashboard-only until the backend stores it.</p>{submissionState.error ? <p className="feedback error-feedback">{submissionState.error}</p> : null}</div><div className="modal-footer"><Button className="outline-button" onPress={() => setShowAccountForm(false)} type="button" variant="secondary">Cancel</Button><Button className="primary-button" isDisabled={submissionState.loading} type="submit">{submissionState.loading ? 'Creating…' : 'Create account'}</Button></div></form></div></div> : null}{selectedActivity ? <div className="modal-layer" onClick={() => setSelectedActivity(null)} role="presentation"><div aria-modal="true" className="activity-detail-modal" onClick={(event) => event.stopPropagation()} role="dialog"><div className="modal-header"><div><p className="eyebrow">Landfill operations</p><h2>Truckload submission</h2></div><button aria-label="Close truckload details" onClick={() => setSelectedActivity(null)} type="button">×</button></div><div className="activity-detail-body">{selectedActivity.photoUrl ? <img alt={`Audit photo for ${selectedActivity.area}`} className="activity-detail-photo" src={selectedActivity.photoUrl} /> : <div className="activity-photo-empty"><Icon name="image" size={28} /><p>No audit photo available</p></div>}<div className="activity-detail-grid"><div><span>Area</span><strong>{selectedActivity.area}</strong></div><div><span>Staff</span><strong>{selectedActivity.driver}</strong></div><div><span>Truck</span><strong>{selectedActivity.truckPlate}</strong></div><div><span>Submitted</span><strong>{selectedActivity.date} · {selectedActivity.time}</strong></div><div><span>Measurements</span><strong>{selectedActivity.length} m × {selectedActivity.width} m × {selectedActivity.height} m</strong></div><div><span>Slope</span><strong>{selectedActivity.slope}</strong></div><div><span>Estimated tonnage</span><strong className="tonnage-cell">{selectedActivity.tonnage}</strong></div></div>{selectedActivity.notes ? <div className="activity-detail-notes"><span>Notes</span><p>{selectedActivity.notes}</p></div> : null}</div><div className="modal-footer"><Button className="outline-button" onPress={() => setSelectedActivity(null)} type="button" variant="secondary">Close</Button></div></div></div> : null}{isRouteHistoryDetailVisible ? (() => {
     const d = selectedRouteHistory;
     const placeholderData = !d ? {

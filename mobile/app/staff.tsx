@@ -6,6 +6,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Button, Card } from 'heroui-native';
 import { useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Image,
   Modal,
   Pressable,
@@ -204,11 +205,17 @@ function mapTruckLoad(load: TruckLoadResponse, staffName = 'You', fallbackArea =
   };
 }
 
-async function getAssetSize(asset: ImagePicker.ImagePickerAsset) {
-  if (typeof asset.fileSize === 'number') return asset.fileSize;
-  const response = await fetch(asset.uri);
-  const blob = await response.blob();
-  return blob.size;
+async function getAssetSize(asset: ImagePicker.ImagePickerAsset): Promise<number> {
+  if (typeof asset.fileSize === 'number' && asset.fileSize > 0) return asset.fileSize;
+  try {
+    const response = await fetch(asset.uri);
+    const blob = await response.blob();
+    if (blob.size > 0) return blob.size;
+  } catch {
+    // On some Android builds, fetching a local file:// URI is blocked.
+    // Fall through and return 0 so the upload can still proceed.
+  }
+  return 0;
 }
 
 async function prepareAuditPhoto(asset: ImagePicker.ImagePickerAsset): Promise<AuditPhoto> {
@@ -258,7 +265,7 @@ function auditPhotoMetadata(photo: AuditPhoto) {
   });
 }
 
-function AuditPhotoField({ disabled, label, onPress, photo }: { disabled: boolean; label: string; onPress: () => void; photo: AuditPhoto | null }) {
+function AuditPhotoField({ disabled, label, loading, onPress, photo }: { disabled: boolean; label: string; loading?: boolean; onPress: () => void; photo: AuditPhoto | null }) {
   return (
     <View style={styles.photoSlot}>
       <Text style={styles.label}>{label} photo <Text style={styles.required}>*</Text></Text>
@@ -270,10 +277,14 @@ function AuditPhotoField({ disabled, label, onPress, photo }: { disabled: boolea
         style={[styles.photoField, photo && styles.photoFieldAttached, disabled && styles.photoFieldDisabled]}>
         {photo ? <Image accessibilityLabel={`${label} proof photo attached`} resizeMode="contain" source={{ uri: photo.uri }} style={styles.photoPreview} /> : null}
         <View style={[styles.photoOverlay, photo && styles.photoOverlayAttached]}>
-          <View style={[styles.cameraBadge, photo && styles.cameraBadgeAttached]}>
-            <Feather color={photo ? '#ffffff' : '#07815f'} name={photo ? 'check' : 'camera'} size={21} />
+          <View style={[styles.cameraBadge, photo && styles.cameraBadgeAttached, loading && styles.cameraBadgeLoading]}>
+            {loading
+              ? <ActivityIndicator color="#07815f" size="small" />
+              : <Feather color={photo ? '#ffffff' : '#07815f'} name={photo ? 'check' : 'camera'} size={21} />}
           </View>
-          <Text style={[styles.photoTitle, photo && styles.photoOverlayTitle]}>{photo ? `${label} photo attached` : `Capture ${label} photo`}</Text>
+          <Text style={[styles.photoTitle, photo && styles.photoOverlayTitle]}>
+            {loading ? `Opening camera...` : photo ? `${label} photo attached` : `Capture ${label} photo`}
+          </Text>
           <Text style={[styles.photoCaption, photo && styles.photoCaptionAttached]}>{photo ? `${formatFileSize(photo.size)} · Ready` : 'Original image · 5 MB maximum'}</Text>
         </View>
       </Pressable>
@@ -635,6 +646,15 @@ export default function StaffScreen() {
     return () => { cancelled = true; };
   }, [backPhoto, sidePhoto]);
 
+  // Pre-warm camera permission so the OS dialog never interrupts the camera launch.
+  useEffect(() => {
+    void ImagePicker.getCameraPermissionsAsync().then((status) => {
+      if (status.status === 'undetermined') {
+        void ImagePicker.requestCameraPermissionsAsync();
+      }
+    });
+  }, []);
+
   const totalTonnage = useMemo(() => history.reduce((total, submission) => total + submission.tonnes, 0), [history]);
   const selectedTruck = trucks.find((truck) => truck.plate === truckPlate);
 
@@ -684,7 +704,6 @@ export default function StaffScreen() {
         mediaTypes: ['images'],
         quality: 0.65,
       });
-      setIsOpeningAuditCamera(false);
       if (result.canceled || !result.assets?.[0]?.uri) return;
 
       const photo = await prepareAuditPhoto(result.assets[0]);
@@ -929,14 +948,18 @@ export default function StaffScreen() {
             style={[styles.photoField, sidePhoto && styles.photoFieldAttached, isSubmitting && styles.photoFieldDisabled]}>
             {sidePhoto ? <Image accessibilityLabel="Captured side proof photo" resizeMode="contain" source={{ uri: sidePhoto.uri }} style={styles.photoPreview} /> : null}
             <View style={[styles.photoOverlay, sidePhoto && styles.photoOverlayAttached]}>
-              <View style={[styles.cameraBadge, sidePhoto && styles.cameraBadgeAttached]}>
-                <Feather color={sidePhoto ? '#ffffff' : '#07815f'} name={sidePhoto ? 'check' : 'camera'} size={21} />
+              <View style={[styles.cameraBadge, sidePhoto && styles.cameraBadgeAttached, isOpeningAuditCamera && styles.cameraBadgeLoading]}>
+                {isOpeningAuditCamera
+                  ? <ActivityIndicator color="#07815f" size="small" />
+                  : <Feather color={sidePhoto ? '#ffffff' : '#07815f'} name={sidePhoto ? 'check' : 'camera'} size={21} />}
               </View>
-              <Text style={[styles.photoTitle, sidePhoto && styles.photoOverlayTitle]}>{sidePhoto ? 'Side photo attached' : 'Capture Side photo'}</Text>
+              <Text style={[styles.photoTitle, sidePhoto && styles.photoOverlayTitle]}>
+                {isOpeningAuditCamera ? 'Opening camera...' : sidePhoto ? 'Side photo attached' : 'Capture Side photo'}
+              </Text>
               <Text style={[styles.photoCaption, sidePhoto && styles.photoCaptionAttached]}>{sidePhoto ? `${formatFileSize(sidePhoto.size)} · Ready to upload` : 'JPEG, PNG, or WebP · 5 MB maximum'}</Text>
             </View>
           </Pressable>
-          <AuditPhotoField disabled={isSubmitting || isOpeningAuditCamera} label="Back" onPress={() => captureAuditPhoto('back')} photo={backPhoto} />
+          <AuditPhotoField disabled={isSubmitting || isOpeningAuditCamera} label="Back" loading={isOpeningAuditCamera} onPress={() => captureAuditPhoto('back')} photo={backPhoto} />
         </View>
 
         <View style={styles.fieldGroup}>
@@ -1238,6 +1261,7 @@ const styles = StyleSheet.create({
   photoOverlayAttached: { backgroundColor: 'rgba(10, 28, 19, 0.52)', bottom: 0, justifyContent: 'center', left: 0, position: 'absolute', right: 0, top: 0 },
   cameraBadge: { alignItems: 'center', backgroundColor: '#e7f5ef', borderRadius: 18, height: 36, justifyContent: 'center', width: 36 },
   cameraBadgeAttached: { backgroundColor: '#07815f' },
+  cameraBadgeLoading: { backgroundColor: '#d4ede3' },
   photoTitle: { color: '#33463b', fontSize: 13, fontWeight: '800', marginTop: 8 },
   photoOverlayTitle: { color: '#ffffff' },
   photoCaption: { color: '#d95a65', fontSize: 11, fontWeight: '700', marginTop: 4 },

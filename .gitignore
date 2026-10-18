@@ -74,6 +74,7 @@ Thumbs.db
 # Editor
 .vscode/
 .idea/
+
 *.swp
 
 # AI tools

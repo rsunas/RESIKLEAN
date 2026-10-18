@@ -1,4 +1,5 @@
 import { Feather, MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-icons';
+import { Image as ExpoImage } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { StatusBar } from 'expo-status-bar';
@@ -52,6 +53,8 @@ type ApiReport = {
     fileSize?: number;
     mimeType?: string;
   };
+  aiVerified?: boolean;
+  aiConfidence?: number;
   bagCount?: number | null;
   detectedBagCount?: number | null;
   aiResult?: {
@@ -111,6 +114,12 @@ function formatDate(value: string | Date | null | undefined, options: Intl.DateT
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return 'Date unavailable';
   return date.toLocaleString('en-PH', options);
+}
+
+function formatFileSize(bytes?: number | null) {
+  if (!bytes || bytes <= 0) return '0 KB';
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function dateKey(value: string | Date) {
@@ -580,10 +589,19 @@ export default function ResidentScreen() {
   const [reportError, setReportError] = useState('');
   const [selectedPhoto, setSelectedPhoto] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [photoMetadata, setPhotoMetadata] = useState<ApiReport['photoMetadata'] | null>(null);
+  const [aiDetection, setAiDetection] = useState<{
+    status: 'idle' | 'scanning' | 'done' | 'error';
+    verified?: boolean;
+    confidence?: number;
+    detectedBagCount?: number;
+    predictions?: Array<{ confidence: number; class?: string }>;
+    message?: string;
+  }>({ status: 'idle' });
   const [reportSubject, setReportSubject] = useState('');
   const [description, setDescription] = useState('');
   const [isCreatingReport, setIsCreatingReport] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCapturingPhoto, setIsCapturingPhoto] = useState(false);
   const [reportMessage, setReportMessage] = useState('');
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [profileName, setProfileName] = useState('');
@@ -675,6 +693,15 @@ export default function ResidentScreen() {
     if (session?.token) void loadReports(session.token);
     if (session?.token) void loadSchedule(session.token, session.user.location || session.user.barangay);
   }, [loadReports, loadSchedule, session?.token, session?.user.barangay, session?.user.location]);
+
+  // Pre-warm camera permission so the OS dialog never interrupts the camera launch.
+  useEffect(() => {
+    void ImagePicker.getCameraPermissionsAsync().then((result) => {
+      if (result.status === 'undetermined') {
+        void ImagePicker.requestCameraPermissionsAsync();
+      }
+    });
+  }, []);
 
   useEffect(() => {
     const reportId = selectedReport?._id;
@@ -837,7 +864,7 @@ export default function ResidentScreen() {
 
             <ScrollView contentContainerStyle={styles.reportDetailsContent} showsVerticalScrollIndicator={false}>
               {selectedReport.photoUrl ? (
-                <Image accessibilityLabel="Submitted waste photo" resizeMode="cover" source={{ uri: selectedReport.photoUrl }} style={styles.reportDetailsPhoto} />
+                <ExpoImage accessibilityLabel="Submitted waste photo" contentFit="cover" source={{ uri: selectedReport.photoUrl }} style={styles.reportDetailsPhoto} transition={200} />
               ) : (
                 <View style={styles.reportNoPhotoCard}>
                   <MaterialCommunityIcons color="#07815f" name="image-off-outline" size={28} />
@@ -851,6 +878,34 @@ export default function ResidentScreen() {
               </View>
 
               <ReportStatusTracker status={selectedReport.status} />
+
+              {/* AI Verification Banner */}
+              <View style={selectedReport.aiVerified ? styles.aiVerifiedBanner : styles.aiUnverifiedBanner}>
+                <View style={selectedReport.aiVerified ? styles.aiBadgeIconSuccess : styles.aiBadgeIconWarning}>
+                  <Feather color={selectedReport.aiVerified ? '#07815f' : '#8d5a1b'} name={selectedReport.aiVerified ? 'check-circle' : 'info'} size={15} />
+                </View>
+                <View style={styles.aiTextColumn}>
+                  <View style={styles.aiTitleRow}>
+                    <Text style={selectedReport.aiVerified ? styles.aiVerifiedTitle : styles.aiUnverifiedTitle}>
+                      {selectedReport.aiVerified
+                        ? 'AI Verified: Waste Confirmed'
+                        : 'AI Status: Manual Review'}
+                    </Text>
+                    {selectedReport.aiVerified && typeof selectedReport.aiConfidence === 'number' ? (
+                      <View style={styles.aiConfidenceBadge}>
+                        <Text style={styles.aiConfidenceText}>{Math.round(selectedReport.aiConfidence * 100)}% Match</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  <Text style={selectedReport.aiVerified ? styles.aiVerifiedSubtext : styles.aiUnverifiedSubtext}>
+                    {selectedReport.detectedBagCount
+                      ? `${selectedReport.detectedBagCount} waste bag(s) identified by Roboflow model`
+                      : selectedReport.aiVerified
+                      ? 'Waste detected in submitted photo'
+                      : 'Not automatically verified · Under SWMO staff inspection'}
+                  </Text>
+                </View>
+              </View>
 
               <Text style={styles.reportDetailsSectionTitle}>REPORT INFORMATION</Text>
               <View style={styles.reportDetailsInfoCard}>
@@ -878,7 +933,12 @@ export default function ResidentScreen() {
               {selectedReport.photoMetadata ? (
                 <View style={styles.reportDescriptionCard}>
                   <Text style={styles.reportDetailLabel}>Photo metadata</Text>
-                  <Text style={styles.reportDescriptionDetail}>{selectedReport.photoMetadata.capturedAt ? `Captured ${formatDate(selectedReport.photoMetadata.capturedAt, { dateStyle: 'medium', timeStyle: 'short' })}` : 'Capture time unavailable'}{selectedReport.photoMetadata.latitude != null && selectedReport.photoMetadata.longitude != null ? ` · GPS ${selectedReport.photoMetadata.latitude.toFixed(5)}, ${selectedReport.photoMetadata.longitude.toFixed(5)}` : ''}{selectedReport.photoMetadata.width && selectedReport.photoMetadata.height ? ` · ${selectedReport.photoMetadata.width} × ${selectedReport.photoMetadata.height}px` : ''}</Text>
+                  <Text style={styles.reportDescriptionDetail}>
+                    {selectedReport.photoMetadata.capturedAt ? `Captured ${formatDate(selectedReport.photoMetadata.capturedAt, { dateStyle: 'medium', timeStyle: 'short' })}` : 'Capture time unavailable'}
+                    {selectedReport.photoMetadata.latitude != null && selectedReport.photoMetadata.longitude != null ? ` · GPS ${selectedReport.photoMetadata.latitude.toFixed(5)}, ${selectedReport.photoMetadata.longitude.toFixed(5)}` : ''}
+                    {selectedReport.photoMetadata.width && selectedReport.photoMetadata.height ? ` · ${selectedReport.photoMetadata.width} × ${selectedReport.photoMetadata.height}px` : ''}
+                    {selectedReport.photoMetadata.fileSize ? ` · ${formatFileSize(selectedReport.photoMetadata.fileSize)}` : ''}
+                  </Text>
                 </View>
               ) : null}
 
@@ -901,30 +961,274 @@ export default function ResidentScreen() {
     );
   };
 
-  const capturePhoto = async () => {
-    setReportMessage('');
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
-    if (!permission.granted) {
-      Alert.alert('Camera permission needed', 'Allow camera access to attach a photo of the uncollected waste.');
+  const runAiScan = async (asset: ImagePicker.ImagePickerAsset) => {
+    if (!API_URL || !session?.token) {
+      setAiDetection({ status: 'idle' });
       return;
     }
+    setAiDetection({ status: 'scanning' });
+    try {
+      const formData = new FormData();
+      const filename = asset.fileName || `waste-${Date.now()}.jpg`;
+      const mimeType = asset.mimeType || 'image/jpeg';
+      formData.append('photo', {
+        uri: asset.uri,
+        name: filename,
+        type: mimeType,
+      } as unknown as Blob);
 
-    const result = await ImagePicker.launchCameraAsync({ allowsEditing: true, aspect: [4, 3], mediaTypes: 'images', quality: 0.8 });
-    if (!result.canceled) {
-      const asset = result.assets[0];
-      let coordinates: { latitude: number; longitude: number; accuracy?: number } | undefined;
-      try {
-        const locationPermission = await Location.requestForegroundPermissionsAsync();
-        if (locationPermission.granted) {
-          const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-          coordinates = { latitude: position.coords.latitude, longitude: position.coords.longitude, accuracy: position.coords.accuracy || undefined };
-        }
-      } catch {
-        // Photo submission still works when location permission is denied or unavailable.
+      const response = await fetch(`${API_URL}/resident/reports/verify-photo`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+        },
+        body: formData,
+      });
+      const json = await response.json();
+      if (response.ok && json.success && json.data) {
+        setAiDetection({
+          status: 'done',
+          verified: Boolean(json.data.verified),
+          confidence: json.data.confidence,
+          detectedBagCount: json.data.detectedBagCount,
+          predictions: json.data.predictions,
+        });
+      } else {
+        setAiDetection({
+          status: 'error',
+          message: 'AI verification will be confirmed upon sending the report.',
+        });
       }
-      setSelectedPhoto(asset);
-      setPhotoMetadata({ capturedAt: new Date().toISOString(), ...coordinates, width: asset.width, height: asset.height, fileSize: asset.fileSize, mimeType: asset.mimeType || 'image/jpeg' });
+    } catch {
+      setAiDetection({
+        status: 'error',
+        message: 'AI verification will run when you send the complaint.',
+      });
     }
+  };
+
+  const capturePhoto = async () => {
+    if (isCapturingPhoto) return;
+    setReportMessage('');
+    try {
+      const permission = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Camera permission needed', 'Allow camera access to attach a photo of the uncollected waste.');
+        return;
+      }
+
+      setIsCapturingPhoto(true);
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: false,
+        cameraType: ImagePicker.CameraType.back,
+        mediaTypes: ['images'],
+        quality: 0.8,
+      });
+      if (!result.canceled) {
+        const asset = result.assets[0];
+        let coordinates: { latitude: number; longitude: number; accuracy?: number } | undefined;
+        try {
+          const locationPermission = await Location.requestForegroundPermissionsAsync();
+          if (locationPermission.granted) {
+            const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+            coordinates = { latitude: position.coords.latitude, longitude: position.coords.longitude, accuracy: position.coords.accuracy || undefined };
+          }
+        } catch {
+          // Photo submission still works when location permission is denied or unavailable.
+        }
+        setSelectedPhoto(asset);
+        setPhotoMetadata({ capturedAt: new Date().toISOString(), ...coordinates, width: asset.width, height: asset.height, fileSize: asset.fileSize, mimeType: asset.mimeType || 'image/jpeg' });
+        void runAiScan(asset);
+      }
+    } catch (error) {
+      setReportMessage(error instanceof Error ? error.message : 'Unable to open the camera. Please try again.');
+    } finally {
+      setIsCapturingPhoto(false);
+    }
+  };
+
+  const renderPhotoProofSection = () => {
+    if (!selectedPhoto) {
+      return (
+        <Pressable
+          accessibilityRole="button"
+          disabled={isCapturingPhoto}
+          onPress={capturePhoto}
+          style={[styles.photoEmptyPicker, isCapturingPhoto && styles.disabledButton]}
+        >
+          <View style={styles.photoEmptyPickerIcon}>
+            {isCapturingPhoto ? (
+              <ActivityIndicator color="#07815f" size="small" />
+            ) : (
+              <Feather color="#07815f" name="camera" size={22} />
+            )}
+          </View>
+          <View style={styles.photoEmptyPickerCopy}>
+            <Text style={styles.photoEmptyPickerTitle}>
+              {isCapturingPhoto ? 'Opening camera...' : 'Take photo proof'}
+            </Text>
+            <Text style={styles.photoEmptyPickerSubtitle}>
+              Required · helps SWMO verify and locate uncollected waste.
+            </Text>
+          </View>
+          <Feather color="#07815f" name="chevron-right" size={18} />
+        </Pressable>
+      );
+    }
+
+    return (
+      <View style={styles.photoPreviewCard}>
+        {/* Main Photo Container */}
+        <View style={styles.photoImageContainer}>
+          <ExpoImage
+            accessibilityLabel="Captured waste proof photo"
+            contentFit="cover"
+            source={{ uri: selectedPhoto.uri }}
+            style={styles.photoPreviewImage}
+            transition={200}
+          />
+          {/* Top Badge */}
+          <View style={styles.photoTopBadge}>
+            <Feather color="#ffffff" name="check-circle" size={12} />
+            <Text style={styles.photoTopBadgeText}>Photo attached</Text>
+          </View>
+          {/* Retake Button Floating on Photo */}
+          <Pressable
+            accessibilityRole="button"
+            disabled={isCapturingPhoto}
+            onPress={capturePhoto}
+            style={styles.retakeFloatingButton}
+          >
+            {isCapturingPhoto ? (
+              <ActivityIndicator color="#ffffff" size="small" />
+            ) : (
+              <>
+                <Feather color="#ffffff" name="camera" size={13} />
+                <Text style={styles.retakeFloatingText}>Retake</Text>
+              </>
+            )}
+          </Pressable>
+        </View>
+
+        {/* AI Waste Detection Result Card */}
+        <View style={styles.aiResultContainer}>
+          {aiDetection.status === 'scanning' ? (
+            <View style={styles.aiScanningBanner}>
+              <ActivityIndicator color="#07815f" size="small" />
+              <View style={styles.aiTextColumn}>
+                <Text style={styles.aiScanningTitle}>Analyzing with Detection AI...</Text>
+                <Text style={styles.aiScanningSubtext}>Scanning image for waste bags via Roboflow</Text>
+              </View>
+            </View>
+          ) : aiDetection.status === 'done' && aiDetection.verified ? (
+            <View style={styles.aiVerifiedBanner}>
+              <View style={styles.aiBadgeIconSuccess}>
+                <Feather color="#07815f" name="check" size={15} />
+              </View>
+              <View style={styles.aiTextColumn}>
+                <View style={styles.aiTitleRow}>
+                  <Text style={styles.aiVerifiedTitle}>Waste Detected by AI</Text>
+                  <View style={styles.aiConfidenceBadge}>
+                    <Text style={styles.aiConfidenceText}>{Math.round((aiDetection.confidence || 0) * 100)}% Match</Text>
+                  </View>
+                </View>
+                <Text style={styles.aiVerifiedSubtext}>
+                  {aiDetection.detectedBagCount
+                    ? `${aiDetection.detectedBagCount} waste bag(s) identified in photo`
+                    : 'Uncollected waste confirmed'}
+                </Text>
+              </View>
+            </View>
+          ) : aiDetection.status === 'done' && !aiDetection.verified ? (
+            <View style={styles.aiUnverifiedBanner}>
+              <View style={styles.aiBadgeIconWarning}>
+                <Feather color="#8d5a1b" name="alert-circle" size={15} />
+              </View>
+              <View style={styles.aiTextColumn}>
+                <Text style={styles.aiUnverifiedTitle}>AI: No waste bags confirmed</Text>
+                <Text style={styles.aiUnverifiedSubtext}>Photo attached · SWMO staff will manually review this report</Text>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.aiPendingBanner}>
+              <Feather color="#527062" name="cpu" size={14} />
+              <Text style={styles.aiPendingText}>AI verification will confirm waste on submission</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Photo Metadata Grid */}
+        <View style={styles.metadataSection}>
+          <View style={styles.metadataHeader}>
+            <Feather color="#61746a" name="info" size={12} />
+            <Text style={styles.metadataSectionTitle}>PHOTO METADATA</Text>
+          </View>
+          <View style={styles.metadataGrid}>
+            <View style={styles.metadataItem}>
+              <View style={styles.metadataIconWrap}>
+                <Feather color="#07815f" name="map-pin" size={13} />
+              </View>
+              <View style={styles.metadataTextWrap}>
+                <Text style={styles.metadataLabel}>LOCATION</Text>
+                <Text numberOfLines={1} style={styles.metadataValue}>
+                  {photoMetadata?.latitude != null && photoMetadata?.longitude != null
+                    ? `${photoMetadata.latitude.toFixed(5)}, ${photoMetadata.longitude.toFixed(5)}`
+                    : location || 'Naga City'}
+                </Text>
+                <Text numberOfLines={1} style={styles.metadataCaption}>
+                  {photoMetadata?.accuracy != null ? `±${Math.round(photoMetadata.accuracy)}m accuracy` : 'Device GPS'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.metadataItem}>
+              <View style={styles.metadataIconWrap}>
+                <Feather color="#07815f" name="clock" size={13} />
+              </View>
+              <View style={styles.metadataTextWrap}>
+                <Text style={styles.metadataLabel}>TIMESTAMP</Text>
+                <Text numberOfLines={1} style={styles.metadataValue}>
+                  {formatDate(photoMetadata?.capturedAt || new Date(), { hour: 'numeric', minute: '2-digit', hour12: true })}
+                </Text>
+                <Text numberOfLines={1} style={styles.metadataCaption}>
+                  {formatDate(photoMetadata?.capturedAt || new Date(), { month: 'short', day: 'numeric', year: 'numeric' })}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.metadataItem}>
+              <View style={styles.metadataIconWrap}>
+                <Feather color="#07815f" name="maximize" size={13} />
+              </View>
+              <View style={styles.metadataTextWrap}>
+                <Text style={styles.metadataLabel}>RESOLUTION</Text>
+                <Text numberOfLines={1} style={styles.metadataValue}>
+                  {selectedPhoto.width && selectedPhoto.height
+                    ? `${selectedPhoto.width} × ${selectedPhoto.height} px`
+                    : 'Full resolution'}
+                </Text>
+                <Text numberOfLines={1} style={styles.metadataCaption}>
+                  {(selectedPhoto.mimeType || 'image/jpeg').replace('image/', '').toUpperCase()} format
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.metadataItem}>
+              <View style={styles.metadataIconWrap}>
+                <Feather color="#07815f" name="hard-drive" size={13} />
+              </View>
+              <View style={styles.metadataTextWrap}>
+                <Text style={styles.metadataLabel}>FILE SIZE</Text>
+                <Text numberOfLines={1} style={styles.metadataValue}>
+                  {formatFileSize(selectedPhoto.fileSize || 0)}
+                </Text>
+                <Text numberOfLines={1} style={styles.metadataCaption}>Original photo</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+      </View>
+    );
   };
 
   const submitReport = async () => {
@@ -985,6 +1289,7 @@ export default function ResidentScreen() {
 
       setSelectedPhoto(null);
       setPhotoMetadata(null);
+      setAiDetection({ status: 'idle' });
       setReportSubject('');
       setDescription('');
       setIsCreatingReport(false);
@@ -1059,6 +1364,7 @@ export default function ResidentScreen() {
     setPastReports([]);
     setSelectedPhoto(null);
     setPhotoMetadata(null);
+    setAiDetection({ status: 'idle' });
     setReportSubject('');
     setDescription('');
     setReportMessage('');
@@ -1157,15 +1463,11 @@ export default function ResidentScreen() {
           </View>
         </View>
 
-        <Pressable accessibilityRole="button" onPress={capturePhoto} style={[styles.reportAttachment, !selectedPhoto && styles.reportAttachmentEmpty]}>
-          {selectedPhoto ? <Image source={{ uri: selectedPhoto.uri }} style={styles.reportAttachmentImage} /> : <><View style={styles.reportAttachmentIcon}><Feather color="#07815f" name="camera" size={18} /></View><View style={styles.reportAttachmentCopy}><Text style={styles.reportAttachmentTitle}>Add a photo</Text><Text style={styles.reportAttachmentSubtitle}>A photo helps verify your report.</Text></View><Feather color="#8a9b92" name="plus" size={18} /></>}
-          {selectedPhoto ? <View style={styles.reportAttachmentOverlay}><Feather color="#ffffff" name="check-circle" size={15} /><Text style={styles.reportAttachmentOverlayText}>Photo attached · Tap to retake</Text></View> : null}
-        </Pressable>
+        {renderPhotoProofSection()}
 
         <TextInput multiline onChangeText={setDescription} placeholder="What happened? Write a message..." placeholderTextColor="#9aa69f" style={styles.reportChatDraftInput} value={description} />
-        {selectedPhoto ? <View style={styles.photoMetadataHint}><Feather color="#07815f" name="info" size={14} /><Text style={styles.photoMetadataHintText}>Capture time, location, size, and file type will be included.</Text></View> : null}
         {reportMessage ? <Text accessibilityRole="alert" style={reportMessage.includes('submitted') ? styles.successMessage : styles.errorMessage}>{reportMessage}</Text> : null}
-        <View style={styles.reportChatComposerActions}><Pressable onPress={capturePhoto} style={styles.retakeButton}><Feather color="#07815f" name="camera" size={15} /><Text style={styles.retakeText}>{selectedPhoto ? 'Retake photo' : 'Take photo'}</Text></Pressable><Pressable disabled={isSubmitting} onPress={submitReport} style={[styles.submitButton, isSubmitting && styles.disabledButton]}>{isSubmitting ? <ActivityIndicator color="#ffffff" /> : <><Feather color="#ffffff" name="send" size={15} /><Text style={styles.submitButtonText}>Send report</Text></>}</Pressable></View>
+        <View style={styles.reportChatComposerActions}><Pressable disabled={isCapturingPhoto} onPress={capturePhoto} style={[styles.retakeButton, isCapturingPhoto && styles.disabledButton]}>{isCapturingPhoto ? <ActivityIndicator color="#07815f" size="small" /> : <Feather color="#07815f" name="camera" size={15} />}<Text style={styles.retakeText}>{isCapturingPhoto ? 'Opening camera...' : selectedPhoto ? 'Retake photo' : 'Take photo'}</Text></Pressable><Pressable disabled={isSubmitting} onPress={submitReport} style={[styles.submitButton, isSubmitting && styles.disabledButton]}>{isSubmitting ? <ActivityIndicator color="#ffffff" /> : <><Feather color="#ffffff" name="send" size={15} /><Text style={styles.submitButtonText}>Send report</Text></>}</Pressable></View>
       </Card>
 
       <Card style={styles.card}>
@@ -1180,7 +1482,7 @@ export default function ResidentScreen() {
   const reportScreen = isCreatingReport ? (
     <View style={styles.complaintsPage}>
       <View style={styles.newComplaintHeader}>
-        <Pressable accessibilityLabel="Back to complaints" accessibilityRole="button" onPress={() => { setIsCreatingReport(false); setReportMessage(''); }} style={styles.newComplaintBack}>
+        <Pressable accessibilityLabel="Back to complaints" accessibilityRole="button" onPress={() => { setIsCreatingReport(false); setReportMessage(''); setAiDetection({ status: 'idle' }); }} style={styles.newComplaintBack}>
           <Feather color="#07815f" name="chevron-left" size={23} />
         </Pressable>
         <View style={styles.newComplaintHeaderText}>
@@ -1194,11 +1496,7 @@ export default function ResidentScreen() {
         <Text style={styles.fieldLabel}>MESSAGE</Text>
         <TextInput multiline onChangeText={setDescription} placeholder="Describe the issue — street, number of bags, how long it has been there..." placeholderTextColor="#9aa69f" style={[styles.newComplaintInput, styles.newComplaintMessageInput]} value={description} />
         <Text style={styles.fieldLabel}>PHOTO PROOF</Text>
-        <Pressable accessibilityRole="button" onPress={capturePhoto} style={[styles.reportAttachment, !selectedPhoto && styles.reportAttachmentEmpty]}>
-          {selectedPhoto ? <Image source={{ uri: selectedPhoto.uri }} style={styles.reportAttachmentImage} /> : <><View style={styles.reportAttachmentIcon}><Feather color="#07815f" name="image" size={18} /></View><View style={styles.reportAttachmentCopy}><Text style={styles.reportAttachmentTitle}>Attach photo</Text><Text style={styles.reportAttachmentSubtitle}>Required · helps SWMO verify your report.</Text></View><Feather color="#8a9b92" name="plus" size={18} /></>}
-          {selectedPhoto ? <View style={styles.reportAttachmentOverlay}><Feather color="#ffffff" name="check-circle" size={15} /><Text style={styles.reportAttachmentOverlayText}>Photo attached · Tap to retake</Text></View> : null}
-        </Pressable>
-        {selectedPhoto ? <View style={styles.photoMetadataHint}><Feather color="#07815f" name="info" size={14} /><Text style={styles.photoMetadataHintText}>Capture time, location, size, and file type will be included.</Text></View> : null}
+        {renderPhotoProofSection()}
         {reportMessage ? <Text accessibilityRole="alert" style={reportMessage.startsWith('Complaint sent') ? styles.successMessage : styles.errorMessage}>{reportMessage}</Text> : null}
         <Pressable accessibilityRole="button" disabled={isSubmitting} onPress={submitReport} style={[styles.newComplaintSendButton, isSubmitting && styles.disabledButton]}>
           {isSubmitting ? <ActivityIndicator color="#ffffff" /> : <><Feather color="#ffffff" name="send" size={16} /><Text style={styles.submitButtonText}>Send complaint</Text></>}
@@ -1212,7 +1510,7 @@ export default function ResidentScreen() {
           <Text style={styles.complaintsTitle}>Complaints</Text>
           <Text style={styles.complaintsSubtitle}>Direct line to SWMO Support</Text>
         </View>
-        <Pressable accessibilityLabel="New complaint" accessibilityRole="button" onPress={() => { setReportSubject(''); setDescription(''); setSelectedPhoto(null); setPhotoMetadata(null); setReportMessage(''); setIsCreatingReport(true); }} style={styles.complaintPlusButton}>
+        <Pressable accessibilityLabel="New complaint" accessibilityRole="button" onPress={() => { setReportSubject(''); setDescription(''); setSelectedPhoto(null); setPhotoMetadata(null); setAiDetection({ status: 'idle' }); setReportMessage(''); setIsCreatingReport(true); }} style={styles.complaintPlusButton}>
           <Feather color="#ffffff" name="plus" size={24} />
         </Pressable>
       </View>
@@ -1458,7 +1756,8 @@ const styles = StyleSheet.create({
   fieldLabel: { color: '#61746a', fontSize: 11, fontWeight: '700', marginTop: 12 },
   descriptionInput: { backgroundColor: '#f9fbfa', borderColor: '#dbe5df', borderRadius: 11, borderWidth: 1, color: '#243f31', fontSize: 12, marginTop: 6, minHeight: 55, padding: 10, textAlignVertical: 'top' },
   reportButtonRow: { flexDirection: 'row', gap: 9, marginTop: 11 },
-  retakeButton: { alignItems: 'center', borderColor: '#dce5e0', borderRadius: 12, borderWidth: 1, flex: 1, height: 42, justifyContent: 'center' },
+  retakeButton: { alignItems: 'center', borderColor: '#dce5e0', borderRadius: 12, borderWidth: 1, flex: 1, flexDirection: 'row', gap: 7, height: 42, justifyContent: 'center' },
+  reportAttachmentLoading: { opacity: 0.6 },
   retakeText: { color: '#3c5145', fontSize: 12, fontWeight: '800' },
   submitButton: { alignItems: 'center', backgroundColor: '#07815f', borderRadius: 12, flex: 1.25, height: 42, justifyContent: 'center' },
   disabledButton: { opacity: 0.6 },
@@ -1545,4 +1844,44 @@ const styles = StyleSheet.create({
   navTextActive: { color: '#008c68', fontWeight: '600' },
   navIndicator: { backgroundColor: '#008c68', borderRadius: 3, height: 4, marginTop: 5, width: 5 },
   navIndicatorPlaceholder: { height: 4, marginTop: 5, width: 5 },
+  photoEmptyPicker: { alignItems: 'center', backgroundColor: '#f6fbf8', borderColor: '#bde7d1', borderRadius: 16, borderStyle: 'dashed', borderWidth: 1.5, flexDirection: 'row', marginTop: 10, padding: 14 },
+  photoEmptyPickerIcon: { alignItems: 'center', backgroundColor: '#dff7e9', borderRadius: 22, height: 44, justifyContent: 'center', width: 44 },
+  photoEmptyPickerCopy: { flex: 1, marginLeft: 12 },
+  photoEmptyPickerTitle: { color: '#1a3c2c', fontSize: 14, fontWeight: '800' },
+  photoEmptyPickerSubtitle: { color: '#6e8277', fontSize: 11, lineHeight: 15, marginTop: 3 },
+  photoPreviewCard: { backgroundColor: '#ffffff', borderColor: '#dce6e0', borderRadius: 16, borderWidth: 1, marginTop: 10, overflow: 'hidden', shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 2 },
+  photoImageContainer: { backgroundColor: '#1b2d24', height: 210, position: 'relative', width: '100%' },
+  photoPreviewImage: { height: '100%', width: '100%' },
+  photoTopBadge: { alignItems: 'center', backgroundColor: 'rgba(7, 129, 95, 0.9)', borderRadius: 12, flexDirection: 'row', gap: 5, left: 10, paddingHorizontal: 9, paddingVertical: 5, position: 'absolute', top: 10 },
+  photoTopBadgeText: { color: '#ffffff', fontSize: 11, fontWeight: '700' },
+  retakeFloatingButton: { alignItems: 'center', backgroundColor: 'rgba(20, 38, 29, 0.78)', borderColor: 'rgba(255, 255, 255, 0.35)', borderRadius: 14, borderWidth: 1, flexDirection: 'row', gap: 5, paddingHorizontal: 11, paddingVertical: 6, position: 'absolute', right: 10, top: 10 },
+  retakeFloatingText: { color: '#ffffff', fontSize: 11, fontWeight: '700' },
+  aiResultContainer: { paddingHorizontal: 12, paddingTop: 12 },
+  aiScanningBanner: { alignItems: 'center', backgroundColor: '#f0fcf6', borderColor: '#bde7d1', borderRadius: 12, borderWidth: 1, flexDirection: 'row', gap: 10, padding: 11 },
+  aiScanningTitle: { color: '#07815f', fontSize: 12, fontWeight: '800' },
+  aiScanningSubtext: { color: '#55796a', fontSize: 10, marginTop: 2 },
+  aiVerifiedBanner: { alignItems: 'center', backgroundColor: '#eafaf1', borderColor: '#98dfb9', borderRadius: 12, borderWidth: 1, flexDirection: 'row', gap: 10, padding: 11 },
+  aiBadgeIconSuccess: { alignItems: 'center', backgroundColor: '#c7f4db', borderRadius: 14, height: 28, justifyContent: 'center', width: 28 },
+  aiTextColumn: { flex: 1 },
+  aiTitleRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  aiVerifiedTitle: { color: '#086349', fontSize: 12, fontWeight: '800' },
+  aiConfidenceBadge: { backgroundColor: '#07815f', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 },
+  aiConfidenceText: { color: '#ffffff', fontSize: 9, fontWeight: '800' },
+  aiVerifiedSubtext: { color: '#326a54', fontSize: 11, marginTop: 2 },
+  aiUnverifiedBanner: { alignItems: 'center', backgroundColor: '#fff9ed', borderColor: '#edd7a8', borderRadius: 12, borderWidth: 1, flexDirection: 'row', gap: 10, padding: 11 },
+  aiBadgeIconWarning: { alignItems: 'center', backgroundColor: '#fbe9c5', borderRadius: 14, height: 28, justifyContent: 'center', width: 28 },
+  aiUnverifiedTitle: { color: '#7a5113', fontSize: 12, fontWeight: '800' },
+  aiUnverifiedSubtext: { color: '#7d6a45', fontSize: 10, marginTop: 2 },
+  aiPendingBanner: { alignItems: 'center', backgroundColor: '#f4f7f5', borderColor: '#dce5df', borderRadius: 12, borderWidth: 1, flexDirection: 'row', gap: 8, padding: 10 },
+  aiPendingText: { color: '#596e63', fontSize: 11 },
+  metadataSection: { borderTopColor: '#edf2ef', borderTopWidth: 1, marginTop: 10, padding: 12 },
+  metadataHeader: { alignItems: 'center', flexDirection: 'row', gap: 5, marginBottom: 8 },
+  metadataSectionTitle: { color: '#63786e', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  metadataGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  metadataItem: { alignItems: 'center', backgroundColor: '#f8fbf9', borderColor: '#e2eae5', borderRadius: 10, borderWidth: 1, flexDirection: 'row', flexGrow: 1, gap: 8, minWidth: '47%', padding: 9 },
+  metadataIconWrap: { alignItems: 'center', backgroundColor: '#e6f6ee', borderRadius: 13, height: 26, justifyContent: 'center', width: 26 },
+  metadataTextWrap: { flex: 1, minWidth: 0 },
+  metadataLabel: { color: '#7e8f85', fontSize: 9, fontWeight: '800' },
+  metadataValue: { color: '#1f382a', fontSize: 11, fontWeight: '700', marginTop: 1 },
+  metadataCaption: { color: '#95a49c', fontSize: 9, marginTop: 1 },
 });

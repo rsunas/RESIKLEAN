@@ -99,14 +99,12 @@ const validateStops = (stops) => {
     }
     ordersSeen.add(stop.order);
 
-    // Coordinates are optional but must be valid if provided
-    if (stop.latitude != null || stop.longitude != null) {
-      if (!Number.isFinite(stop.latitude) || stop.latitude < -90 || stop.latitude > 90) {
-        return { valid: false, error: `${label} latitude must be between -90 and 90` };
-      }
-      if (!Number.isFinite(stop.longitude) || stop.longitude < -180 || stop.longitude > 180) {
-        return { valid: false, error: `${label} longitude must be between -180 and 180` };
-      }
+    // Driver geofencing requires every active stop to have a valid coordinate pair.
+    if (!Number.isFinite(stop.latitude) || stop.latitude < -90 || stop.latitude > 90) {
+      return { valid: false, error: `${label} latitude must be between -90 and 90` };
+    }
+    if (!Number.isFinite(stop.longitude) || stop.longitude < -180 || stop.longitude > 180) {
+      return { valid: false, error: `${label} longitude must be between -180 and 180` };
     }
   }
 

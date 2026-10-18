@@ -155,8 +155,26 @@ const assignCollector = async (req, res) => {
     const { routeId } = req.params;
     const { collectorId } = req.body;
 
+    if (!collectorId) {
+      const route = await Route.findByIdAndUpdate(
+        routeId,
+        { collectorId: null },
+        { new: true }
+      ).populate('collectorId', 'name email');
+
+      if (!route) return sendError(res, 'Route not found', 404);
+      return sendSuccess(res, route);
+    }
+
     const collector = await User.findOne({ _id: collectorId, role: 'collector' });
     if (!collector) return sendError(res, 'Collector not found', 404);
+
+    // A collector can have only one current route.  Clear any previous
+    // assignment first so the Driver app cannot receive an arbitrary stale route.
+    await Route.updateMany(
+      { collectorId, _id: { $ne: routeId } },
+      { $set: { collectorId: null } }
+    );
 
     const route = await Route.findByIdAndUpdate(
       routeId,

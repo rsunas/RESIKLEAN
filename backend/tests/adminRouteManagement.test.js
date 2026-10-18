@@ -187,6 +187,11 @@ describe('Admin Route Management — Stop Validation', () => {
     ];
     expect(validateStops(invalidLng).valid).toBe(false);
   });
+
+  it('rejects stops missing either required geofence coordinate', () => {
+    expect(validateStops([{ name: 'No latitude', order: 1, longitude: 123.19 }]).valid).toBe(false);
+    expect(validateStops([{ name: 'No longitude', order: 1, latitude: 13.62 }]).valid).toBe(false);
+  });
 });
 
 describe('Admin Route Management — Proximity & High Stop Count Warnings', () => {

@@ -3,7 +3,7 @@ import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, AppState, Image, Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, ActivityIndicator, AppState, Image, Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { io } from 'socket.io-client';
 import Svg, { Circle } from 'react-native-svg';
 import Mapbox from '@rnmapbox/maps';
@@ -489,6 +489,15 @@ export default function CollectorScreen() {
 
     void restorePendingProofPhoto();
     return () => { cancelled = true; };
+  }, []);
+
+  // Pre-warm camera permission so the OS dialog never interrupts the camera launch.
+  useEffect(() => {
+    void ImagePicker.getCameraPermissionsAsync().then((status) => {
+      if (status.status === 'undetermined') {
+        void ImagePicker.requestCameraPermissionsAsync();
+      }
+    });
   }, []);
 
   const loadDriverData = useCallback(async (token: string, cachedCollectorId?: string) => {
@@ -1206,6 +1215,7 @@ export default function CollectorScreen() {
         try {
           const result = await ImagePicker.launchCameraAsync({
             allowsEditing: false,
+            cameraType: ImagePicker.CameraType.back,
             mediaTypes: ['images'],
             quality: 0.65,
           });
@@ -1420,9 +1430,16 @@ export default function CollectorScreen() {
                   <Text style={styles.complaintDescription}>{selectedComplaint.description || 'Resident requested collection at this location.'}</Text>
                   <View style={styles.complaintDetailRow}><Feather color="#07815f" name="map-pin" size={16} /><View style={styles.complaintDetailText}><Text style={styles.complaintDetailLabel}>Exact request location</Text><Text style={styles.complaintDetailValue}>{Number(selectedComplaint.photoMetadata?.latitude).toFixed(6)}, {Number(selectedComplaint.photoMetadata?.longitude).toFixed(6)}</Text><Text style={styles.complaintDetailCaption}>{selectedComplaint.barangay || 'Location captured from resident photo'}</Text></View></View>
                   <View style={styles.complaintDetailRow}><Feather color="#07815f" name="clock" size={16} /><View style={styles.complaintDetailText}><Text style={styles.complaintDetailLabel}>Submitted</Text><Text style={styles.complaintDetailValue}>{formatTime(selectedComplaint.createdAt)}</Text><Text style={styles.complaintDetailCaption}>{selectedComplaint.photoMetadata?.capturedAt ? `Photo captured ${formatTime(selectedComplaint.photoMetadata.capturedAt)}` : 'Photo capture time unavailable'}</Text></View></View>
-                  <Pressable disabled={isResolvingComplaint} onPress={() => void resolveSelectedComplaint()} style={[styles.resolveComplaintButton, isResolvingComplaint && styles.geofenceButtonDisabled]}>
-                    <Feather color="#ffffff" name="camera" size={17} />
-                    <Text style={styles.resolveComplaintButtonText}>{isResolvingComplaint ? 'Uploading proof...' : 'Take proof photo & resolve'}</Text>
+                  <Pressable
+                    disabled={isResolvingComplaint || isOpeningProofCamera}
+                    onPress={() => void resolveSelectedComplaint()}
+                    style={[styles.resolveComplaintButton, (isResolvingComplaint || isOpeningProofCamera) && styles.geofenceButtonDisabled]}>
+                    {isOpeningProofCamera
+                      ? <ActivityIndicator color="#ffffff" size="small" />
+                      : <Feather color="#ffffff" name="camera" size={17} />}
+                    <Text style={styles.resolveComplaintButtonText}>
+                      {isResolvingComplaint ? 'Uploading proof...' : isOpeningProofCamera ? 'Opening camera...' : 'Take proof photo & resolve'}
+                    </Text>
                   </Pressable>
                 </ScrollView>
               </View>

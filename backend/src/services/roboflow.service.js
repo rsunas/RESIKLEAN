@@ -13,16 +13,23 @@ const ROBOFLOW_MODEL = process.env.ROBOFLOW_MODEL || 'waste-r2iqz/2';
  * @param {string} imageUrl - public image URL (e.g., from Cloudinary)
  * @returns {Promise<{verified: boolean, confidence: number, predictions: Array}>}
  */
-const verifyWastePhoto = async (imageUrl) => {
+const verifyWastePhoto = async (imageInput) => {
   if (!ROBOFLOW_API_KEY) {
     console.warn('⚠️  ROBOFLOW_API_KEY not set — skipping AI verification');
     return { verified: false, confidence: 0, detectedBagCount: 0, predictions: [] };
   }
 
   try {
-    // Step 1: Download image from Cloudinary and convert to base64
-    const imageResponse = await axios.get(imageUrl, { responseType: 'arraybuffer' });
-    const base64Image = Buffer.from(imageResponse.data).toString('base64');
+    let base64Image;
+    if (Buffer.isBuffer(imageInput)) {
+      base64Image = imageInput.toString('base64');
+    } else if (typeof imageInput === 'string' && imageInput.startsWith('data:')) {
+      base64Image = imageInput.split(',')[1] || imageInput;
+    } else {
+      // Step 1: Download image from Cloudinary and convert to base64
+      const imageResponse = await axios.get(imageInput, { responseType: 'arraybuffer' });
+      base64Image = Buffer.from(imageResponse.data).toString('base64');
+    }
 
     // Step 2: Send to Roboflow Serverless API (inference v1.5.0+)
     const response = await axios({

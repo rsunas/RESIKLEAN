@@ -355,9 +355,18 @@ const removePushToken = async (req, res) => {
     });
 
     sendSuccess(res, { message: 'Push token removed successfully' });
+// ── POST /api/resident/reports/verify-photo ───────────────────────────────────
+// Pre-scans a photo with Roboflow AI before report submission and returns detection result
+const verifyPhotoOnly = async (req, res) => {
+  try {
+    if (!req.file) {
+      return sendError(res, 'No photo provided for verification', 400);
+    }
+    const aiResult = await verifyWastePhoto(req.file.buffer);
+    sendSuccess(res, aiResult);
   } catch (err) {
     sendError(res, err.message, 500);
   }
 };
 
-module.exports = { getSchedule, submitReport, getMyReports, registerPushToken, removePushToken };
+module.exports = { getSchedule, submitReport, getMyReports, registerPushToken, removePushToken, verifyPhotoOnly };

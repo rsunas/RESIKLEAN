@@ -85,7 +85,8 @@ export default function RouteAssignmentPanel({ token }) {
   const saveAssignments = async (collector) => {
     const nextRouteId = routeSelections[collector._id];
     const nextTruckId = truckSelections[collector._id];
-    if (!apiBase || (!nextRouteId && !nextTruckId)) return;
+    const previousRoute = routes.find((route) => collectorId(route) === collector._id);
+    if (!apiBase || (!nextRouteId && !nextTruckId && !previousRoute)) return;
     setError('');
     setSuccess('');
     setIsSaving(collector._id);
@@ -96,8 +97,17 @@ export default function RouteAssignmentPanel({ token }) {
         const response = await fetch(`${apiBase}/admin/routes/${encodeURIComponent(nextRouteId)}/assign`, { body: JSON.stringify({ collectorId: collector._id }), headers, method: 'PATCH' });
         const result = await response.json();
         if (!response.ok || !result.success) throw new Error(result.error || 'Unable to assign this route.');
-        setRoutes((current) => current.map((route) => route._id === nextRouteId ? result.data : route));
+        setRoutes((current) => current.map((route) => {
+          if (route._id === nextRouteId) return result.data;
+          return collectorId(route) === collector._id ? { ...route, collectorId: null } : route;
+        }));
         messages.push(`${result.data.name || 'Route'} assigned`);
+      } else if (previousRoute) {
+        const response = await fetch(`${apiBase}/admin/routes/${encodeURIComponent(previousRoute._id)}/assign`, { body: JSON.stringify({ collectorId: null }), headers, method: 'PATCH' });
+        const result = await response.json();
+        if (!response.ok || !result.success) throw new Error(result.error || 'Unable to unassign this route.');
+        setRoutes((current) => current.map((route) => route._id === previousRoute._id ? result.data : route));
+        messages.push(`${previousRoute.name || 'Route'} unassigned`);
       }
       if (nextTruckId) {
         const response = await fetch(`${apiBase}/admin/cycle-logs`, { body: JSON.stringify({ driverId: collector._id, truckId: nextTruckId }), headers, method: 'POST' });
@@ -130,10 +140,10 @@ export default function RouteAssignmentPanel({ token }) {
             const hasExistingAssignment = Boolean(selectedRoute || assignedCycle);
             return <tr key={collector._id}>
               <td><strong>{collector.name || 'Unnamed driver'}</strong><span className="route-stop-count">{collector.email || 'Collector'}</span></td>
-              <td><AppSelect aria-label={`Assign a route to ${collector.name || 'this driver'}`} className="route-assignment-select" onChange={(routeId) => setRouteSelections((current) => ({ ...current, [collector._id]: routeId === 'unassigned' ? '' : routeId }))} options={[{ label: 'Unassigned', value: 'unassigned' }, ...[...routes].sort((a, b) => routeLabel(a).localeCompare(routeLabel(b), undefined, { numeric: true, sensitivity: 'base' })).map((route) => ({ label: routeLabel(route), value: route._id }))]} value={routeSelections[collector._id] || 'unassigned'} /></td>
+              <td><AppSelect aria-label={`Assign a route to ${collector.name || 'this driver'}`} className="route-assignment-select" onChange={(routeId) => setRouteSelections((current) => ({ ...current, [collector._id]: routeId === 'unassigned' ? '' : routeId }))} options={[{ label: 'Unassigned', value: 'unassigned' }, ...routes.filter((route) => route.isActive !== false || route._id === routeSelections[collector._id]).sort((a, b) => routeLabel(a).localeCompare(routeLabel(b), undefined, { numeric: true, sensitivity: 'base' })).map((route) => ({ label: `${routeLabel(route)}${route.isActive === false ? ' (Archived)' : ''}`, value: route._id }))]} value={routeSelections[collector._id] || 'unassigned'} /></td>
               <td><AppSelect aria-label={`Assign a truck to ${collector.name || 'this driver'}`} className="route-assignment-select" onChange={(truckId) => setTruckSelections((current) => ({ ...current, [collector._id]: truckId === 'unassigned' ? '' : truckId }))} options={[{ label: 'Unassigned', value: 'unassigned' }, ...trucks.map((truck) => ({ label: truckLabel(truck), value: truck._id }))]} value={truckSelections[collector._id] || 'unassigned'} /></td>
               <td>{selectedRoute ? routeSchedule(selectedRoute) : '—'}</td>
-              <td><Button className="reassign-button" isDisabled={(!routeSelections[collector._id] && !truckSelections[collector._id]) || isSaving === collector._id} onPress={() => saveAssignments(collector)} variant="secondary">{isSaving === collector._id ? 'Saving...' : hasExistingAssignment ? 'Update' : 'Assign'}</Button></td>
+              <td><Button className="reassign-button" isDisabled={(!routeSelections[collector._id] && !truckSelections[collector._id] && !hasExistingAssignment) || isSaving === collector._id} onPress={() => saveAssignments(collector)} variant="secondary">{isSaving === collector._id ? 'Saving...' : hasExistingAssignment ? 'Update' : 'Assign'}</Button></td>
             </tr>;
           })}
         </tbody>
