@@ -1,13 +1,13 @@
 import { Feather, MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-icons';
 import * as Crypto from 'expo-crypto';
 import * as ImagePicker from 'expo-image-picker';
+import { Image as ExpoImage } from 'expo-image';
 import NetInfo from '@react-native-community/netinfo';
 import { StatusBar } from 'expo-status-bar';
 import { Button, Card } from 'heroui-native';
 import { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Image,
   Modal,
   Pressable,
   ScrollView,
@@ -23,10 +23,22 @@ import { SignOutConfirmModal } from '@/components/sign-out-confirm-modal';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { clearSession, getSession } from '@/lib/session';
 import {
+  DEFAULT_FALLBACK_AREAS,
+  DEFAULT_FALLBACK_DRIVERS,
+  DEFAULT_FALLBACK_TRUCKS,
   enqueueStaffTruckload,
+  getQueuedStaffTruckloads,
+  getStaffCache,
   getStaffTruckloadQueueStats,
+  saveStaffCache,
   subscribeToStaffTruckloadSync,
+  syncStaffTruckloadQueue,
 } from '@/lib/staff-truckload-queue';
+import {
+  clearPendingCameraContext,
+  getPendingCameraContext,
+  savePendingCameraContext,
+} from '@/lib/camera-recovery';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 const MAX_AUDIT_PHOTO_SIZE = 5 * 1024 * 1024;
@@ -275,7 +287,15 @@ function AuditPhotoField({ disabled, label, loading, onPress, photo }: { disable
         disabled={disabled}
         onPress={onPress}
         style={[styles.photoField, photo && styles.photoFieldAttached, disabled && styles.photoFieldDisabled]}>
-        {photo ? <Image accessibilityLabel={`${label} proof photo attached`} resizeMode="contain" source={{ uri: photo.uri }} style={styles.photoPreview} /> : null}
+        {photo ? (
+          <ExpoImage
+            accessibilityLabel={`${label} proof photo attached`}
+            contentFit="contain"
+            source={{ uri: photo.uri }}
+            style={styles.photoPreview}
+            transition={150}
+          />
+        ) : null}
         <View style={[styles.photoOverlay, photo && styles.photoOverlayAttached]}>
           <View style={[styles.cameraBadge, photo && styles.cameraBadgeAttached, loading && styles.cameraBadgeLoading]}>
             {loading
@@ -341,133 +361,295 @@ export default function StaffScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<Tab>('input');
-  const [trucks, setTrucks] = useState<Truck[]>([]);
-  const [isLoadingTrucks, setIsLoadingTrucks] = useState(true);
+  const [isOffline, setIsOffline] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [trucks, setTrucks] = useState<Truck[]>(DEFAULT_FALLBACK_TRUCKS);
+  const [isLoadingTrucks, setIsLoadingTrucks] = useState(false);
   const [truckLoadError, setTruckLoadError] = useState('');
-  const [truckPlate, setTruckPlate] = useState('');
-  const [areas, setAreas] = useState<AreaOption[]>([]);
-  const [isLoadingAreas, setIsLoadingAreas] = useState(true);
+  const [truckPlate, setTruckPlate] = useState(DEFAULT_FALLBACK_TRUCKS[0]?.plate || '');
+  const [areas, setAreas] = useState<AreaOption[]>(DEFAULT_FALLBACK_AREAS);
+  const [isLoadingAreas, setIsLoadingAreas] = useState(false);
   const [areaLoadError, setAreaLoadError] = useState('');
-  const [area, setArea] = useState('');
-  const [routeId, setRouteId] = useState('');
-  const [drivers, setDrivers] = useState<string[]>([]);
-  const [isLoadingDrivers, setIsLoadingDrivers] = useState(true);
+  const [area, setArea] = useState(areaLabel(DEFAULT_FALLBACK_AREAS[0]));
+  const [routeId, setRouteId] = useState(DEFAULT_FALLBACK_AREAS[0]?._id || '');
+  const [drivers, setDrivers] = useState<string[]>(DEFAULT_FALLBACK_DRIVERS);
+  const [isLoadingDrivers, setIsLoadingDrivers] = useState(false);
   const [driverLoadError, setDriverLoadError] = useState('');
-  const [driver, setDriver] = useState('');
+  const [driver, setDriver] = useState(DEFAULT_FALLBACK_DRIVERS[0] || '');
   const [slope, setSlope] = useState(SLOPES[0]);
-  const [length, setLength] = useState('');
-  const [width, setWidth] = useState('');
-  const [height, setHeight] = useState('');
+  const [length, setLength] = useState(DEFAULT_FALLBACK_TRUCKS[0]?.length || '');
+  const [width, setWidth] = useState(DEFAULT_FALLBACK_TRUCKS[0]?.width || '');
+  const [height, setHeight] = useState(DEFAULT_FALLBACK_TRUCKS[0]?.height || '');
   const [notes, setNotes] = useState('');
   const [sidePhoto, setSidePhoto] = useState<AuditPhoto | null>(null);
   const [backPhoto, setBackPhoto] = useState<AuditPhoto | null>(null);
   const [isOpeningAuditCamera, setIsOpeningAuditCamera] = useState(false);
+  const [openingSlot, setOpeningSlot] = useState<AuditPhotoSlot | null>(null);
   const [tonnagePreview, setTonnagePreview] = useState<TonnagePreview | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [message, setMessage] = useState('');
   const [history, setHistory] = useState<Submission[]>([]);
   const [selectedSubmission, setSelectedSubmission] = useState<Submission | null>(null);
-  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
   const [profile, setProfile] = useState<StaffProfile | null>(null);
-  const [profileLoading, setProfileLoading] = useState(true);
+  const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState('');
   const [isSignOutConfirmVisible, setIsSignOutConfirmVisible] = useState(false);
   const [pendingSync, setPendingSync] = useState(0);
 
+  // Monitor network connection state
+  useEffect(() => {
+    let cancelled = false;
+    const updateNetStatus = (state: any) => {
+      const connected = Boolean(state.isConnected && state.isInternetReachable !== false);
+      if (!cancelled) setIsOffline(!connected);
+    };
+
+    const unsubscribe = NetInfo.addEventListener(updateNetStatus);
+    void NetInfo.fetch().then(updateNetStatus);
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
+  // 1. Trucks: SQLite cache first, then server fetch
   useEffect(() => {
     let cancelled = false;
 
-    const loadRegisteredTrucks = async () => {
-      if (!API_URL) {
-        if (!cancelled) {
-          setTruckLoadError('Truck list is unavailable until EXPO_PUBLIC_API_URL is configured.');
-          setIsLoadingTrucks(false);
-        }
-        return;
+    const loadTrucks = async () => {
+      const cached = await getStaffCache<Truck[]>('trucks');
+      if (cached && cached.length > 0 && !cancelled) {
+        setTrucks(cached);
+        setTruckPlate((cur) => cur || cached[0].plate);
+        setLength((cur) => cur || cached[0].length);
+        setWidth((cur) => cur || cached[0].width);
+        setHeight((cur) => cur || cached[0].height);
       }
+
+      if (!API_URL) return;
 
       try {
         const session = await getSession();
-        if (!session?.token) throw new Error('Sign in again to load the registered trucks.');
+        if (!session?.token) return;
 
         const response = await fetch(`${API_URL}/trucks`, {
           headers: { Authorization: `Bearer ${session.token}` },
         });
         const result = await response.json();
-        if (!response.ok || !result.success) throw new Error(result.error || 'Unable to load registered trucks.');
+        if (response.ok && result.success && Array.isArray(result.data?.trucks)) {
+          const registeredTrucks = ((result.data?.trucks || []) as TruckResponse[]).map((truck) => ({
+            plate: truck.plateNumber,
+            length: String(truck.length),
+            width: String(truck.width),
+            height: String(truck.height),
+          }));
 
-        const registeredTrucks = ((result.data?.trucks || []) as TruckResponse[]).map((truck) => ({
-          plate: truck.plateNumber,
-          length: String(truck.length),
-          width: String(truck.width),
-          height: String(truck.height),
-        }));
-        const firstTruck = registeredTrucks[0];
-
-        if (!cancelled) {
-          setTrucks(registeredTrucks);
-          setTruckPlate(firstTruck?.plate || '');
-          setLength(firstTruck?.length || '');
-          setWidth(firstTruck?.width || '');
-          setHeight(firstTruck?.height || '');
+          if (registeredTrucks.length > 0 && !cancelled) {
+            setTrucks(registeredTrucks);
+            const first = registeredTrucks[0];
+            setTruckPlate((cur) => cur || first.plate);
+            setLength((cur) => cur || first.length);
+            setWidth((cur) => cur || first.width);
+            setHeight((cur) => cur || first.height);
+            setTruckLoadError('');
+            void saveStaffCache('trucks', registeredTrucks);
+          }
         }
-      } catch (error) {
-        if (!cancelled) setTruckLoadError(error instanceof Error ? error.message : 'Unable to load registered trucks.');
-      } finally {
-        if (!cancelled) setIsLoadingTrucks(false);
+      } catch {
+        if (!cancelled) setIsOffline(true);
       }
     };
 
-    loadRegisteredTrucks();
+    void loadTrucks();
     return () => { cancelled = true; };
   }, []);
 
+  // 2. Areas: SQLite cache first, then server fetch
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadAreas = async () => {
+      const cached = await getStaffCache<AreaOption[]>('areas');
+      if (cached && cached.length > 0 && !cancelled) {
+        setAreas(cached);
+        setArea((cur) => cur || (cached[0] ? areaLabel(cached[0]) : ''));
+        setRouteId((cur) => cur || cached[0]?._id || '');
+      }
+
+      if (!API_URL) return;
+
+      try {
+        const session = await getSession();
+        if (!session?.token) return;
+
+        const response = await fetch(`${API_URL}/staff/areas`, {
+          headers: { Authorization: `Bearer ${session.token}` },
+        });
+        const result = await response.json();
+        if (response.ok && result.success) {
+          const availableAreas = [...(((result.data || {}) as AreasResponse).areas || [])]
+            .filter((item) => item?._id && item.barangay)
+            .sort(compareAreas);
+
+          if (availableAreas.length > 0 && !cancelled) {
+            setAreas(availableAreas);
+            setArea((cur) => cur || (availableAreas[0] ? areaLabel(availableAreas[0]) : ''));
+            setRouteId((cur) => cur || availableAreas[0]?._id || '');
+            setAreaLoadError('');
+            void saveStaffCache('areas', availableAreas);
+          }
+        }
+      } catch {
+        if (!cancelled) setIsOffline(true);
+      }
+    };
+
+    void loadAreas();
+    return () => { cancelled = true; };
+  }, []);
+
+  // 3. Drivers: SQLite cache first, then server fetch
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadDrivers = async () => {
+      const cached = await getStaffCache<string[]>('drivers');
+      if (cached && cached.length > 0 && !cancelled) {
+        setDrivers(cached);
+        setDriver((cur) => cur || cached[0]);
+      }
+
+      if (!API_URL) return;
+
+      try {
+        const session = await getSession();
+        if (!session?.token) return;
+
+        const response = await fetch(`${API_URL}/staff/drivers`, {
+          headers: { Authorization: `Bearer ${session.token}` },
+        });
+        const result = await response.json();
+        if (response.ok && result.success) {
+          const availableDrivers = [...(((result.data || {}) as DriversResponse).drivers || [])]
+            .map((item) => item.name)
+            .filter(Boolean)
+            .sort((first, second) => first.localeCompare(second, undefined, { sensitivity: 'base' }));
+
+          if (availableDrivers.length > 0 && !cancelled) {
+            setDrivers(availableDrivers);
+            setDriver((cur) => cur || availableDrivers[0] || '');
+            setDriverLoadError('');
+            void saveStaffCache('drivers', availableDrivers);
+          }
+        }
+      } catch {
+        if (!cancelled) setIsOffline(true);
+      }
+    };
+
+    void loadDrivers();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Helper to refresh history and merge with pending offline queue
+  const refreshHistory = async (token: string, staffName: string) => {
+    const session = await getSession();
+    const staffId = session?.user?._id || session?.user?.id;
+
+    const queuedRows = staffId ? await getQueuedStaffTruckloads(staffId) : [];
+    const queuedSubmissions: Submission[] = queuedRows.map((q) => {
+      const len = Number(q.length || 0);
+      const wid = Number(q.width || 0);
+      const hgt = Number(q.height || 0);
+      const slp = Number(q.slope || 0);
+      return {
+        id: q.clientId,
+        barangay: q.area || 'Offline submission',
+        truckPlate: q.truckPlate,
+        driver: q.driver || staffName,
+        submittedAt: formatSubmissionDate(q.createdAt),
+        length: len,
+        width: wid,
+        height: hgt,
+        slope: formatSlope(slp),
+        tonnes: calculateTonnage(len, wid, hgt, slp),
+        status: 'Pending',
+        notes: q.notes,
+        sidePhotoUrl: q.sidePhotoUri,
+        backPhotoUrl: q.backPhotoUri,
+      };
+    });
+
+    if (!API_URL) {
+      if (queuedSubmissions.length) setHistory(queuedSubmissions);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${API_URL}/staff/truckloads`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const result = await response.json();
+      if (response.ok && result.success) {
+        const loads = (result.data?.loads || []) as TruckLoadResponse[];
+        const mappedServer = loads.map((load) => mapTruckLoad(load, staffName));
+        const combined = [...queuedSubmissions, ...mappedServer];
+        const seen = new Set<string>();
+        const deduped = combined.filter((item) => {
+          if (seen.has(item.id)) return false;
+          seen.add(item.id);
+          return true;
+        });
+
+        setHistory(deduped);
+        if (staffId) void saveStaffCache(`history:${staffId}`, mappedServer);
+        setHistoryError('');
+        setHistoryLoading(false);
+      }
+    } catch {
+      const cached = staffId ? await getStaffCache<Submission[]>(`history:${staffId}`) : [];
+      const combined = [...queuedSubmissions, ...(cached || [])];
+      const seen = new Set<string>();
+      const deduped = combined.filter((item) => {
+        if (seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      });
+      setHistory(deduped);
+      setHistoryLoading(false);
+    }
+  };
+
+  // 4. Background queue sync subscription
   useEffect(() => {
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
 
-    const refreshHistory = async (token: string, staffName: string) => {
-      if (!API_URL) return;
-      try {
-        const response = await fetch(`${API_URL}/staff/truckloads`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const result = await response.json();
-        if (!cancelled && response.ok && result.success) {
-          const loads = (result.data?.loads || []) as TruckLoadResponse[];
-          setHistory(loads.map((load) => mapTruckLoad(load, staffName)));
-          setHistoryError('');
-          setHistoryLoading(false);
-        }
-      } catch {
-        // The queue remains local when the reconnect is unstable. The next
-        // connectivity event will retry without interrupting the staff UI.
-      }
-    };
-
     const setupQueueSync = async () => {
-      if (!API_URL) return;
       const session = await getSession();
       const staffId = session?.user?._id || session?.user?.id;
       if (!session?.token || !staffId) return;
 
-      const context = { apiUrl: API_URL, token: session.token, staffId };
       const stats = await getStaffTruckloadQueueStats(staffId);
       if (!cancelled) setPendingSync(stats.pending);
+
+      if (!API_URL) return;
+      const context = { apiUrl: API_URL, token: session.token, staffId };
 
       unsubscribe = subscribeToStaffTruckloadSync(context, async (result) => {
         if (cancelled) return;
         setPendingSync(result.pending);
         if (result.synced > 0) {
+          setMessage(`Synced ${result.synced} offline measurement${result.synced > 1 ? 's' : ''} to server.`);
           await refreshHistory(session.token, session.user.name || profile?.name || 'You');
         }
       });
     };
 
-    void setupQueueSync().catch(() => {
-      // Local queue initialization should never block the staff screen.
-    });
+    void setupQueueSync().catch(() => {});
 
     return () => {
       cancelled = true;
@@ -475,96 +657,78 @@ export default function StaffScreen() {
     };
   }, [profile?.name]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadAreas = async () => {
-      if (!API_URL) {
-        if (!cancelled) {
-          setAreaLoadError('Area list is unavailable until EXPO_PUBLIC_API_URL is configured.');
-          setIsLoadingAreas(false);
-        }
-        return;
-      }
-
-      try {
-        const session = await getSession();
-        if (!session?.token) throw new Error('Sign in again to load the available areas.');
-
-        const response = await fetch(`${API_URL}/staff/areas`, {
-          headers: { Authorization: `Bearer ${session.token}` },
-        });
-        const result = await response.json();
-        if (!response.ok || !result.success) throw new Error(result.error || 'Unable to load available areas.');
-
-        const availableAreas = [...(((result.data || {}) as AreasResponse).areas || [])]
-          .filter((item) => item?._id && item.barangay)
-          .sort(compareAreas);
-        if (!cancelled) {
-          setAreas(availableAreas);
-          setArea((current) => current || (availableAreas[0] ? areaLabel(availableAreas[0]) : ''));
-          setRouteId((current) => current || availableAreas[0]?._id || '');
-        }
-      } catch (error) {
-        if (!cancelled) setAreaLoadError(error instanceof Error ? error.message : 'Unable to load available areas.');
-      } finally {
-        if (!cancelled) setIsLoadingAreas(false);
-      }
-    };
-
-    loadAreas();
-    return () => { cancelled = true; };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const loadDrivers = async () => {
-      if (!API_URL) {
-        if (!cancelled) {
-          setDriverLoadError('Driver list is unavailable until EXPO_PUBLIC_API_URL is configured.');
-          setIsLoadingDrivers(false);
-        }
-        return;
-      }
-
-      try {
-        const session = await getSession();
-        if (!session?.token) throw new Error('Sign in again to load the available drivers.');
-
-        const response = await fetch(`${API_URL}/staff/drivers`, {
-          headers: { Authorization: `Bearer ${session.token}` },
-        });
-        const result = await response.json();
-        if (!response.ok || !result.success) throw new Error(result.error || 'Unable to load available drivers.');
-
-        const availableDrivers = [...(((result.data || {}) as DriversResponse).drivers || [])]
-          .map((item) => item.name)
-          .filter(Boolean)
-          .sort((first, second) => first.localeCompare(second, undefined, { sensitivity: 'base' }));
-        if (!cancelled) {
-          setDrivers(availableDrivers);
-          setDriver((current) => current || availableDrivers[0] || '');
-        }
-      } catch (error) {
-        if (!cancelled) setDriverLoadError(error instanceof Error ? error.message : 'Unable to load available drivers.');
-      } finally {
-        if (!cancelled) setIsLoadingDrivers(false);
-      }
-    };
-
-    loadDrivers();
-    return () => { cancelled = true; };
-  }, []);
-
+  // 5. Staff profile & history: cache & queue first, then server fetch
   useEffect(() => {
     let cancelled = false;
 
     const loadStaffData = async () => {
-      if (!API_URL) {
+      const session = await getSession();
+      const staffId = session?.user?._id || session?.user?.id;
+      const staffName = session?.user?.name || 'You';
+
+      if (staffId) {
+        const cachedProfile = await getStaffCache<StaffProfile>(`profile:${staffId}`);
+        if (cachedProfile && !cancelled) {
+          setProfile(cachedProfile);
+          setProfileLoading(false);
+          setProfileError('');
+        } else if (session?.user && !cancelled) {
+          setProfile({
+            _id: staffId,
+            name: session.user.name,
+            email: session.user.email,
+            role: session.user.role,
+            barangay: session.user.barangay,
+          });
+          setProfileLoading(false);
+        }
+      }
+
+      if (staffId) {
+        const [cachedHistory, queuedRows] = await Promise.all([
+          getStaffCache<Submission[]>(`history:${staffId}`),
+          getQueuedStaffTruckloads(staffId),
+        ]);
+
+        const queuedSubmissions: Submission[] = (queuedRows || []).map((q) => {
+          const len = Number(q.length || 0);
+          const wid = Number(q.width || 0);
+          const hgt = Number(q.height || 0);
+          const slp = Number(q.slope || 0);
+          return {
+            id: q.clientId,
+            barangay: q.area || 'Offline submission',
+            truckPlate: q.truckPlate,
+            driver: q.driver || staffName,
+            submittedAt: formatSubmissionDate(q.createdAt),
+            length: len,
+            width: wid,
+            height: hgt,
+            slope: formatSlope(slp),
+            tonnes: calculateTonnage(len, wid, hgt, slp),
+            status: 'Pending',
+            notes: q.notes,
+            sidePhotoUrl: q.sidePhotoUri,
+            backPhotoUrl: q.backPhotoUri,
+          };
+        });
+
+        const merged = [...queuedSubmissions, ...(cachedHistory || [])];
+        if (merged.length > 0 && !cancelled) {
+          const seen = new Set<string>();
+          const deduped = merged.filter((item) => {
+            if (seen.has(item.id)) return false;
+            seen.add(item.id);
+            return true;
+          });
+          setHistory(deduped);
+          setHistoryLoading(false);
+          setHistoryError('');
+        }
+      }
+
+      if (!API_URL || !session?.token) {
         if (!cancelled) {
-          setProfileError('Profile is unavailable until EXPO_PUBLIC_API_URL is configured.');
-          setHistoryError('Submission history is unavailable until EXPO_PUBLIC_API_URL is configured.');
           setProfileLoading(false);
           setHistoryLoading(false);
         }
@@ -572,79 +736,163 @@ export default function StaffScreen() {
       }
 
       try {
-        const session = await getSession();
-        if (!session?.token) throw new Error('Sign in again to load your staff data.');
-
         const headers = { Authorization: `Bearer ${session.token}` };
         const [profileResponse, historyResponse] = await Promise.all([
           fetch(`${API_URL}/auth/me`, { headers }),
           fetch(`${API_URL}/staff/truckloads`, { headers }),
         ]);
         const [profileResult, historyResult] = await Promise.all([
-          profileResponse.json(),
-          historyResponse.json(),
+          profileResponse.json().catch(() => ({})),
+          historyResponse.json().catch(() => ({})),
         ]);
 
         if (!cancelled) {
-          if (!profileResponse.ok || !profileResult.success) {
-            setProfileError(profileResult.error || 'Unable to load your profile.');
-          } else {
-            setProfile(profileResult.data || null);
+          if (profileResponse.ok && profileResult.success && profileResult.data) {
+            setProfile(profileResult.data);
+            if (staffId) void saveStaffCache(`profile:${staffId}`, profileResult.data);
+            setProfileError('');
           }
-          setProfileLoading(false);
 
-          if (!historyResponse.ok || !historyResult.success) {
-            setHistoryError(historyResult.error || 'Unable to load your submission history.');
-          } else {
+          if (historyResponse.ok && historyResult.success && historyResult.data) {
             const loads = (historyResult.data?.loads || []) as TruckLoadResponse[];
-            const staffName = profileResult.data?.name || 'You';
-            setHistory(loads.map((load) => mapTruckLoad(load, staffName)));
+            const mappedLoads = loads.map((load) => mapTruckLoad(load, profileResult.data?.name || staffName));
+
+            const queuedRows = staffId ? await getQueuedStaffTruckloads(staffId) : [];
+            const queuedSubmissions: Submission[] = (queuedRows || []).map((q) => {
+              const len = Number(q.length || 0);
+              const wid = Number(q.width || 0);
+              const hgt = Number(q.height || 0);
+              const slp = Number(q.slope || 0);
+              return {
+                id: q.clientId,
+                barangay: q.area || 'Offline submission',
+                truckPlate: q.truckPlate,
+                driver: q.driver || staffName,
+                submittedAt: formatSubmissionDate(q.createdAt),
+                length: len,
+                width: wid,
+                height: hgt,
+                slope: formatSlope(slp),
+                tonnes: calculateTonnage(len, wid, hgt, slp),
+                status: 'Pending',
+                notes: q.notes,
+                sidePhotoUrl: q.sidePhotoUri,
+                backPhotoUrl: q.backPhotoUri,
+              };
+            });
+
+            const combined = [...queuedSubmissions, ...mappedLoads];
+            const seen = new Set<string>();
+            const deduped = combined.filter((item) => {
+              if (seen.has(item.id)) return false;
+              seen.add(item.id);
+              return true;
+            });
+
+            setHistory(deduped);
+            if (staffId) void saveStaffCache(`history:${staffId}`, mappedLoads);
+            setHistoryError('');
           }
-          setHistoryLoading(false);
         }
-      } catch (error) {
+      } catch {
+        if (!cancelled) setIsOffline(true);
+      } finally {
         if (!cancelled) {
-          const errorMessage = error instanceof Error ? error.message : 'Unable to load your staff data.';
-          setProfileError(errorMessage);
-          setHistoryError(errorMessage);
           setProfileLoading(false);
           setHistoryLoading(false);
         }
       }
     };
 
-    loadStaffData();
+    void loadStaffData();
     return () => { cancelled = true; };
   }, []);
+
+  const handleManualSync = async () => {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    try {
+      const session = await getSession();
+      const staffId = session?.user?._id || session?.user?.id;
+      if (!API_URL || !session?.token || !staffId) {
+        setMessage('Sign in again before syncing.');
+        return;
+      }
+      const net = await NetInfo.fetch();
+      if (!net.isConnected || net.isInternetReachable === false) {
+        setMessage('Still offline. Please check your internet connection.');
+        return;
+      }
+      const result = await syncStaffTruckloadQueue({ apiUrl: API_URL, token: session.token, staffId });
+      setPendingSync(result.pending);
+      if (result.synced > 0) {
+        setMessage(`Synced ${result.synced} measurement${result.synced > 1 ? 's' : ''} successfully!`);
+        await refreshHistory(session.token, profile?.name || session.user.name || 'You');
+      } else if (result.pending > 0) {
+        setMessage(`Could not sync ${result.pending} item(s). Check connection or server status.`);
+      } else {
+        setMessage('All measurements are up to date.');
+      }
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : 'Sync failed. Check connection.');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
 
     const restorePendingCameraResult = async () => {
       try {
+        const savedContext = await getPendingCameraContext();
+        if (savedContext?.type === 'staff') {
+          if (savedContext.truckPlate) setTruckPlate(savedContext.truckPlate);
+          if (savedContext.area) setArea(savedContext.area);
+          if (savedContext.routeId) setRouteId(savedContext.routeId);
+          if (savedContext.driver) setDriver(savedContext.driver);
+          if (savedContext.slope) setSlope(savedContext.slope);
+          if (savedContext.length) setLength(savedContext.length);
+          if (savedContext.width) setWidth(savedContext.width);
+          if (savedContext.height) setHeight(savedContext.height);
+          if (savedContext.notes) setNotes(savedContext.notes);
+          if (savedContext.existingSidePhoto) setSidePhoto(savedContext.existingSidePhoto);
+          if (savedContext.existingBackPhoto) setBackPhoto(savedContext.existingBackPhoto);
+        }
+
         const pendingResult = await ImagePicker.getPendingResultAsync();
-        if (cancelled || !pendingResult || 'code' in pendingResult || pendingResult.canceled || !pendingResult.assets?.length) return;
+        if (cancelled) return;
+
+        if (!pendingResult || 'code' in pendingResult || pendingResult.canceled || !pendingResult.assets?.length) {
+          if (pendingResult && 'canceled' in pendingResult && pendingResult.canceled) {
+            await clearPendingCameraContext();
+          }
+          return;
+        }
 
         const photo = await prepareAuditPhoto(pendingResult.assets[0]);
         if (!cancelled) {
-          if (!sidePhoto) {
+          const targetSlot = savedContext?.type === 'staff' ? savedContext.slot : (!sidePhoto ? 'side' : 'back');
+          if (targetSlot === 'side') {
             setSidePhoto(photo);
             setMessage(`Side photo recovered after returning from the camera (${formatFileSize(photo.size)}).`);
-          } else if (!backPhoto) {
+          } else {
             setBackPhoto(photo);
             setMessage(`Back photo recovered after returning from the camera (${formatFileSize(photo.size)}).`);
           }
+          await clearPendingCameraContext();
         }
       } catch (error) {
+        await clearPendingCameraContext();
         if (!cancelled) {
           setMessage(error instanceof Error ? error.message : 'The camera returned, but the photo could not be recovered.');
         }
       }
     };
 
-    restorePendingCameraResult();
+    void restorePendingCameraResult();
     return () => { cancelled = true; };
-  }, [backPhoto, sidePhoto]);
+  }, []);
 
   // Pre-warm camera permission so the OS dialog never interrupts the camera launch.
   useEffect(() => {
@@ -698,22 +946,48 @@ export default function StaffScreen() {
       }
 
       setIsOpeningAuditCamera(true);
+      setOpeningSlot(slot);
+
+      // Persist the entire form and already taken photos before opening the native camera activity.
+      // If the Android OS terminates MainActivity to free memory for the camera, the data can be fully restored upon return.
+      await savePendingCameraContext({
+        type: 'staff',
+        slot,
+        truckPlate,
+        area,
+        routeId,
+        driver,
+        slope,
+        length,
+        width,
+        height,
+        notes,
+        existingSidePhoto: sidePhoto,
+        existingBackPhoto: backPhoto,
+      });
+
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: false,
         cameraType: ImagePicker.CameraType.back,
         mediaTypes: ['images'],
-        quality: 0.65,
+        quality: 0.55,
       });
-      if (result.canceled || !result.assets?.[0]?.uri) return;
+      if (result.canceled || !result.assets?.[0]?.uri) {
+        await clearPendingCameraContext();
+        return;
+      }
 
       const photo = await prepareAuditPhoto(result.assets[0]);
       if (slot === 'side') setSidePhoto(photo);
       else setBackPhoto(photo);
+      await clearPendingCameraContext();
       setMessage(`${slot === 'side' ? 'Side' : 'Back'} photo attached (${formatFileSize(photo.size)}).`);
     } catch (error) {
+      await clearPendingCameraContext();
       setMessage(error instanceof Error ? error.message : 'Unable to capture the audit photo.');
     } finally {
       setIsOpeningAuditCamera(false);
+      setOpeningSlot(null);
     }
   };
 
@@ -762,6 +1036,8 @@ export default function StaffScreen() {
           staffId,
           truckPlate,
           routeId,
+          area,
+          driver,
           length,
           width,
           height,
@@ -773,9 +1049,9 @@ export default function StaffScreen() {
         const queueStats = await getStaffTruckloadQueueStats(staffId);
         const pendingSubmission: Submission = {
           id: clientSubmissionId,
-          barangay: area || 'No area assigned',
+          barangay: area || 'Offline Area',
           truckPlate,
-          driver: profile?.name || 'You',
+          driver: driver || profile?.name || 'You',
           submittedAt: formatSubmissionDate(new Date().toISOString()),
           length: numericLength,
           width: numericWidth,
@@ -784,8 +1060,10 @@ export default function StaffScreen() {
           tonnes: tonnagePreview?.tonnes || calculateTonnage(numericLength, numericWidth, numericHeight, slopeValue(slope)),
           status: 'Pending',
           notes: notes.trim(),
+          sidePhotoUrl: sidePhoto.uri,
+          backPhotoUrl: backPhoto.uri,
         };
-        setHistory((current) => [pendingSubmission, ...current]);
+        setHistory((current) => [pendingSubmission, ...current.filter((item) => item.id !== clientSubmissionId)]);
         setPendingSync(queueStats.pending);
         setHistoryError('');
         setHistoryLoading(false);
@@ -806,6 +1084,8 @@ export default function StaffScreen() {
       formData.append('clientSubmissionId', clientSubmissionId);
       formData.append('truckPlate', truckPlate);
       if (routeId) formData.append('routeId', routeId);
+      if (area) formData.append('area', area);
+      if (driver) formData.append('driver', driver);
       // Keep the exact dimensions registered by the admin. Truck dimensions are metres.
       formData.append('length', length);
       formData.append('width', width);
@@ -856,18 +1136,42 @@ export default function StaffScreen() {
 
   const renderInput = () => (
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      {isOffline && (
+        <View style={styles.offlineBanner}>
+          <Feather color="#856404" name="wifi-off" size={15} />
+          <Text style={styles.offlineBannerText}>
+            Offline Mode · Measurements are stored locally and will sync when internet returns
+          </Text>
+        </View>
+      )}
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 11 }}>
         <Text style={[styles.sectionEyebrow, { marginBottom: 0 }]}>NEW MEASUREMENT</Text>
-        {pendingSync > 0 && (
-          <View style={styles.syncBadge}>
-            <MaterialCommunityIcons color="#e2c84b" name="sync" size={15} />
-            <Text style={styles.syncText}>{pendingSync} pending sync</Text>
+        {pendingSync > 0 ? (
+          <Pressable
+            accessibilityLabel={`Sync ${pendingSync} pending measurements`}
+            accessibilityRole="button"
+            disabled={isSyncing}
+            onPress={handleManualSync}
+            style={styles.syncBadge}>
+            {isSyncing ? (
+              <ActivityIndicator color="#e2c84b" size="small" />
+            ) : (
+              <MaterialCommunityIcons color="#e2c84b" name="sync" size={15} />
+            )}
+            <Text style={styles.syncText}>
+              {isSyncing ? 'Syncing…' : `${pendingSync} pending sync · Tap to sync`}
+            </Text>
+          </Pressable>
+        ) : isOffline ? (
+          <View style={styles.offlinePill}>
+            <Feather color="#65756c" name="cloud-off" size={12} />
+            <Text style={styles.offlinePillText}>Offline</Text>
           </View>
-        )}
+        ) : null}
       </View>
       <Card style={styles.formCard}>
         <SelectField
-          disabled={isLoadingTrucks || Boolean(truckLoadError) || trucks.length === 0}
+          disabled={isLoadingTrucks || trucks.length === 0}
           label="Truck"
           onChange={(option) => {
             const truck = trucks.find((item) => item.plate === option);
@@ -883,9 +1187,9 @@ export default function StaffScreen() {
           placeholder={isLoadingTrucks ? 'Loading registered trucks…' : trucks.length ? 'Select truck' : 'No registered trucks available'}
           value={truckPlate}
         />
-        {truckLoadError ? <Text style={styles.truckLoadError}>{truckLoadError}</Text> : null}
+        {truckLoadError && trucks.length === 0 ? <Text style={styles.truckLoadError}>{truckLoadError}</Text> : null}
         <SelectField
-          disabled={isLoadingAreas || Boolean(areaLoadError) || areas.length === 0}
+          disabled={isLoadingAreas || areas.length === 0}
           label="Area"
           onChange={(option) => {
             const selectedArea = areas.find((item) => areaLabel(item) === option);
@@ -896,16 +1200,16 @@ export default function StaffScreen() {
           placeholder={isLoadingAreas ? 'Loading areas…' : areas.length ? 'Select area' : 'No areas available'}
           value={area}
         />
-        {areaLoadError ? <Text style={styles.truckLoadError}>{areaLoadError}</Text> : null}
+        {areaLoadError && areas.length === 0 ? <Text style={styles.truckLoadError}>{areaLoadError}</Text> : null}
         <SelectField
-          disabled={isLoadingDrivers || Boolean(driverLoadError) || drivers.length === 0}
+          disabled={isLoadingDrivers || drivers.length === 0}
           label="Driver"
           onChange={setDriver}
           options={drivers.map((item) => ({ label: item, value: item }))}
           placeholder={isLoadingDrivers ? 'Loading drivers…' : drivers.length ? 'Select driver' : 'No drivers available'}
           value={driver}
         />
-        {driverLoadError ? <Text style={styles.truckLoadError}>{driverLoadError}</Text> : null}
+        {driverLoadError && drivers.length === 0 ? <Text style={styles.truckLoadError}>{driverLoadError}</Text> : null}
 
         <View style={styles.measurementRow}>
           <MeasurementField label="Length (m)" value={length} />
@@ -941,25 +1245,20 @@ export default function StaffScreen() {
         <View style={styles.fieldGroup}>
           <Text style={styles.label}>Proof photos <Text style={styles.required}>*</Text></Text>
           <Text style={styles.photoInstruction}>Submit the original images. They will not be cropped before upload.</Text>
-          <Pressable
-            accessibilityRole="button"
+          <AuditPhotoField
             disabled={isSubmitting || isOpeningAuditCamera}
+            label="Side"
+            loading={openingSlot === 'side'}
             onPress={() => captureAuditPhoto('side')}
-            style={[styles.photoField, sidePhoto && styles.photoFieldAttached, isSubmitting && styles.photoFieldDisabled]}>
-            {sidePhoto ? <Image accessibilityLabel="Captured side proof photo" resizeMode="contain" source={{ uri: sidePhoto.uri }} style={styles.photoPreview} /> : null}
-            <View style={[styles.photoOverlay, sidePhoto && styles.photoOverlayAttached]}>
-              <View style={[styles.cameraBadge, sidePhoto && styles.cameraBadgeAttached, isOpeningAuditCamera && styles.cameraBadgeLoading]}>
-                {isOpeningAuditCamera
-                  ? <ActivityIndicator color="#07815f" size="small" />
-                  : <Feather color={sidePhoto ? '#ffffff' : '#07815f'} name={sidePhoto ? 'check' : 'camera'} size={21} />}
-              </View>
-              <Text style={[styles.photoTitle, sidePhoto && styles.photoOverlayTitle]}>
-                {isOpeningAuditCamera ? 'Opening camera...' : sidePhoto ? 'Side photo attached' : 'Capture Side photo'}
-              </Text>
-              <Text style={[styles.photoCaption, sidePhoto && styles.photoCaptionAttached]}>{sidePhoto ? `${formatFileSize(sidePhoto.size)} · Ready to upload` : 'JPEG, PNG, or WebP · 5 MB maximum'}</Text>
-            </View>
-          </Pressable>
-          <AuditPhotoField disabled={isSubmitting || isOpeningAuditCamera} label="Back" loading={isOpeningAuditCamera} onPress={() => captureAuditPhoto('back')} photo={backPhoto} />
+            photo={sidePhoto}
+          />
+          <AuditPhotoField
+            disabled={isSubmitting || isOpeningAuditCamera}
+            label="Back"
+            loading={openingSlot === 'back'}
+            onPress={() => captureAuditPhoto('back')}
+            photo={backPhoto}
+          />
         </View>
 
         <View style={styles.fieldGroup}>
@@ -992,6 +1291,37 @@ export default function StaffScreen() {
         <Text style={styles.sectionEyebrow}>SUBMISSION HISTORY</Text>
         <Text style={styles.recordCount}>{historyLoading ? 'Loading…' : `${history.length} records`}</Text>
       </View>
+
+      {pendingSync > 0 && (
+        <View style={styles.pendingSyncCard}>
+          <View style={styles.pendingSyncLeft}>
+            <MaterialCommunityIcons color="#b47800" name="cloud-sync" size={24} />
+            <View style={{ marginLeft: 10, flex: 1 }}>
+              <Text style={styles.pendingSyncTitle}>
+                {pendingSync} Offline Measurement{pendingSync > 1 ? 's' : ''} Stored
+              </Text>
+              <Text style={styles.pendingSyncSubtext}>
+                Saved locally. Auto-syncs when online, or tap to sync now.
+              </Text>
+            </View>
+          </View>
+          <Pressable
+            accessibilityLabel="Sync offline measurements"
+            accessibilityRole="button"
+            disabled={isSyncing}
+            onPress={handleManualSync}
+            style={[styles.syncNowButton, isSyncing && { opacity: 0.7 }]}>
+            {isSyncing ? (
+              <ActivityIndicator color="#ffffff" size="small" />
+            ) : (
+              <>
+                <Feather color="#ffffff" name="refresh-cw" size={13} />
+                <Text style={styles.syncNowButtonText}>Sync Now</Text>
+              </>
+            )}
+          </Pressable>
+        </View>
+      )}
 
       <Card style={styles.totalCard}>
         <View>
@@ -1056,7 +1386,7 @@ export default function StaffScreen() {
     return (
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <Card style={styles.profileCard}>
-          <View style={styles.avatar}>{profile?.profilePhotoUrl ? <Image accessibilityLabel="Profile picture" source={{ uri: profile.profilePhotoUrl }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{initials(profile?.name)}</Text>}</View>
+          <View style={styles.avatar}>{profile?.profilePhotoUrl ? <ExpoImage accessibilityLabel="Profile picture" source={{ uri: profile.profilePhotoUrl }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{initials(profile?.name)}</Text>}</View>
           <Text style={styles.profileName}>{profileName}</Text>
           <Text style={styles.profileRole}>{profile ? `${formatRole(profile.role)} · Volumetric Auditor` : 'Loading profile…'}</Text>
           <Text style={styles.profileArea}>{profileArea}</Text>
@@ -1125,9 +1455,9 @@ export default function StaffScreen() {
               style={styles.detailsScroll}>
               {selectedSubmission.sidePhotoUrl || selectedSubmission.backPhotoUrl || selectedSubmission.photoUrl ? (
                 <View style={styles.detailsPhotoGrid}>
-                  {selectedSubmission.sidePhotoUrl ? <View style={styles.detailsPhotoItem}><Text style={styles.detailsPhotoLabel}>Side photo</Text><Image accessibilityLabel="Side audit submission photo" resizeMode="contain" source={{ uri: selectedSubmission.sidePhotoUrl }} style={styles.detailsPhoto} /></View> : null}
-                  {selectedSubmission.backPhotoUrl ? <View style={styles.detailsPhotoItem}><Text style={styles.detailsPhotoLabel}>Back photo</Text><Image accessibilityLabel="Back audit submission photo" resizeMode="contain" source={{ uri: selectedSubmission.backPhotoUrl }} style={styles.detailsPhoto} /></View> : null}
-                  {!selectedSubmission.sidePhotoUrl && !selectedSubmission.backPhotoUrl && selectedSubmission.photoUrl ? <View style={styles.detailsPhotoItem}><Text style={styles.detailsPhotoLabel}>Audit photo</Text><Image accessibilityLabel="Audit submission photo" resizeMode="contain" source={{ uri: selectedSubmission.photoUrl }} style={styles.detailsPhoto} /></View> : null}
+                  {selectedSubmission.sidePhotoUrl ? <View style={styles.detailsPhotoItem}><Text style={styles.detailsPhotoLabel}>Side photo</Text><ExpoImage accessibilityLabel="Side audit submission photo" contentFit="contain" source={{ uri: selectedSubmission.sidePhotoUrl }} style={styles.detailsPhoto} transition={150} /></View> : null}
+                  {selectedSubmission.backPhotoUrl ? <View style={styles.detailsPhotoItem}><Text style={styles.detailsPhotoLabel}>Back photo</Text><ExpoImage accessibilityLabel="Back audit submission photo" contentFit="contain" source={{ uri: selectedSubmission.backPhotoUrl }} style={styles.detailsPhoto} transition={150} /></View> : null}
+                  {!selectedSubmission.sidePhotoUrl && !selectedSubmission.backPhotoUrl && selectedSubmission.photoUrl ? <View style={styles.detailsPhotoItem}><Text style={styles.detailsPhotoLabel}>Audit photo</Text><ExpoImage accessibilityLabel="Audit submission photo" contentFit="contain" source={{ uri: selectedSubmission.photoUrl }} style={styles.detailsPhoto} transition={150} /></View> : null}
                 </View>
               ) : (
                 <View style={styles.noPhotoCard}>
@@ -1137,9 +1467,11 @@ export default function StaffScreen() {
               )}
 
               <View style={styles.detailsStatusRow}>
-                <View style={styles.syncedPill}>
-                  <View style={styles.syncedDot} />
-                  <Text style={styles.syncedPillText}>{selectedSubmission.status}</Text>
+                <View style={selectedSubmission.status === 'Pending' ? styles.pendingPillWrap : styles.syncedPill}>
+                  <View style={selectedSubmission.status === 'Pending' ? styles.pendingDot : styles.syncedDot} />
+                  <Text style={selectedSubmission.status === 'Pending' ? styles.pendingPillText : styles.syncedPillText}>
+                    {selectedSubmission.status === 'Pending' ? 'Pending Sync' : selectedSubmission.status}
+                  </Text>
                 </View>
                 <Text style={styles.detailsDate}>{selectedSubmission.submittedAt}</Text>
               </View>
@@ -1362,4 +1694,99 @@ const styles = StyleSheet.create({
   pickerStatus: { color: '#718077', fontSize: 13, lineHeight: 19, paddingVertical: 12 },
   pickerOption: { alignItems: 'center', borderBottomColor: '#edf1ee', borderBottomWidth: 1, flexDirection: 'row', justifyContent: 'space-between', minHeight: 53 },
   pickerOptionText: { color: '#314238', fontSize: 15, fontWeight: '600' },
+  offlineBanner: {
+    alignItems: 'center',
+    backgroundColor: '#fff8e6',
+    borderColor: '#f0d080',
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  offlineBannerText: {
+    color: '#855800',
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '600',
+    lineHeight: 16,
+  },
+  offlinePill: {
+    alignItems: 'center',
+    backgroundColor: '#eff3f1',
+    borderColor: '#d5dfd9',
+    borderRadius: 14,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  offlinePillText: {
+    color: '#65756c',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  pendingSyncCard: {
+    alignItems: 'center',
+    backgroundColor: '#fffdf5',
+    borderColor: '#ecd282',
+    borderRadius: 16,
+    borderWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+    padding: 13,
+  },
+  pendingSyncLeft: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+  },
+  pendingSyncTitle: {
+    color: '#342600',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  pendingSyncSubtext: {
+    color: '#7a6020',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  syncNowButton: {
+    alignItems: 'center',
+    backgroundColor: '#07815f',
+    borderRadius: 12,
+    flexDirection: 'row',
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  syncNowButtonText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  pendingPillWrap: {
+    alignItems: 'center',
+    backgroundColor: '#fff5dc',
+    borderRadius: 12,
+    flexDirection: 'row',
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+  },
+  pendingDot: {
+    backgroundColor: '#c08000',
+    borderRadius: 4,
+    height: 7,
+    marginRight: 6,
+    width: 7,
+  },
+  pendingPillText: {
+    color: '#a06000',
+    fontSize: 11,
+    fontWeight: '800',
+  },
 });

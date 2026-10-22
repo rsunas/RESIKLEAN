@@ -243,7 +243,9 @@ const emitStatus = (status: RoutePresenceStatus) => {
   statusListeners.forEach((listener) => listener(status));
 };
 
-const savePresence = async (location: Location.LocationObject) => {
+let presenceProcessingChain: Promise<void> = Promise.resolve();
+
+const processPresence = async (location: Location.LocationObject) => {
   const config = await getConfig();
   if (!config) return;
 
@@ -283,8 +285,30 @@ const savePresence = async (location: Location.LocationObject) => {
     changedAt,
   );
 
-  const shouldRecordEvent = ((stateChanged || firstEntry) && nextState === 'on_route')
-    || (stateChanged && nextState === 'off_route');
+  const targetEventType = nextState === 'on_route' ? 'entered' : 'left';
+  const lastEvent = await database.getFirstAsync<{ event_type: string; occurred_at: string }>(
+    `SELECT event_type, occurred_at FROM driver_route_presence_events
+     WHERE route_id = ?
+     ORDER BY occurred_at DESC, created_at DESC LIMIT 1`,
+    config.routeId,
+  );
+
+  // Strictly prevent duplicate events:
+  // 1. Never insert 'entered' if the last event was already 'entered'.
+  // 2. Never insert 'left' if the last event was already 'left' or if no 'entered' ever occurred.
+  // 3. Debounce rapid bouncing within 15 seconds.
+  const isDuplicate = lastEvent?.event_type === targetEventType;
+  const isLeavingWithoutEntering = targetEventType === 'left' && !lastEvent;
+  const elapsedSinceLastSec = lastEvent?.occurred_at
+    ? (new Date(checkedAt).getTime() - new Date(lastEvent.occurred_at).getTime()) / 1000
+    : Number.POSITIVE_INFINITY;
+  const isRapidBounce = elapsedSinceLastSec < 15;
+
+  const shouldRecordEvent = !isDuplicate
+    && !isLeavingWithoutEntering
+    && !isRapidBounce
+    && (((stateChanged || firstEntry) && nextState === 'on_route') || (stateChanged && nextState === 'off_route'));
+
   if (shouldRecordEvent) {
     await database.runAsync(
       `INSERT INTO driver_route_presence_events
@@ -292,7 +316,7 @@ const savePresence = async (location: Location.LocationObject) => {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       Crypto.randomUUID(),
       config.routeId,
-      nextState === 'on_route' ? 'entered' : 'left',
+      targetEventType,
       checkedAt,
       latitude,
       longitude,
@@ -304,6 +328,15 @@ const savePresence = async (location: Location.LocationObject) => {
 
   const status = await getStoredStatus();
   emitStatus({ ...status, enabled: true });
+};
+
+const savePresence = (location: Location.LocationObject): Promise<void> => {
+  presenceProcessingChain = presenceProcessingChain
+    .then(() => processPresence(location))
+    .catch((err) => {
+      console.warn('Error in processPresence:', err);
+    });
+  return presenceProcessingChain;
 };
 
 if (Platform.OS !== 'web' && !TaskManager.isTaskDefined(DRIVER_ROUTE_PROXIMITY_TASK)) {
@@ -373,13 +406,29 @@ export async function getRouteProximityEvents(routeId: string, limit = 6): Promi
     `SELECT id, route_id, event_type, occurred_at, latitude, longitude, distance_meters, accuracy_meters
      FROM driver_route_presence_events
      WHERE route_id = ?
-     ORDER BY occurred_at DESC
+     ORDER BY occurred_at DESC, created_at DESC
      LIMIT ?`,
     routeId,
-    limit,
+    limit * 3,
   );
 
-  return rows.map((row) => ({
+  // Filter out any consecutive duplicates of the same event_type (or identical occurred_at)
+  const deduped: EventRow[] = [];
+  for (const row of rows) {
+    if (deduped.length === 0) {
+      deduped.push(row);
+      continue;
+    }
+    const prev = deduped[deduped.length - 1];
+    // If the next row (chronologically earlier since ordered DESC) has the same event_type, skip it as a duplicate
+    if (prev.event_type === row.event_type) {
+      continue;
+    }
+    deduped.push(row);
+    if (deduped.length >= limit) break;
+  }
+
+  return deduped.map((row) => ({
     id: row.id,
     routeId: row.route_id,
     eventType: row.event_type,
@@ -481,7 +530,16 @@ export async function stopRouteProximityTracking({ forgetConfiguration = false }
     await database.execAsync(`
       DELETE FROM driver_route_tracking_config;
       DELETE FROM driver_route_presence_state;
-      DELETE FROM driver_route_presence_events;
     `);
   }
 }
+
+export async function clearRouteProximityEvents(routeId?: string) {
+  const database = await getDatabase();
+  if (routeId) {
+    await database.runAsync('DELETE FROM driver_route_presence_events WHERE route_id = ?', routeId);
+  } else {
+    await database.execAsync('DELETE FROM driver_route_presence_events;');
+  }
+}
+

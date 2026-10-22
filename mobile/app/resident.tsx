@@ -29,6 +29,11 @@ import { BrandMark } from '@/components/brand-mark';
 import { cancelScheduledCollectionReminders, scheduleCollectionReminders } from '@/lib/notifications';
 import { clearSession, getSession, saveSession, type AuthSession } from '@/lib/session';
 import { type ApiWasteType, type LegacyScheduleData, type ScheduleData, type UpcomingCollection } from '@/types/resident-schedule';
+import {
+  clearPendingCameraContext,
+  getPendingCameraContext,
+  savePendingCameraContext,
+} from '@/lib/camera-recovery';
 
 type ResidentTab = 'home' | 'schedule' | 'report' | 'profile';
 
@@ -704,6 +709,52 @@ export default function ResidentScreen() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const restorePendingResidentPhoto = async () => {
+      try {
+        const savedContext = await getPendingCameraContext();
+        if (savedContext?.type === 'resident') {
+          if (savedContext.category) setReportSubject(savedContext.category);
+          if (savedContext.notes) setDescription(savedContext.notes);
+          setIsCreatingReport(true);
+        }
+
+        const pendingResult = await ImagePicker.getPendingResultAsync();
+        if (cancelled) return;
+
+        if (!pendingResult || 'code' in pendingResult || pendingResult.canceled || !pendingResult.assets?.length) {
+          if (pendingResult && 'canceled' in pendingResult && pendingResult.canceled) {
+            await clearPendingCameraContext();
+          }
+          return;
+        }
+
+        const asset = pendingResult.assets[0];
+        if (!cancelled) {
+          setSelectedPhoto(asset);
+          setPhotoMetadata({
+            capturedAt: new Date().toISOString(),
+            width: asset.width,
+            height: asset.height,
+            fileSize: asset.fileSize,
+            mimeType: asset.mimeType || 'image/jpeg',
+          });
+          setIsCreatingReport(true);
+          setReportMessage('Photo proof recovered after returning from camera.');
+          await clearPendingCameraContext();
+          void runAiScan(asset);
+        }
+      } catch {
+        // Non-blocking recovery
+      }
+    };
+
+    void restorePendingResidentPhoto();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
     const reportId = selectedReport?._id;
     if (!session?.token || !reportId || !API_URL) {
       setReportMessages([]);
@@ -1018,11 +1069,17 @@ export default function ResidentScreen() {
       }
 
       setIsCapturingPhoto(true);
+      await savePendingCameraContext({
+        type: 'resident',
+        category: reportSubject,
+        notes: description,
+      });
+
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: false,
         cameraType: ImagePicker.CameraType.back,
         mediaTypes: ['images'],
-        quality: 0.8,
+        quality: 0.55,
       });
       if (!result.canceled) {
         const asset = result.assets[0];
@@ -1038,9 +1095,13 @@ export default function ResidentScreen() {
         }
         setSelectedPhoto(asset);
         setPhotoMetadata({ capturedAt: new Date().toISOString(), ...coordinates, width: asset.width, height: asset.height, fileSize: asset.fileSize, mimeType: asset.mimeType || 'image/jpeg' });
+        await clearPendingCameraContext();
         void runAiScan(asset);
+      } else {
+        await clearPendingCameraContext();
       }
     } catch (error) {
+      await clearPendingCameraContext();
       setReportMessage(error instanceof Error ? error.message : 'Unable to open the camera. Please try again.');
     } finally {
       setIsCapturingPhoto(false);

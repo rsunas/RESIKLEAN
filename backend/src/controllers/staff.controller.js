@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const TruckLoad = require('../models/TruckLoad');
 const Route = require('../models/Route');
 const User = require('../models/User');
@@ -39,14 +40,38 @@ const submitTruckLoad = async (req, res) => {
     // Validate routeId if provided
     let validatedRouteId = null;
     if (routeId) {
-      const route = await Route.findById(routeId).lean();
-      if (!route) {
+      const isValidObjectId = mongoose.Types.ObjectId.isValid(routeId);
+      const route = isValidObjectId ? await Route.findById(routeId).lean() : null;
+      let matchedRoute = route;
+      if (!matchedRoute && typeof req.body.area === 'string' && req.body.area.trim()) {
+        const areaQuery = req.body.area.trim().replace(/^Area\s+/i, '');
+        matchedRoute = await Route.findOne({
+          isActive: true,
+          $or: [
+            { name: new RegExp(req.body.area.trim(), 'i') },
+            { name: new RegExp(`Area ${areaQuery}`, 'i') },
+            { barangay: new RegExp(req.body.area.trim(), 'i') },
+          ],
+        }).lean();
+      }
+      if (!matchedRoute) {
         return sendError(res, 'Invalid route ID — route not found', 400);
       }
-      if (!route.isActive) {
+      if (!matchedRoute.isActive) {
         return sendError(res, 'This route is inactive and cannot be assigned to a truckload', 400);
       }
-      validatedRouteId = route._id;
+      validatedRouteId = matchedRoute._id;
+    } else if (typeof req.body.area === 'string' && req.body.area.trim()) {
+      const areaQuery = req.body.area.trim().replace(/^Area\s+/i, '');
+      const matchedRoute = await Route.findOne({
+        isActive: true,
+        $or: [
+          { name: new RegExp(req.body.area.trim(), 'i') },
+          { name: new RegExp(`Area ${areaQuery}`, 'i') },
+          { barangay: new RegExp(req.body.area.trim(), 'i') },
+        ],
+      }).lean();
+      if (matchedRoute) validatedRouteId = matchedRoute._id;
     }
 
     let photoUrl, sidePhotoUrl, backPhotoUrl;

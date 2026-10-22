@@ -16,10 +16,18 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { deleteOfflineRouteMap, downloadOfflineRouteMap, getOfflineRouteMapStatus, type OfflineRouteMapStatus } from '@/lib/driver-offline-map';
 import { enableDriverGeofencing, getDriverGeofencingStatus, stopDriverGeofencing, updateDriverGeofences } from '@/lib/driver-geofencing';
 import { getQueuedRouteLogStopIds, getRouteLogQueueStats, subscribeToRouteLogSync, syncRouteLogQueue, type RouteLogSyncResult } from '@/lib/driver-route-log-queue';
+import { isRouteCompletionQueued, queueRouteCompletion, subscribeToRouteCompletionSync } from '@/lib/driver-route-completion';
+import { getRouteHistoryCache, saveRouteHistoryCache } from '@/lib/driver-route-history-cache';
 import { recordDriverTrailLocation, startDriverTrailSession, subscribeToDriverTrailSync, syncDriverTrailQueue } from '@/lib/driver-trail-queue';
-import { cacheAssignedRoute, clearCachedAssignedRoute, enableRouteProximityTracking, getCachedAssignedRoute, getRouteProximityEvents, getRouteProximityStatus, ROUTE_ENTER_TOLERANCE_METERS, ROUTE_EXIT_TOLERANCE_METERS, stopRouteProximityTracking, subscribeToRouteProximityStatus, updateRouteProximityTracking, type RoutePresenceEvent, type RoutePresenceStatus } from '@/lib/driver-route-proximity';
+import { cacheAssignedRoute, clearCachedAssignedRoute, clearRouteProximityEvents, enableRouteProximityTracking, getCachedAssignedRoute, getRouteProximityEvents, getRouteProximityStatus, ROUTE_ENTER_TOLERANCE_METERS, ROUTE_EXIT_TOLERANCE_METERS, stopRouteProximityTracking, subscribeToRouteProximityStatus, updateRouteProximityTracking, type RoutePresenceEvent, type RoutePresenceStatus } from '@/lib/driver-route-proximity';
 import { clearSession, getSession, type AccountUser, type AuthSession } from '@/lib/session';
 import { queueCapacityLog, syncCapacityQueue } from '@/lib/driver-capacity-queue';
+import NetInfo from '@react-native-community/netinfo';
+import {
+  clearPendingCameraContext,
+  getPendingCameraContext,
+  savePendingCameraContext,
+} from '@/lib/camera-recovery';
 
 const TONNES_PER_STOP = 0.1;
 const TRUCK_DENSITY = 0.294;
@@ -392,6 +400,7 @@ export default function CollectorScreen() {
   const [latestCapacityLog, setLatestCapacityLog] = useState<CapacityLog | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [isOffline, setIsOffline] = useState(false);
   const [isGeofencingEnabled, setIsGeofencingEnabled] = useState(false);
   const [isUpdatingGeofence, setIsUpdatingGeofence] = useState(false);
   const [geofencingMessage, setGeofencingMessage] = useState<string | null>(null);
@@ -423,6 +432,7 @@ export default function CollectorScreen() {
   const [isEmptiedUndoing, setIsEmptiedUndoing] = useState(false);
   const [localResetTimestamp, setLocalResetTimestamp] = useState<number>(0);
   const emptyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isTogglingMonitoringRef = useRef(false);
   
   const handleTruckEmptied = () => {
     setIsEmptiedUndoing(true);
@@ -469,19 +479,37 @@ export default function CollectorScreen() {
     } catch {
       // The route-progress bar keeps the last known local queue state if SQLite is unavailable.
     }
-  }, [collectorId]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
 
     const restorePendingProofPhoto = async () => {
       try {
+        const savedContext = await getPendingCameraContext();
         const pendingResult = await ImagePicker.getPendingResultAsync();
-        if (cancelled || !pendingResult || 'code' in pendingResult || pendingResult.canceled) return;
+        if (cancelled) return;
+
+        if (!pendingResult || 'code' in pendingResult || pendingResult.canceled) {
+          if (pendingResult && 'canceled' in pendingResult && pendingResult.canceled) {
+            await clearPendingCameraContext();
+          }
+          return;
+        }
+
         const recoveredAsset = pendingResult.assets?.[0];
-        if (!isUsableProofAsset(recoveredAsset)) return;
+        if (!isUsableProofAsset(recoveredAsset)) {
+          await clearPendingCameraContext();
+          return;
+        }
+
         setPendingProofAsset(recoveredAsset);
         setComplaintMessage('Proof photo recovered after returning from the camera.');
+        await clearPendingCameraContext();
+
+        if (savedContext?.type === 'collector' && savedContext.complaintId) {
+          setSelectedComplaint((current) => current || complaints.find((c) => c._id === savedContext.complaintId) || null);
+        }
       } catch {
         // The camera result is optional until the driver taps resolve again.
       }
@@ -489,7 +517,7 @@ export default function CollectorScreen() {
 
     void restorePendingProofPhoto();
     return () => { cancelled = true; };
-  }, []);
+  }, [collectorId, complaints]);
 
   // Pre-warm camera permission so the OS dialog never interrupts the camera launch.
   useEffect(() => {
@@ -498,6 +526,23 @@ export default function CollectorScreen() {
         void ImagePicker.requestCameraPermissionsAsync();
       }
     });
+  }, []);
+
+  // Monitor network connection state for offline mode
+  useEffect(() => {
+    let cancelled = false;
+    const updateNetStatus = (state: { isConnected: boolean | null; isInternetReachable: boolean | null }) => {
+      const connected = Boolean(state.isConnected && state.isInternetReachable !== false);
+      if (!cancelled) setIsOffline(!connected);
+    };
+
+    const unsubscribe = NetInfo.addEventListener(updateNetStatus);
+    void NetInfo.fetch().then(updateNetStatus);
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, []);
 
   const loadDriverData = useCallback(async (token: string, cachedCollectorId?: string) => {
@@ -561,7 +606,9 @@ export default function CollectorScreen() {
       }
 
       setLoadError(errors.length ? errors[0] : null);
+      setIsOffline(false);
     } catch {
+      setIsOffline(true);
       let cachedRoute: DriverRoute | null = null;
       try {
         cachedRoute = cachedCollectorId ? await getCachedAssignedRoute<DriverRoute>(cachedCollectorId) : null;
@@ -569,9 +616,16 @@ export default function CollectorScreen() {
         // Keep the network error below if the local cache cannot be opened.
       }
       if (cachedRoute) {
-        setAssignedRoute(cachedRoute);
-        setProgress(null);
-        setLoadError('You are offline. Showing your last downloaded route.');
+        const isCompleted = cachedCollectorId ? await isRouteCompletionQueued(cachedRoute._id, cachedCollectorId) : false;
+        if (isCompleted) {
+          setAssignedRoute(null);
+          setProgress(null);
+          setLoadError(null);
+        } else {
+          setAssignedRoute(cachedRoute);
+          setProgress(null);
+          setLoadError(null);
+        }
       } else {
         setLoadError('Unable to reach the server. Check your connection and refresh.');
       }
@@ -878,20 +932,74 @@ export default function CollectorScreen() {
     if (!session?.token || !assignedRoute) return;
     const routeId = assignedRoute._id;
     const token = session.token;
+    const effectiveCollectorId = collectorId || session.user._id || session.user.id || '';
     setIsFinishRouteConfirmVisible(false);
     setIsSubmittingRoute(true);
     setRouteActionMessage(null);
+
+    const completeOffline = async () => {
+      try {
+        await queueRouteCompletion(routeId, effectiveCollectorId);
+      } catch (qErr) {
+        console.warn('Could not queue route completion in SQLite:', qErr);
+      }
+
+      try {
+        const localHistoryGroup: RouteHistoryGroup = {
+          id: `offline:${routeId}:${new Date().toISOString()}`,
+          date: new Intl.DateTimeFormat('en-CA').format(new Date()),
+          routeId,
+          routeName: assignedRoute.name,
+          barangay: displayBarangay(assignedRoute.barangay),
+          totalStops,
+          collected: completed,
+          flagged: 0,
+          distanceMi: 0,
+          greeneryPct: null,
+          elevationGainFt: 0,
+          elevationLossFt: 0,
+          sessionStartedAt: new Date().toISOString(),
+          sessionEndedAt: new Date().toISOString(),
+          stopLogs: [],
+        };
+        const cachedHistory = effectiveCollectorId ? await getRouteHistoryCache<RouteHistoryGroup>(effectiveCollectorId).catch(() => []) : [];
+        const nextHistory = [localHistoryGroup, ...cachedHistory.filter((group) => group.id !== localHistoryGroup.id)];
+        setHistoryGroups(nextHistory);
+        if (effectiveCollectorId) {
+          await saveRouteHistoryCache(effectiveCollectorId, nextHistory).catch(() => {});
+        }
+      } catch (histErr) {
+        console.warn('Could not update offline route history cache:', histErr);
+      }
+
+      setAssignedRoute(null);
+      void clearCachedAssignedRoute(effectiveCollectorId);
+      void clearRouteProximityEvents(routeId);
+      setRouteActionMessage({
+        kind: 'success',
+        title: 'Route saved offline',
+        message: 'The route completion was saved on this phone and will sync automatically when you reconnect.',
+      });
+    };
+
     try {
-      const trailContext = API_URL && collectorId
-        ? { apiUrl: API_URL, token, collectorId }
+      await disableBackgroundGeofencing().catch(() => {});
+
+      const network = await NetInfo.fetch().catch(() => ({ isConnected: false, isInternetReachable: false }));
+      if (!network.isConnected || network.isInternetReachable === false) {
+        await completeOffline();
+        return;
+      }
+
+      const trailContext = API_URL && effectiveCollectorId
+        ? { apiUrl: API_URL, token, collectorId: effectiveCollectorId }
         : null;
 
-      // Close and upload the local trail before completing the route. The API
-      // can then mark that same idempotent session as completed instead of
-      // creating a second history record without GPS points.
-      await disableBackgroundGeofencing();
-      if (trailContext) await syncDriverTrailQueue(trailContext);
+      if (trailContext) {
+        await syncDriverTrailQueue(trailContext).catch(() => {});
+      }
 
+      if (!API_URL) throw new Error('API URL is not configured.');
       const res = await fetch(`${API_URL}/collector/route/complete`, {
         method: 'POST',
         headers: {
@@ -904,13 +1012,30 @@ export default function CollectorScreen() {
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to finish the assigned route.');
       }
-      if (trailContext) await syncDriverTrailQueue(trailContext);
+      if (trailContext) void syncDriverTrailQueue(trailContext).catch(() => {});
       setAssignedRoute(null);
-      void clearCachedAssignedRoute(session.user._id || session.user.id);
+      void clearCachedAssignedRoute(effectiveCollectorId);
+      void clearRouteProximityEvents(routeId);
       setRouteActionMessage({ kind: 'success', title: 'Route completed', message: 'Today\'s assigned route has been saved successfully.' });
       void loadRouteHistory(token);
     } catch (err) {
-      setRouteActionMessage({ kind: 'error', title: 'Could not finish route', message: err instanceof Error ? err.message : 'The route could not be completed. Please try again.' });
+      const isNetworkErr = !API_URL || (err instanceof Error && (
+        err.message.includes('Network request failed') ||
+        err.message.includes('network') ||
+        err.message.includes('fetch') ||
+        err.message.includes('timeout') ||
+        err.message.includes('Failed to fetch')
+      ));
+
+      if (isNetworkErr) {
+        await completeOffline();
+      } else {
+        setRouteActionMessage({
+          kind: 'error',
+          title: 'Could not finish route',
+          message: err instanceof Error ? err.message : 'The route could not be completed. Please try again.',
+        });
+      }
     } finally {
       setIsSubmittingRoute(false);
     }
@@ -935,14 +1060,24 @@ export default function CollectorScreen() {
       }
       const groups = Array.isArray(payload.data?.groups) ? (payload.data.groups as RouteHistoryGroup[]) : [];
       setHistoryGroups(groups);
+      if (collectorId) void saveRouteHistoryCache(collectorId, groups);
       setHistoryLoadError(groups.length ? null : 'No past collections yet. After finishing your first collection, it will appear here.');
     } catch {
-      setHistoryGroups([]);
-      setHistoryLoadError('Unable to reach the server to load collection history.');
+      const cachedGroups = collectorId ? await getRouteHistoryCache<RouteHistoryGroup>(collectorId) : [];
+      setHistoryGroups(cachedGroups);
+      setHistoryLoadError(cachedGroups.length ? 'Offline: showing your last downloaded collection history.' : 'Unable to reach the server to load collection history.');
     } finally {
       setHistoryLoading(false);
     }
-  }, []);
+  }, [collectorId]);
+
+  useEffect(() => {
+    if (!API_URL || !session?.token || !collectorId) return undefined;
+    return subscribeToRouteCompletionSync(API_URL, session.token, collectorId, () => {
+      void loadDriverData(session.token, collectorId);
+      void loadRouteHistory(session.token);
+    });
+  }, [collectorId, loadDriverData, loadRouteHistory, session?.token]);
 
   const openHistoryDetail = useCallback((group: RouteHistoryGroup) => {
     setSelectedHistoryGroup(group);
@@ -1092,13 +1227,19 @@ export default function CollectorScreen() {
   }, [geofenceStops, isLoading, loadError, session]);
 
   const enableBackgroundGeofencing = useCallback(async () => {
+    if (isTogglingMonitoringRef.current) return;
     if (!assignedRoute?.routePath || !mapRouteLine) {
       setGeofencingMessage('Load an assigned route before enabling background geofencing.');
       return;
     }
 
+    isTogglingMonitoringRef.current = true;
     setIsUpdatingGeofence(true);
     setGeofencingMessage(null);
+    // Optimistic UI update: switch immediately shows active
+    setRoutePresence((prev) => ({ ...prev, enabled: true }));
+    setIsGeofencingEnabled(true);
+
     try {
       const routeResult = await enableRouteProximityTracking({
         collectorId,
@@ -1115,32 +1256,42 @@ export default function CollectorScreen() {
         setIsGeofencingEnabled(false);
       }
       setGeofencingMessage(`${routeResult.message}${stopMessage}`);
+
+      // Background sync without blocking the UI or causing switch lag
       if (routeResult.enabled && session?.token && collectorId && API_URL) {
-        applyQueueResult(await syncRouteLogQueue({ apiUrl: API_URL, token: session.token, collectorId }));
-        await syncDriverTrailQueue({ apiUrl: API_URL, token: session.token, collectorId });
+        void syncRouteLogQueue({ apiUrl: API_URL, token: session.token, collectorId }).then(applyQueueResult).catch(() => {});
+        void syncDriverTrailQueue({ apiUrl: API_URL, token: session.token, collectorId }).catch(() => {});
       }
       await refreshRoutePresence();
     } catch {
       setGeofencingMessage('Unable to enable background geofencing.');
+      setRoutePresence((prev) => ({ ...prev, enabled: false }));
+      setIsGeofencingEnabled(false);
     } finally {
       setIsUpdatingGeofence(false);
+      isTogglingMonitoringRef.current = false;
     }
   }, [API_URL, applyQueueResult, assignedRoute, collectorId, geofenceStops, mapRouteLine, refreshRoutePresence, session?.token]);
 
   const disableBackgroundGeofencing = useCallback(async () => {
+    if (isTogglingMonitoringRef.current) return;
+    isTogglingMonitoringRef.current = true;
     setIsUpdatingGeofence(true);
+    // Optimistic UI update: switch immediately shows off
+    setRoutePresence((prev) => ({ ...prev, enabled: false, state: 'unknown' }));
+    setIsGeofencingEnabled(false);
+
     try {
       await Promise.all([
         stopDriverGeofencing({ forgetConfiguration: true }),
         stopRouteProximityTracking({ forgetConfiguration: true }),
       ]);
-      setIsGeofencingEnabled(false);
-      setRoutePresence({ enabled: false, state: 'unknown' });
       setGeofencingMessage('Route monitoring is off. Existing stop logs will still sync when you reconnect.');
     } catch {
       setGeofencingMessage('Unable to turn off background geofencing.');
     } finally {
       setIsUpdatingGeofence(false);
+      isTogglingMonitoringRef.current = false;
     }
   }, []);
 
@@ -1212,19 +1363,28 @@ export default function CollectorScreen() {
         }
 
         setIsOpeningProofCamera(true);
+        await savePendingCameraContext({
+          type: 'collector',
+          complaintId: selectedComplaint._id,
+        });
         try {
           const result = await ImagePicker.launchCameraAsync({
             allowsEditing: false,
             cameraType: ImagePicker.CameraType.back,
             mediaTypes: ['images'],
-            quality: 0.65,
+            quality: 0.55,
           });
-          if (result.canceled) return;
+          if (result.canceled) {
+            await clearPendingCameraContext();
+            return;
+          }
           const capturedAsset = result.assets?.[0];
           if (!isUsableProofAsset(capturedAsset)) {
+            await clearPendingCameraContext();
             throw new Error('The camera did not return a usable photo. Please try again.');
           }
           asset = capturedAsset;
+          await clearPendingCameraContext();
         } finally {
           setIsOpeningProofCamera(false);
         }
@@ -1353,10 +1513,20 @@ export default function CollectorScreen() {
             <Text style={styles.mapPlaceholderText}>Mapbox token is missing</Text>
           </View>
         )}
-        {MAPBOX_ACCESS_TOKEN && !isLoading && (loadError || !assignedRoute) && (
+        {/* Non-intrusive offline icon badge placed at the top-left corner */}
+        {isOffline && (
+          <View
+            accessibilityLabel="Working offline"
+            accessibilityRole="image"
+            style={[styles.offlineMapBadge, { top: Math.max(insets.top + 16, 52) }]}
+          >
+            <Feather color="#c05d36" name="wifi-off" size={17} />
+          </View>
+        )}
+        {MAPBOX_ACCESS_TOKEN && !isLoading && !assignedRoute && (
           <View style={styles.mapPlaceholderLabel}>
             <Feather color={loadError ? '#c05d36' : '#4d7e69'} name={loadError ? 'alert-circle' : 'map'} size={17} />
-            <Text style={styles.mapPlaceholderText}>{loadError || (assignedRoute?.isCompletedToday ? 'You have already completed your route for today.' : assignedRoute && !assignedRoute.isScheduledToday ? 'Your route is not scheduled for today, but is still visible.' : 'No route is scheduled for today.')}</Text>
+            <Text style={styles.mapPlaceholderText}>{loadError || 'No route is scheduled for today.'}</Text>
           </View>
         )}
         {MAPBOX_ACCESS_TOKEN && !isLoading && assignedRoute && routeStops.length === 0 && (
@@ -1375,7 +1545,16 @@ export default function CollectorScreen() {
                   <Text numberOfLines={2} style={styles.geofenceCaption}>{geofencingMessage || (routePresence.enabled ? `${Math.round(routePresence.distanceMeters || 0)} m from the route - last checked ${formatTime(routePresence.lastCheckedAt)}` : `Enable to detect entry within ${ROUTE_ENTER_TOLERANCE_METERS} m and exit beyond ${ROUTE_EXIT_TOLERANCE_METERS} m.`)}</Text>
                 </View>
               </View>
-              <Pressable accessibilityLabel={routePresence.enabled ? 'Turn off route monitoring' : 'Enable route monitoring'} accessibilityRole="switch" accessibilityState={{ checked: routePresence.enabled, disabled: isUpdatingGeofence }} disabled={isUpdatingGeofence} onPress={() => void (routePresence.enabled ? disableBackgroundGeofencing() : enableBackgroundGeofencing())} style={[styles.monitoringSwitch, (isUpdatingGeofence ? !routePresence.enabled : routePresence.enabled) && styles.monitoringSwitchOn, isUpdatingGeofence && styles.geofenceButtonDisabled]}><View style={[styles.monitoringSwitchThumb, (isUpdatingGeofence ? !routePresence.enabled : routePresence.enabled) && styles.monitoringSwitchThumbOn]} /></Pressable>
+              <Pressable
+                accessibilityLabel={routePresence.enabled ? 'Turn off route monitoring' : 'Enable route monitoring'}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: routePresence.enabled, disabled: isUpdatingGeofence }}
+                disabled={isUpdatingGeofence}
+                onPress={() => void (routePresence.enabled ? disableBackgroundGeofencing() : enableBackgroundGeofencing())}
+                style={[styles.monitoringSwitch, routePresence.enabled && styles.monitoringSwitchOn]}
+              >
+                <View style={[styles.monitoringSwitchThumb, routePresence.enabled && styles.monitoringSwitchThumbOn]} />
+              </Pressable>
             </View>
             {pendingRouteLogs > 0 && <Text style={styles.geofenceQueueText}>{pendingRouteLogs} route log{pendingRouteLogs === 1 ? '' : 's'} queued for sync{failedRouteLogs ? ` (${failedRouteLogs} need attention)` : ''}.</Text>}
           </View>
@@ -1627,7 +1806,7 @@ export default function CollectorScreen() {
           <Text style={styles.signOutText}>Sign Out</Text>
         </Pressable>
       </ScrollView>
-      <View style={styles.syncBottomBar}><View style={styles.syncBottomTextWrap}><Feather color={loadError ? '#c05d36' : '#07815f'} name={loadError ? 'alert-circle' : 'wifi'} size={15} /><Text style={styles.syncBottomText}>{loadError || (isLoading ? 'Refreshing driver data…' : 'Driver data is up to date')}</Text></View><Pressable disabled={!session || isLoading} onPress={() => session && void loadDriverData(session.token, collectorId)} style={[styles.syncButton, (!session || isLoading) && styles.syncButtonDisabled]}><Text style={styles.syncButtonText}>{isLoading ? 'Refreshing' : 'Refresh'}</Text></Pressable></View>
+      <View style={styles.syncBottomBar}><View style={styles.syncBottomTextWrap}><Feather color={isOffline || loadError ? '#c05d36' : '#07815f'} name={isOffline ? 'wifi-off' : loadError ? 'alert-circle' : 'wifi'} size={15} /><Text style={styles.syncBottomText}>{loadError || (isOffline ? 'Offline mode (using saved route)' : isLoading ? 'Refreshing driver data…' : 'Driver data is up to date')}</Text></View><Pressable disabled={!session || isLoading} onPress={() => session && void loadDriverData(session.token, collectorId)} style={[styles.syncButton, (!session || isLoading) && styles.syncButtonDisabled]}><Text style={styles.syncButtonText}>{isLoading ? 'Refreshing' : 'Refresh'}</Text></Pressable></View>
     </View>
   );
 
@@ -1910,6 +2089,7 @@ const styles = StyleSheet.create({
   driverLocationMarker: { alignItems: 'center', backgroundColor: '#1976e8', borderColor: '#ffffff', borderRadius: 24, borderWidth: 3, height: 48, justifyContent: 'center', shadowColor: '#0d3c79', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.3, shadowRadius: 5, width: 48 },
   complaintMarker: { alignItems: 'center', backgroundColor: '#d44859', borderColor: '#ffffff', borderRadius: 20, borderWidth: 3, height: 38, justifyContent: 'center', shadowColor: '#7a1f2e', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 4, width: 38 },
   mapPlaceholderLabel: { alignItems: 'center', backgroundColor: 'rgba(248,252,249,0.88)', borderColor: '#c2d3c9', borderRadius: 12, borderWidth: 1, flexDirection: 'row', gap: 7, left: 20, paddingHorizontal: 12, paddingVertical: 9, position: 'absolute', right: 20, top: '47%' },
+  offlineMapBadge: { alignItems: 'center', backgroundColor: '#ffffff', borderColor: '#eed3c4', borderRadius: 19, borderWidth: 1.5, elevation: 5, height: 38, justifyContent: 'center', left: 14, position: 'absolute', shadowColor: '#2b1408', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.16, shadowRadius: 4, width: 38, zIndex: 25 },
   mapPlaceholderText: { color: '#45685a', fontSize: 11, fontWeight: '700' },
   geofenceCard: { backgroundColor: 'rgba(255,255,255,0.96)', borderColor: '#cfe2d8', borderRadius: 13, borderWidth: 1, bottom: 12, left: 12, padding: 10, position: 'absolute', right: 12, shadowColor: '#234837', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.12, shadowRadius: 8 },
   geofenceHeader: { alignItems: 'center', flexDirection: 'row', gap: 8, justifyContent: 'space-between' },
