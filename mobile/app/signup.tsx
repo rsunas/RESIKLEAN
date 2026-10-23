@@ -176,7 +176,7 @@ export default function SignupScreen() {
         throw new Error(result.error || result.errors?.[0]?.msg || 'Unable to finish your profile.');
       }
 
-      const user = result.data?.user || { name, email, phone, location, barangay: location, role: 'resident' as const };
+      const user = (result.data?.user || result.data || { name, email, phone, location, barangay: location, role: 'resident' as const }) as AccountUser;
       await saveSession({ token: googleToken, user });
       router.replace('/resident');
     } catch (caughtError) {

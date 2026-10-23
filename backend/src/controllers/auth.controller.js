@@ -104,30 +104,41 @@ const getMe = async (req, res) => {
 };
 
 // ── PATCH /api/auth/me ────────────────────────────────────────────────────────
-// Allows the logged-in user to update their own profile (name, phone, barangay).
-// Sensitive fields (role, email, password) are explicitly blocked.
+// Allows the logged-in user to update their own profile (name, phone, barangay, location, password).
+// Sensitive fields like role and email are explicitly blocked.
 const updateMe = async (req, res) => {
   try {
-    // Only allow these fields to be updated
-    const allowedFields = ['name', 'phone', 'barangay', 'location'];
-    const updates = {};
+    const user = await User.findById(req.user._id).select('+password');
+    if (!user) return sendError(res, 'User not found', 404);
+
+    const allowedFields = ['name', 'phone', 'barangay', 'location', 'home_segment_id', 'profilePhotoUrl'];
+    let hasUpdates = false;
 
     allowedFields.forEach((field) => {
       if (req.body[field] !== undefined) {
-        updates[field] = req.body[field];
+        user[field] = req.body[field];
+        hasUpdates = true;
       }
     });
 
-    if (Object.keys(updates).length === 0) {
+    if (req.body.password !== undefined && req.body.password !== '') {
+      if (typeof req.body.password !== 'string' || req.body.password.trim().length < 6) {
+        return sendError(res, 'Password must be at least 6 characters', 400);
+      }
+      user.password = req.body.password.trim();
+      hasUpdates = true;
+    }
+
+    if (!hasUpdates) {
       return sendError(res, 'No valid fields to update', 400);
     }
 
-    const user = await User.findByIdAndUpdate(req.user._id, updates, {
-      new: true,            // return the updated document
-      runValidators: true,  // enforce schema validations
-    });
+    await user.save();
 
-    sendSuccess(res, user);
+    const userObj = user.toObject();
+    delete userObj.password;
+
+    sendSuccess(res, { ...userObj, user: userObj });
   } catch (err) {
     sendError(res, err.message, 500);
   }
