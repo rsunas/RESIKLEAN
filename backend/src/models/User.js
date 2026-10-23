@@ -29,6 +29,21 @@ const userSchema = new mongoose.Schema(
       isEnabled: { type: Boolean, default: true }
     }],
     notificationsEnabled: { type: Boolean, default: true },
+    // Authentication Metadata
+    authProvider: { type: String, enum: ['local', 'google'], default: 'local' },
+    isPasswordSet: { type: Boolean, default: true },
+    // Resident / User Preferences & Settings
+    settings: {
+      theme: { type: String, enum: ['light', 'dark', 'system'], default: 'system' },
+      language: { type: String, enum: ['en', 'fil'], default: 'en' },
+      notifications: {
+        pushEnabled: { type: Boolean, default: true },
+        collectionReminders: { type: Boolean, default: true },
+        scheduleUpdates: { type: Boolean, default: true },
+        announcements: { type: Boolean, default: true },
+        reminderMinutesBefore: { type: Number, default: 30 }
+      }
+    },
   },
   { timestamps: true }
 );

@@ -20,4 +20,8 @@ router.post('/reports', upload.single('photo'), submitReport);
 router.get('/reports/:reportId/messages', getMessages);
 router.post('/reports/:reportId/messages', sendMessage);
 
+// App & SWMO Information (hotlines, waste guide, FAQs)
+const { getAppInfo } = require('../controllers/auth.controller');
+router.get('/app-info', getAppInfo);
+
 module.exports = router;
