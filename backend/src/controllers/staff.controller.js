@@ -87,9 +87,9 @@ const submitTruckLoad = async (req, res) => {
       sidePhotoUrl = sideResult.url;
       backPhotoUrl = backResult.url;
 
-      try { if (req.body.sidePhotoMetadata) sidePhotoMetadata = JSON.parse(req.body.sidePhotoMetadata); } catch (e) {}
-      try { if (req.body.backPhotoMetadata) backPhotoMetadata = JSON.parse(req.body.backPhotoMetadata); } catch (e) {}
-    } 
+      try { if (req.body.sidePhotoMetadata) sidePhotoMetadata = JSON.parse(req.body.sidePhotoMetadata); } catch (e) { }
+      try { if (req.body.backPhotoMetadata) backPhotoMetadata = JSON.parse(req.body.backPhotoMetadata); } catch (e) { }
+    }
     // Legacy support
     else if (req.files['photo']) {
       const result = await uploadPhoto(req.files['photo'][0].buffer, 'resiklean/truckloads');

@@ -21,6 +21,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { AppText as Text } from '@/components/app-text';
 import { SignOutConfirmModal } from '@/components/sign-out-confirm-modal';
+import { ResidentSettingsModal } from '@/components/resident-settings-modal';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Card } from 'heroui-native';
 import { House, MessageCircleWarning, Newspaper, UserRound } from 'lucide-react-native';
@@ -614,6 +615,7 @@ export default function ResidentScreen() {
   const [profileLocation, setProfileLocation] = useState('');
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileMessage, setProfileMessage] = useState('');
+  const [isSettingsVisible, setIsSettingsVisible] = useState(false);
   const [socketStatus, setSocketStatus] = useState<SocketStatus>('unavailable');
   const socketRef = useRef<ReturnType<typeof io> | null>(null);
   const selectedReportIdRef = useRef('');
@@ -1608,13 +1610,18 @@ export default function ResidentScreen() {
           <Text style={styles.profileName}>{displayName}</Text>
           <Text style={styles.profilePhone}>{phone}</Text>
           <Text style={styles.profileLocation}>{location}, {CITY}</Text>
-          <Pressable accessibilityRole="button" onPress={() => { setProfileMessage(''); setIsEditingProfile(true); }} style={styles.editProfileButton}><Feather color="#07815f" name="edit-2" size={14} /><Text style={styles.editProfileText}>Edit Profile</Text></Pressable>
+          <View style={styles.profileActionRow}>
+            <Pressable accessibilityRole="button" onPress={() => { setProfileMessage(''); setIsEditingProfile(true); }} style={styles.editProfileButton}><Feather color="#07815f" name="edit-2" size={14} /><Text style={styles.editProfileText}>Edit Profile</Text></Pressable>
+            <Pressable accessibilityLabel="Settings" accessibilityRole="button" onPress={() => setIsSettingsVisible(true)} style={styles.profileSettingsButton}><Feather color="#6d8175" name="settings" size={16} /></Pressable>
+          </View>
           {profileMessage ? <Text style={styles.successMessage}>{profileMessage}</Text> : null}
         </>}
       </Card>
 
       <Card style={styles.menuCard}>
-        {[{ label: 'Notifications', icon: 'bell' }, { label: 'Collection Schedule', icon: 'calendar' }, { label: 'Privacy Policy', icon: 'shield' }, { label: 'Contact SWMO', icon: 'flag' }].map((item) => <Pressable accessibilityRole="button" key={item.label} style={styles.menuRow}><Feather color="#6d8175" name={item.icon as 'bell' | 'calendar' | 'shield' | 'flag'} size={17} /><Text style={styles.menuText}>{item.label}</Text><Feather color="#a9b5af" name="chevron-right" size={18} /></Pressable>)}
+        <Pressable accessibilityRole="button" onPress={() => setIsSettingsVisible(true)} style={styles.menuRow}><Feather color="#6d8175" name="settings" size={17} /><Text style={styles.menuText}>Settings & Preferences</Text><Feather color="#a9b5af" name="chevron-right" size={18} /></Pressable>
+        <Pressable accessibilityRole="button" onPress={() => setActiveTab('schedule')} style={styles.menuRow}><Feather color="#6d8175" name="calendar" size={17} /><Text style={styles.menuText}>Collection Schedule</Text><Feather color="#a9b5af" name="chevron-right" size={18} /></Pressable>
+        <Pressable accessibilityRole="button" style={[styles.menuRow, { borderBottomWidth: 0 }]}><Feather color="#6d8175" name="shield" size={17} /><Text style={styles.menuText}>Privacy Policy</Text><Feather color="#a9b5af" name="chevron-right" size={18} /></Pressable>
       </Card>
 
       <Pressable accessibilityRole="button" onPress={signOut} style={styles.signOutButton}><Feather color="#e23d4f" name="log-out" size={17} /><Text style={styles.signOutText}>Sign Out</Text></Pressable>
@@ -1642,6 +1649,16 @@ export default function ResidentScreen() {
       <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
       {renderReportDetails()}
       <SignOutConfirmModal visible={isSignOutConfirmVisible} onCancel={() => setIsSignOutConfirmVisible(false)} onConfirm={completeSignOut} />
+      {session ? (
+        <ResidentSettingsModal
+          apiUrl={API_URL ?? ''}
+          onClose={() => setIsSettingsVisible(false)}
+          onSessionUpdate={setSession}
+          onSignOut={completeSignOut}
+          session={session}
+          visible={isSettingsVisible}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -1837,8 +1854,10 @@ const styles = StyleSheet.create({
   profileName: { color: '#2c4135', fontSize: 16, fontWeight: '800', marginTop: 10 },
   profilePhone: { color: '#6f8177', fontSize: 10, marginTop: 4 },
   profileLocation: { color: '#829087', fontSize: 10, marginTop: 3 },
-  editProfileButton: { alignItems: 'center', flexDirection: 'row', gap: 5, marginTop: 12 },
+  profileActionRow: { alignItems: 'center', flexDirection: 'row', gap: 12, marginTop: 12 },
+  editProfileButton: { alignItems: 'center', flexDirection: 'row', gap: 5 },
   editProfileText: { color: '#07815f', fontSize: 11, fontWeight: '800' },
+  profileSettingsButton: { alignItems: 'center', backgroundColor: '#f0f7f4', borderColor: '#d4e5db', borderRadius: 10, borderWidth: 1, height: 30, justifyContent: 'center', width: 30 },
   profileEditTitle: { color: '#2c4135', fontSize: 16, fontWeight: '800', marginBottom: 4 },
   profileFieldLabel: { alignSelf: 'stretch', color: '#61746a', fontSize: 11, fontWeight: '700', marginTop: 10 },
   profileInput: { alignSelf: 'stretch', backgroundColor: '#f9fbfa', borderColor: '#dbe5df', borderRadius: 10, borderWidth: 1, color: '#243f31', fontSize: 12, height: 40, marginTop: 5, paddingHorizontal: 10 },
