@@ -34,6 +34,8 @@ export default function RouteAssignmentPanel({ token }) {
   const [isSaving, setIsSaving] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const [query, setQuery] = useState('');
+  const [assignmentFilter, setAssignmentFilter] = useState('all');
 
   const loadAssignments = useCallback(async () => {
     if (!apiBase || !token) {
@@ -82,6 +84,12 @@ export default function RouteAssignmentPanel({ token }) {
     routes.some((route) => collectorId(route) === collector._id) || cycles.some((cycle) => cycleDriverId(cycle) === collector._id)
   )).length, [collectors, cycles, routes]);
 
+  const visibleCollectors = useMemo(() => collectors.filter((collector) => {
+    const assigned = routes.some((route) => collectorId(route) === collector._id) || cycles.some((cycle) => cycleDriverId(cycle) === collector._id);
+    const matchesQuery = !query.trim() || [collector.name, collector.email].some((value) => String(value || '').toLowerCase().includes(query.trim().toLowerCase()));
+    return matchesQuery && (assignmentFilter === 'all' || (assignmentFilter === 'assigned' ? assigned : !assigned));
+  }), [assignmentFilter, collectors, cycles, query, routes]);
+
   const saveAssignments = async (collector) => {
     const nextRouteId = routeSelections[collector._id];
     const nextTruckId = truckSelections[collector._id];
@@ -125,7 +133,7 @@ export default function RouteAssignmentPanel({ token }) {
   };
 
   return <Card className="route-assignment-card">
-    <div className="route-assignment-toolbar"><p>{isLoading ? 'Loading routes, drivers, and trucks...' : `${assignedCount} of ${collectors.length} drivers assigned`}</p></div>
+    <div className="route-assignment-toolbar"><p>{isLoading ? 'Loading routes, drivers, and trucks...' : `${assignedCount} of ${collectors.length} drivers assigned`}</p><label className="truck-search-control"><span className="control-search-icon" aria-hidden="true">⌕</span><input aria-label="Search collectors" onChange={(event) => setQuery(event.target.value)} placeholder="Search collectors..." value={query} /></label><AppSelect aria-label="Filter assignments" onChange={setAssignmentFilter} options={[{ label: 'All assignments', value: 'all' }, { label: 'Assigned', value: 'assigned' }, { label: 'Unassigned', value: 'unassigned' }]} value={assignmentFilter} /></div>
     {success ? <p className="feedback success-feedback" role="status">{success}</p> : null}
     {error ? <p className="feedback error-feedback" role="alert">{error}</p> : null}
     <div className="table-scroll">
@@ -134,7 +142,7 @@ export default function RouteAssignmentPanel({ token }) {
         <tbody>
           {isLoading ? <tr><td className="route-assignment-message" colSpan="5">Loading current assignments...</td></tr> : null}
           {!isLoading && !error && collectors.length === 0 ? <tr><td className="route-assignment-message" colSpan="5">No collectors are available to assign yet.</td></tr> : null}
-          {!isLoading && collectors.map((collector) => {
+          {!isLoading && visibleCollectors.map((collector) => {
             const selectedRoute = routes.find((route) => route._id === routeSelections[collector._id]);
             const assignedCycle = cycles.find((cycle) => cycleDriverId(cycle) === collector._id);
             const hasExistingAssignment = Boolean(selectedRoute || assignedCycle);

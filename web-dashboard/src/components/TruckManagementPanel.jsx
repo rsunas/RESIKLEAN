@@ -80,6 +80,7 @@ export default function TruckManagementPanel({ token }) {
   const [selectedTruck, setSelectedTruck] = useState(null);
   const [archiveTarget, setArchiveTarget] = useState(null);
   const [query, setQuery] = useState('');
+  const [availabilityFilter, setAvailabilityFilter] = useState('all');
   const [sort, setSort] = useState({ field: 'truckNumber', direction: 'asc' });
 
   const loadTrucks = useCallback(async () => {
@@ -111,11 +112,12 @@ export default function TruckManagementPanel({ token }) {
     const normalizedQuery = query.trim().toLowerCase();
     return trucks
       .filter((truck) => !normalizedQuery || truck.truckNumber.toLowerCase().includes(normalizedQuery) || truck.plateNumber.toLowerCase().includes(normalizedQuery))
+      .filter((truck) => availabilityFilter === 'all' || truck.availability === availabilityFilter)
       .sort((left, right) => {
         const result = left[sort.field].localeCompare(right[sort.field], undefined, { numeric: true, sensitivity: 'base' });
         return sort.direction === 'asc' ? result : -result;
       });
-  }, [query, sort, trucks]);
+  }, [availabilityFilter, query, sort, trucks]);
 
   const liveCapacity = getCapacity(form);
 
@@ -218,6 +220,7 @@ export default function TruckManagementPanel({ token }) {
     <Card className="truck-directory-card">
       <div className="truck-filter-row">
         <label className="truck-search-control"><FleetIcon name="search" size={17} /><input aria-label="Search trucks" onChange={(event) => setQuery(event.target.value)} placeholder="Search truck no. or plate no." value={query} /></label>
+        <select aria-label="Filter truck availability" onChange={(event) => setAvailabilityFilter(event.target.value)} value={availabilityFilter}><option value="all">All availability</option><option value="available">Available</option><option value="unavailable">Unavailable</option></select>
         <Button className="primary-button truck-add-button" onPress={openCreateEditor} startContent={<FleetIcon name="plus" size={16} />}>Add truck</Button>
       </div>
 

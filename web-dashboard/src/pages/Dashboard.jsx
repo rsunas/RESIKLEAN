@@ -1,6 +1,7 @@
 import { Button, Card, Chip, Input } from '@heroui/react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
+import { createPortal } from 'react-dom';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PageHeader from '../components/PageHeader.jsx';
@@ -326,6 +327,7 @@ function ComplaintDetailsModal({ complaint, onClose }) {
 
 function ComplaintInbox({ complaints, selectedComplaint, onSelect, onStatusChange, realtimeMessagesByReport, token }) {
   const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [messages, setMessages] = useState([]);
   const [messageDraft, setMessageDraft] = useState('');
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
@@ -333,13 +335,12 @@ function ComplaintInbox({ complaints, selectedComplaint, onSelect, onStatusChang
   const [messageError, setMessageError] = useState('');
   const filteredComplaints = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    if (!normalizedQuery) return complaints;
     return complaints.filter((complaint) => {
       const report = complaint.report || complaint;
       const reporter = report.residentId?.name || complaint.reporter || 'Resident';
-      return [reporter, complaint.street, report.description, report.barangay].filter(Boolean).some((value) => String(value).toLowerCase().includes(normalizedQuery));
+      return (!normalizedQuery || [reporter, complaint.street, report.description, report.barangay].filter(Boolean).some((value) => String(value).toLowerCase().includes(normalizedQuery))) && (statusFilter === 'all' || complaint.status === statusFilter);
     });
-  }, [complaints, query]);
+  }, [complaints, query, statusFilter]);
 
   const activeComplaint = selectedComplaint && complaints.find((complaint) => complaint.id === selectedComplaint.id);
   const report = activeComplaint?.report || activeComplaint;
@@ -410,7 +411,7 @@ function ComplaintInbox({ complaints, selectedComplaint, onSelect, onStatusChang
 
   return <Card className="complaint-inbox-card">
     <aside className="complaint-inbox-list">
-      <div className="complaint-inbox-search"><Icon name="search" size={17} /><Input aria-label="Search complaints" onChange={(event) => setQuery(event.target.value)} placeholder="Search complaints..." value={query} /></div>
+      <div className="complaint-inbox-search"><Icon name="search" size={17} /><Input aria-label="Search complaints" onChange={(event) => setQuery(event.target.value)} placeholder="Search complaints..." value={query} /><AppSelect aria-label="Filter complaints by status" onChange={setStatusFilter} options={[{ label: 'All statuses', value: 'all' }, { label: 'Pending', value: 'pending' }, { label: 'Verified', value: 'verified' }, { label: 'Resolved', value: 'resolved' }, { label: 'Rejected', value: 'rejected' }]} value={statusFilter} /></div>
       <div className="complaint-inbox-items">
         {filteredComplaints.length ? filteredComplaints.map((complaint) => {
           const itemReport = complaint.report || complaint;
@@ -445,6 +446,52 @@ function LogoutConfirmation({ onCancel, onConfirm }) {
   return <div className="modal-layer" onClick={onCancel} role="presentation"><div aria-modal="true" className="account-modal logout-confirm-modal" onClick={(event) => event.stopPropagation()} role="dialog"><div className="modal-header"><div><p className="eyebrow">Account</p><h2>Sign out?</h2></div><button aria-label="Close sign-out confirmation" onClick={onCancel} type="button">×</button></div><div className="modal-body"><p className="field-note">Are you sure you want to sign out of the admin dashboard?</p></div><div className="modal-footer"><Button className="outline-button" onPress={onCancel} type="button" variant="secondary">Cancel</Button><button className="logout-confirm-button" onClick={onConfirm} type="button">Sign out</button></div></div></div>;
 }
 
+function formatManilaSubmissionDate(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }).format(date);
+}
+
+function manilaDateBoundary(value, endOfDay = false) {
+  if (!value) return null;
+  return new Date(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00'}+08:00`);
+}
+
+function formatContactNumber(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return '—';
+  if (digits.length === 11 && digits.startsWith('09')) return `${digits.slice(0, 4)} ${digits.slice(4, 7)} ${digits.slice(7)}`;
+  return String(value);
+}
+
+function NavigationTools({ page }) {
+  const labels = { overview: ['Search overview', 'All overview data'], routes: ['Search area, street, collector, or truck', 'All route statuses'], complaints: ['Search complaints', 'All complaint statuses'], activity: ['Search staff activity', 'All activity areas'], assignments: ['Search collectors or routes', 'All assignment statuses'], accounts: ['Search accounts', 'All account roles'], trucks: ['Search trucks', 'All truck statuses'] };
+  const config = labels[page];
+  if (!config) return null;
+  return <div className="navigation-tools"><label><Icon name="search" size={16} /><input aria-label={config[0]} placeholder={config[0]} type="search" /></label><AppSelect aria-label={config[1]} options={[{ label: config[1], value: 'all' }, { label: 'Active', value: 'active' }, { label: 'Inactive', value: 'inactive' }]} value="all" /></div>;
+}
+
+function RouteHistorySearchPortal({ children }) {
+  const [target, setTarget] = useState(null);
+  useEffect(() => {
+    setTarget(document.querySelector('.route-history-card .filter-row'));
+  }, []);
+  return target ? createPortal(children, target) : null;
+}
+
+function AccountsToolbarPortal({ children }) {
+  const [target, setTarget] = useState(null);
+  useEffect(() => {
+    setTarget(document.querySelector('.accounts-table-card'));
+  }, []);
+  return target ? createPortal(children, target) : null;
+}
+
+function ActivityToolbar({ area, areas, from, onAreaChange, onClear, onFromChange, onQueryChange, onToChange, query, to, invalidRange }) {
+  return <div className="activity-toolbar"><label className="activity-search"><Icon name="search" size={16} /><input aria-label="Search staff activity" onChange={(event) => onQueryChange(event.target.value)} placeholder="Search staff activity" type="search" value={query} /></label><AppSelect aria-label="Filter staff activity by area" onChange={onAreaChange} options={[{ label: 'All activity areas', value: 'all' }, ...areas.map((value) => ({ label: value, value }))]} value={area} /><label className="activity-date-filter"><span>From</span><input aria-label="From date submitted" onChange={(event) => onFromChange(event.target.value)} type="date" value={from} /></label><label className="activity-date-filter"><span>To</span><input aria-label="To date submitted" onChange={(event) => onToChange(event.target.value)} type="date" value={to} /></label>{invalidRange ? <p className="activity-date-error" role="alert">From date must be before or equal to To date.</p> : null}<button aria-label="Clear staff activity filters" className="activity-clear-filter" onClick={onClear} type="button">Clear</button></div>;
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -473,6 +520,14 @@ export default function Dashboard() {
   const [rhBarangay, setRhBarangay] = useState('all');
   const [rhDateFrom, setRhDateFrom] = useState('');
   const [rhDateTo, setRhDateTo] = useState('');
+  const [rhQuery, setRhQuery] = useState('');
+  const [rhStatus, setRhStatus] = useState('all');
+  const [accountQuery, setAccountQuery] = useState('');
+  const [accountRole, setAccountRole] = useState('all');
+  const [activityQuery, setActivityQuery] = useState('');
+  const [activityArea, setActivityArea] = useState('all');
+  const [activityDateFrom, setActivityDateFrom] = useState('');
+  const [activityDateTo, setActivityDateTo] = useState('');
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -556,6 +611,11 @@ export default function Dashboard() {
 
   const loadRouteHistory = useCallback(async () => {
     if (!API_URL || !token) return;
+    if (rhDateFrom && rhDateTo && rhDateFrom > rhDateTo) {
+      setRouteHistoryError('The From date must be earlier than or equal to the To date.');
+      setRouteHistoryRows([]);
+      return;
+    }
     setRouteHistoryLoading(true);
     setRouteHistoryError('');
     try {
@@ -676,6 +736,14 @@ export default function Dashboard() {
     return [...createdAccounts, ...apiData.users.filter((user) => ['collector', 'staff'].includes(user.role)).map((user) => ({ id: user._id, name: user.name, role: user.role, area: user.barangay || 'Not assigned', contact: user.contact || '—', email: user.email, profilePhotoUrl: user.profilePhotoUrl || '' }))];
   }, [apiData.users, createdAccounts]);
 
+  const filteredAccountRows = useMemo(() => {
+    const query = accountQuery.trim().toLowerCase();
+    return accountRows.filter((account) => {
+      const matchesQuery = !query || [account.name, account.role, account.area, account.contact, account.email].some((value) => String(value || '').toLowerCase().includes(query));
+      return matchesQuery && (accountRole === 'all' || account.role === accountRole);
+    });
+  }, [accountQuery, accountRole, accountRows]);
+
   const routeRows = useMemo(() => {
     if (!apiData.routes?.length) {
       const fallbackAreaCodes = {
@@ -697,9 +765,20 @@ export default function Dashboard() {
 
   const formatLoadDimension = (value) => value ? Number(value).toFixed(1) : '—';
   const activityRows = useMemo(() => {
-    if (!apiData.loads?.length) return PLACEHOLDER_ACTIVITY;
-    return apiData.loads.map((load) => ({ id: load._id, area: routeAreaCode(load.routeId?.name || load.routeId?.routeName || load.routeId?.area || 'Unassigned area'), driver: load.staffId?.name || 'Staff member', truckPlate: load.truckPlate || 'Unknown truck', length: formatLoadDimension(load.length), width: formatLoadDimension(load.width), height: formatLoadDimension(load.height), slope: `${Number(load.slope || 0).toFixed(1)} m³`, tonnage: formatTonnes(load.tonnesEstimate), time: new Date(load.arrivedAt).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' }), date: load.arrivedAt ? new Date(load.arrivedAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Date unavailable', photoUrl: load.photoUrl || '', notes: load.notes || '' }));
+    if (!apiData.loads?.length) return [];
+    return apiData.loads.map((load) => ({ id: load._id, area: routeAreaCode(load.routeId?.name || load.routeId?.routeName || load.routeId?.area || 'Unassigned area'), driver: load.staffId?.name || 'Staff member', truckPlate: load.truckPlate || 'Unknown truck', length: formatLoadDimension(load.length), width: formatLoadDimension(load.width), height: formatLoadDimension(load.height), slope: `${Number(load.slope || 0).toFixed(1)} m³`, tonnage: formatTonnes(load.tonnesEstimate), submittedAt: load.arrivedAt || null, time: load.arrivedAt ? formatManilaSubmissionDate(load.arrivedAt).split(', ').at(-1) : '—', date: formatManilaSubmissionDate(load.arrivedAt), photoUrl: load.photoUrl || '', notes: load.notes || '' })).sort((left, right) => (right.submittedAt ? new Date(right.submittedAt).getTime() : -Infinity) - (left.submittedAt ? new Date(left.submittedAt).getTime() : -Infinity));
   }, [apiData.loads]);
+
+  const activityAreas = useMemo(() => [...new Set(activityRows.map((row) => row.area).filter(Boolean))].sort(), [activityRows]);
+  const filteredActivityRows = useMemo(() => {
+    const query = activityQuery.trim().toLowerCase();
+    const from = manilaDateBoundary(activityDateFrom);
+    const to = manilaDateBoundary(activityDateTo, true);
+    return activityRows.filter((row) => {
+      const submittedAt = row.submittedAt ? new Date(row.submittedAt) : null;
+      return (!query || [row.driver, row.area, row.truckPlate, row.date].some((value) => String(value || '').toLowerCase().includes(query))) && (activityArea === 'all' || row.area === activityArea) && (!from || (submittedAt && submittedAt >= from)) && (!to || (submittedAt && submittedAt <= to));
+    });
+  }, [activityArea, activityDateFrom, activityDateTo, activityQuery, activityRows]);
 
   const tonnageSeries = useMemo(() => apiData.usingPlaceholder ? [] : buildTonnageSeries(apiData.loads), [apiData.loads, apiData.usingPlaceholder]);
   useMemo(() => activityRows.map((row) => {
@@ -1075,7 +1154,7 @@ export default function Dashboard() {
     <Card className="overview-routes"><div className="card-heading-row overview-route-heading"><div><p className="eyebrow">Collection tracking</p><h3>Recent route activity</h3><p>Street-level collection status</p></div><button className="text-button" onClick={() => selectPage('routes')}>View route history <Icon name="arrow" size={15} /></button></div>{routeRows.slice(0, 4).map((route) => <RoutePreview key={route.id} route={route} />)}<button className="view-more" onClick={() => selectPage('routes')}>View all {routeRows.length} entries <Icon name="arrow" size={15} /></button></Card>
   </>;
 
-  const rhDisplayRows = routeHistoryRows.length ? routeHistoryRows : (routeHistoryLoading ? [] : PLACEHOLDER_ROUTES.map((r) => ({
+  const rawRhDisplayRows = routeHistoryRows.length ? routeHistoryRows : (routeHistoryLoading ? [] : PLACEHOLDER_ROUTES.map((r) => ({
     id: r.id,
     area: r.area,
     date: r.date,
@@ -1091,6 +1170,12 @@ export default function Dashboard() {
     rowStatus: r.status === 'not collected' ? 'partial' : 'collected',
     segmentStatus: r.status === 'not collected' ? 'Partial' : 'Collected',
   })));
+
+  const rhDisplayRows = useMemo(() => {
+    const query = rhQuery.trim().toLowerCase();
+    if (!query) return rawRhDisplayRows;
+    return rawRhDisplayRows.filter((row) => [getRhArea(row), row.street, row.routeName, getRhCollectorName(row), getRhTruckTitle(row), getRhTruckSubtitle(row)].some((value) => String(value || '').toLowerCase().includes(query)));
+  }, [rawRhDisplayRows, rhQuery]);
 
   const routeHistory = <><PageHeader action={<Button className="outline-button" isDisabled={routeHistoryLoading} onPress={loadRouteHistory} variant="secondary"><Icon name="refresh" size={16} />{routeHistoryLoading ? 'Refreshing…' : 'Refresh'}</Button>} description="Completed route collections with geofence-verified entry and exit events" title="Route History" />{routeHistoryError ? <p className="feedback error-feedback">{routeHistoryError}</p> : null}<Card className="table-card route-history-card"><div className="filter-row"><AppSelect aria-label="Filter by collector" onChange={setRhCollectorId} options={routeHistoryFilterCollectors} value={rhCollectorId} /><AppSelect aria-label="Filter by area" onChange={setRhBarangay} options={routeHistoryFilterBarangays} value={rhBarangay} /><input aria-label="Filter from date" onChange={(e) => setRhDateFrom(e.target.value)} type="date" value={rhDateFrom} /><input aria-label="Filter to date" onChange={(e) => setRhDateTo(e.target.value)} type="date" value={rhDateTo} /><AppSelect aria-label="Filter by status" onChange={() => {}} options={[{ label: 'All statuses', value: 'all' }, { label: 'Collected', value: 'collected' }, { label: 'Partial', value: 'partial' }, { label: 'Flagged', value: 'flagged' }, { label: 'Not collected', value: 'notcollected' }]} value="all" /><span className="entries-count">{routeHistoryPagination.total || rhDisplayRows.length} entries</span></div><div className="table-scroll"><table className="standard-data-table admin-data-table route-history-table"><thead><tr><th>Area</th><th>Date</th><th>Street Segment</th><th>Collector</th><th>Truck</th><th className="actions-col">Actions</th></tr></thead><tbody>{routeHistoryLoading ? (<tr><td className="loading-cell" colSpan={6}><Icon name="refresh" size={16} />Loading route history…</td></tr>) : rhDisplayRows.length ? rhDisplayRows.map((row) => {
     const isFlagged = getRhFlaggedCount(row) > 0;
@@ -1110,9 +1195,10 @@ export default function Dashboard() {
 
   const complaintInbox = <><PageHeader title="Complaint queue" />{complaintUpdateError ? <p className="feedback error-feedback">{complaintUpdateError}</p> : null}<ComplaintInbox complaints={complaintRows} onSelect={setSelectedComplaint} onStatusChange={updateComplaintStatus} realtimeMessagesByReport={realtimeMessagesByReport} selectedComplaint={selectedComplaint} token={token} /></>;
 
-  const activity = <>
+  const activityDateRangeInvalid = Boolean(activityDateFrom && activityDateTo && activityDateFrom > activityDateTo);
+  const activity = <><ActivityToolbar area={activityArea} areas={activityAreas} from={activityDateFrom} invalidRange={activityDateRangeInvalid} onAreaChange={setActivityArea} onClear={() => { setActivityQuery(''); setActivityArea('all'); setActivityDateFrom(''); setActivityDateTo(''); }} onFromChange={setActivityDateFrom} onQueryChange={setActivityQuery} onToChange={setActivityDateTo} query={activityQuery} to={activityDateTo} />
     <PageHeader action={<Button className="outline-button" isDisabled={isRefreshing} onPress={refreshDashboard} variant="secondary">{isRefreshing ? 'Refreshing…' : 'Refresh data'}</Button>} description={apiData.usingPlaceholder ? 'Sample activity while the admin API is unavailable' : `${totalLoads} recorded truckload${totalLoads === 1 ? '' : 's'} · click a submission to view its audit photo`} title="Staff activity log" />
-    <Card className="table-card staff-activity-card"><div className="table-scroll"><table className="standard-data-table admin-data-table"><thead><tr><th>Staff submitted</th><th>Area</th><th>L (m)</th><th>W (m)</th><th>H (m)</th><th>Slope</th><th>Tonnage</th></tr></thead><tbody>{activityRows.map((row) => <tr aria-label={`View truckload from ${row.area}`} className="activity-row" key={row.id} onClick={() => row.photoUrl || row.notes ? setSelectedActivity(row) : null} onKeyDown={(event) => { if ((event.key === 'Enter' || event.key === ' ') && (row.photoUrl || row.notes)) { event.preventDefault(); setSelectedActivity(row); } }} tabIndex={row.photoUrl || row.notes ? 0 : undefined}><td><strong>{row.driver}</strong></td><td>{row.area}</td><td>{row.length}</td><td>{row.width}</td><td>{row.height}</td><td>{row.slope}</td><td className="tonnage-cell">{row.tonnage}</td></tr>)}</tbody></table></div></Card>
+    <Card className="table-card staff-activity-card"><div className="table-scroll"><table className="standard-data-table admin-data-table"><thead><tr><th>Staff submitted</th><th>Date submitted</th><th>Area</th><th>L (m)</th><th>W (m)</th><th>H (m)</th><th>Slope</th><th>Tonnage</th></tr></thead><tbody>{activityDateRangeInvalid ? <tr><td className="empty-cell" colSpan={8}>Choose a valid date range.</td></tr> : filteredActivityRows.length ? filteredActivityRows.map((row) => <tr aria-label={`View truckload from ${row.area}`} className="activity-row" key={row.id} onClick={() => row.photoUrl || row.notes ? setSelectedActivity(row) : null} onKeyDown={(event) => { if ((event.key === 'Enter' || event.key === ' ') && (row.photoUrl || row.notes)) { event.preventDefault(); setSelectedActivity(row); } }} tabIndex={row.photoUrl || row.notes ? 0 : undefined}><td><strong>{row.driver}</strong></td><td>{row.date}</td><td>{row.area}</td><td>{row.length}</td><td>{row.width}</td><td>{row.height}</td><td>{row.slope}</td><td className="tonnage-cell">{row.tonnage}</td></tr>) : <tr><td className="empty-cell" colSpan={8}>No submitted truckloads match the current filters.</td></tr>}</tbody></table></div></Card>
   </>;
 
   const assignments = <><PageHeader description="Assign collection routes and registered trucks to each collector" title="Collector assignments" /><RouteAssignmentPanel token={token} /></>;
@@ -1120,9 +1206,11 @@ export default function Dashboard() {
   const trucks = <><PageHeader description="Register fleet vehicles and review their dimensions" title="Truck management" /><TruckManagementPanel token={token} /></>;
   const manageRoutes = <><PageHeader description="Trace collection paths and maintain ordered collection stops." title="Route management" /><RouteManagementPanel token={token} /></>;
 
-  const accountPage = <Card className="table-card accounts-table-card"><div className="table-scroll"><table className="standard-data-table admin-data-table"><thead><tr><th>Name</th><th>Role</th><th>Assigned area</th><th>Contact</th><th>Email</th><th className="accounts-action-header"><Button className="primary-button accounts-action-button" onPress={() => { setSubmissionState({ loading: false, error: '', message: '' }); setShowAccountForm(true); }}><Icon name="plus" size={16} />Add account</Button></th></tr></thead><tbody>{accountRows.map((account) => <tr key={account.id}><td><AvatarName name={account.name} photoUrl={account.profilePhotoUrl} /></td><td><Chip className={`role-chip role-${account.role}`} size="sm">{titleCase(account.role)}</Chip></td><td>{account.area}</td><td>{account.contact}</td><td>{account.email}</td><td aria-hidden="true" /></tr>)}</tbody></table></div></Card>;
+  const accountPage = <Card className="table-card accounts-table-card"><div className="table-scroll"><table className="standard-data-table admin-data-table"><thead><tr><th>Name</th><th>Role</th><th>Assigned area</th><th>Contact</th><th>Email</th><th className="accounts-action-header"><Button className="primary-button accounts-action-button" onPress={() => { setSubmissionState({ loading: false, error: '', message: '' }); setShowAccountForm(true); }}><Icon name="plus" size={16} />Add account</Button></th></tr></thead><tbody>{accountRows.map((account) => <tr key={account.id}><td><AvatarName name={account.name} photoUrl={account.profilePhotoUrl} /></td><td><Chip className={`role-chip role-${account.role}`} size="sm">{titleCase(account.role)}</Chip></td><td>{account.area}</td><td>{formatContactNumber(account.contact)}</td><td>{account.email}</td><td aria-hidden="true" /></tr>)}</tbody></table></div></Card>;
 
-  const pageContent = { overview, routes: routeHistory, complaints: complaintInbox, activity, 'manage-routes': manageRoutes, assignments, accounts: accountPage, trucks }[activePage];
+  const routeHistorySearch = <RouteHistorySearchPortal><label className="route-history-search-wrapper"><Icon name="search" size={17} /><input aria-label="Search route history" onChange={(event) => setRhQuery(event.target.value)} placeholder="Search area, street, collector, or truck" type="search" value={rhQuery} /></label></RouteHistorySearchPortal>;
+  const accountsToolbar = <AccountsToolbarPortal><div className="accounts-toolbar"><NavigationTools page="accounts" /><Button className="primary-button accounts-action-button" onPress={() => { setSubmissionState({ loading: false, error: '', message: '' }); setShowAccountForm(true); }}><Icon name="plus" size={16} />Add account</Button></div></AccountsToolbarPortal>;
+  const pageContent = { overview, routes: <>{routeHistorySearch}{routeHistory}</>, complaints: complaintInbox, activity, 'manage-routes': manageRoutes, assignments, accounts: <>{accountsToolbar}{accountPage}</>, trucks }[activePage];
   return <main className="admin-shell"><aside className="admin-sidebar"><div className="brand"><img alt="ResiKlean logo" className="brand-logo" src="/swmo-resiklean-logo.svg" /></div><nav>{NAV_ITEMS.map((item) => <button aria-current={activePage === item.id ? 'page' : undefined} className={activePage === item.id ? 'nav-link active' : 'nav-link'} key={item.id} onClick={() => selectPage(item.id)}><Icon name={item.icon} />{item.label}</button>)}</nav><button className="signout-button" onClick={() => setShowLogoutConfirm(true)}><Icon name="logout" />Sign out</button></aside><section className="admin-workspace"><header className="topbar"><div className="topbar-actions"><button aria-label="Notifications" className="notification-button"><Icon name="bell" size={19} /><i /></button><div className="topbar-avatar">{initials(storedUser.name || 'Admin')}</div><strong className="admin-name">{storedUser.name || 'Admin'}</strong></div></header><section className="dashboard-content">{apiData.usingPlaceholder ? <p className="data-note">Live dashboard data is unavailable. Sample records are shown for the tables; the tonnage chart intentionally stays empty.</p> : null}{pageContent}</section></section>{showAccountForm ? <div className="modal-layer" role="presentation"><div aria-modal="true" className="account-modal" role="dialog"><form onSubmit={createAccount}><div className="modal-header"><div><p className="eyebrow">Account management</p><h2>Add new account</h2></div><button aria-label="Close account form" onClick={() => setShowAccountForm(false)} type="button">×</button></div><div className="modal-body"><label>Full name<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. Juan dela Cruz" required value={newAccount.name} /></label><label>Contact number<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, contact: event.target.value }))} placeholder="09XXXXXXXXX" value={newAccount.contact} /></label><label>Email address<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, email: event.target.value }))} placeholder="user@nagacity.gov.ph" value={newAccount.email} /></label><label>Temporary password<Input fullWidth minLength="6" onChange={(event) => setNewAccount((current) => ({ ...current, password: event.target.value }))} placeholder="At least 6 characters" required type="password" value={newAccount.password} /></label><label>Role<select onChange={(event) => setNewAccount((current) => ({ ...current, role: event.target.value }))} value={newAccount.role}><option value="collector">Collector</option><option value="staff">Staff</option></select></label><p className="field-note">Contact number is dashboard-only until the backend stores it.</p>{submissionState.error ? <p className="feedback error-feedback">{submissionState.error}</p> : null}</div><div className="modal-footer"><Button className="outline-button" onPress={() => setShowAccountForm(false)} type="button" variant="secondary">Cancel</Button><Button className="primary-button" isDisabled={submissionState.loading} type="submit">{submissionState.loading ? 'Creating…' : 'Create account'}</Button></div></form></div></div> : null}{selectedActivity ? <div className="modal-layer" onClick={() => setSelectedActivity(null)} role="presentation"><div aria-modal="true" className="activity-detail-modal" onClick={(event) => event.stopPropagation()} role="dialog"><div className="modal-header"><div><p className="eyebrow">Landfill operations</p><h2>Truckload submission</h2></div><button aria-label="Close truckload details" onClick={() => setSelectedActivity(null)} type="button">×</button></div><div className="activity-detail-body">{selectedActivity.photoUrl ? <img alt={`Audit photo for ${selectedActivity.area}`} className="activity-detail-photo" src={selectedActivity.photoUrl} /> : <div className="activity-photo-empty"><Icon name="image" size={28} /><p>No audit photo available</p></div>}<div className="activity-detail-grid"><div><span>Area</span><strong>{selectedActivity.area}</strong></div><div><span>Staff</span><strong>{selectedActivity.driver}</strong></div><div><span>Truck</span><strong>{selectedActivity.truckPlate}</strong></div><div><span>Submitted</span><strong>{selectedActivity.date} · {selectedActivity.time}</strong></div><div><span>Measurements</span><strong>{selectedActivity.length} m × {selectedActivity.width} m × {selectedActivity.height} m</strong></div><div><span>Slope</span><strong>{selectedActivity.slope}</strong></div><div><span>Estimated tonnage</span><strong className="tonnage-cell">{selectedActivity.tonnage}</strong></div></div>{selectedActivity.notes ? <div className="activity-detail-notes"><span>Notes</span><p>{selectedActivity.notes}</p></div> : null}</div><div className="modal-footer"><Button className="outline-button" onPress={() => setSelectedActivity(null)} type="button" variant="secondary">Close</Button></div></div></div> : null}{isRouteHistoryDetailVisible ? (() => {
     const d = selectedRouteHistory;
     const placeholderData = !d ? {
