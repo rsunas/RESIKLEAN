@@ -8,6 +8,7 @@ const RouteTrailPoint = require('../models/RouteTrailPoint');
 const MissedReport = require('../models/MissedReport');
 const TruckLoad = require('../models/TruckLoad');
 const Truck = require('../models/Truck');
+const { validateTruckDimensions } = require('../utils/truckDimensions');
 const DailyCycleLog = require('../models/DailyCycleLog');
 const CapacityLog = require('../models/CapacityLog');
 const socketService = require('../services/socket.service');
@@ -499,9 +500,8 @@ const createTruck = async (req, res) => {
       return sendError(res, 'plateNumber, truckNumber, color, length, width, and height are required', 400);
     }
 
-    if (length <= 0 || width <= 0 || height <= 0) {
-      return sendError(res, 'All dimensions must be positive numbers', 400);
-    }
+    const dimensionError = validateTruckDimensions({ length, width, height });
+    if (dimensionError) return sendError(res, dimensionError, 400);
 
     if (availability && !['available', 'unavailable'].includes(availability)) {
       return sendError(res, 'availability must be either "available" or "unavailable"', 400);
@@ -550,12 +550,8 @@ const updateTruck = async (req, res) => {
       return sendError(res, 'No valid fields provided to update', 400);
     }
 
-    // Validate positive numbers if provided
-    for (const numField of ['length', 'width', 'height']) {
-      if (updates[numField] !== undefined && updates[numField] <= 0) {
-        return sendError(res, `${numField} must be a positive number`, 400);
-      }
-    }
+    const dimensionError = validateTruckDimensions(updates, { partial: true });
+    if (dimensionError) return sendError(res, dimensionError, 400);
 
     // Validate availability if provided
     if (updates.availability && !['available', 'unavailable'].includes(updates.availability)) {

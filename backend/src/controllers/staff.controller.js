@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const TruckLoad = require('../models/TruckLoad');
+const { validateTruckDimensions } = require('../utils/truckDimensions');
 const Route = require('../models/Route');
 const User = require('../models/User');
 const DailyCycleLog = require('../models/DailyCycleLog');
@@ -32,6 +33,9 @@ const submitTruckLoad = async (req, res) => {
     if (!truckPlate || !length || !width || !height) {
       return sendError(res, 'truckPlate, length, width, and height are required', 400);
     }
+
+    const dimensionError = validateTruckDimensions({ length, width, height });
+    if (dimensionError) return sendError(res, dimensionError, 400);
 
     if (!req.files || (!req.files['sidePhoto'] && !req.files['backPhoto'] && !req.files['photo'])) {
       return sendError(res, 'Proof photos are required', 400);

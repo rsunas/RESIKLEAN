@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { dimensionSchema } = require('../utils/truckDimensions');
 
 /**
  * Truck — fleet registry for the sanitary landfill.
@@ -29,21 +30,9 @@ const truckSchema = new mongoose.Schema(
       trim: true,
     },
     // Dimensions in meters
-    length: {
-      type: Number,
-      required: [true, 'Length (m) is required'],
-      min: [0.01, 'Length must be a positive number'],
-    },
-    width: {
-      type: Number,
-      required: [true, 'Width (m) is required'],
-      min: [0.01, 'Width must be a positive number'],
-    },
-    height: {
-      type: Number,
-      required: [true, 'Height (m) is required'],
-      min: [0.01, 'Height must be a positive number'],
-    },
+    length: dimensionSchema('length'),
+    width: dimensionSchema('width'),
+    height: dimensionSchema('height'),
     availability: {
       type: String,
       enum: ['available', 'unavailable'],

@@ -1,18 +1,25 @@
+import { ProfileSettingsRow } from '@/components/profile-settings-row';
+import { MotionPressable as Pressable, TabTransition, useSlidingTabPill, useClosingValue, RevealRow, useFirstLoadReveal, ToastMotion } from '@/components/app-motion';
+import { SkeletonBlock, SkeletonRegion, SkeletonRows, useSkeletonVisible } from '@/components/loading-skeleton';
 import { Feather, MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-icons';
 import * as Crypto from 'expo-crypto';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import { Image as ExpoImage } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
 import NetInfo from '@react-native-community/netinfo';
 import { StatusBar } from 'expo-status-bar';
 import { Button, Card } from 'heroui-native';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Modal,
-  Pressable,
+  KeyboardAvoidingView,
+  Platform,
   ScrollView,
   StyleSheet,
+  Text as NativeText,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -20,6 +27,7 @@ import { AppSelect, type AppSelectOption } from '@/components/app-select';
 import { AppText as Text } from '@/components/app-text';
 import { BrandMark } from '@/components/brand-mark';
 import { SignOutConfirmModal } from '@/components/sign-out-confirm-modal';
+import { StaffSubmissionDetails } from '@/components/staff-submission-details';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { clearSession, getSession } from '@/lib/session';
 import {
@@ -39,6 +47,7 @@ import {
   getPendingCameraContext,
   savePendingCameraContext,
 } from '@/lib/camera-recovery';
+import { optimizeProofPhoto, proofCameraOptions } from '@/lib/proof-photo';
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 const MAX_AUDIT_PHOTO_SIZE = 5 * 1024 * 1024;
@@ -146,6 +155,11 @@ type TonnagePreview = {
 const SLOPES = ['0.5 - Moderate Slope', '0.0 - Level Surface', '1.0 - Steep Slope'];
 
 const formatTonnage = (tonnes: number) => `${tonnes.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} t`;
+const formatHistoryNumber = (value: number) => value.toLocaleString('en-PH', {
+  ...(value >= 1_000_000 ? { notation: 'compact' as const } : {}),
+  maximumFractionDigits: 2,
+});
+const formatHistoryTonnage = (tonnes: number) => `${formatHistoryNumber(tonnes)} t`;
 const formatFileSize = (size: number) => `${(size / (1024 * 1024)).toFixed(1)} MB`;
 const areaLabel = (area: AreaOption) => {
   const match = area.name?.match(/\bArea\s+(\d+)\s*([A-Za-z]?)/i);
@@ -219,6 +233,11 @@ function mapTruckLoad(load: TruckLoadResponse, staffName = 'You', fallbackArea =
 
 async function getAssetSize(asset: ImagePicker.ImagePickerAsset): Promise<number> {
   if (typeof asset.fileSize === 'number' && asset.fileSize > 0) return asset.fileSize;
+  if (asset.uri.startsWith('file://')) {
+    const info = await FileSystem.getInfoAsync(asset.uri);
+    if (info.exists && 'size' in info && typeof info.size === 'number') return info.size;
+    throw new Error('Unable to read the captured photo. Please retake it.');
+  }
   try {
     const response = await fetch(asset.uri);
     const blob = await response.blob();
@@ -231,26 +250,27 @@ async function getAssetSize(asset: ImagePicker.ImagePickerAsset): Promise<number
 }
 
 async function prepareAuditPhoto(asset: ImagePicker.ImagePickerAsset): Promise<AuditPhoto> {
-  const mimeType = asset.mimeType || 'image/jpeg';
+  const optimizedAsset = await optimizeProofPhoto(asset);
+  const mimeType = optimizedAsset.mimeType || 'image/jpeg';
   if (!ALLOWED_AUDIT_PHOTO_TYPES.includes(mimeType)) {
     throw new Error('Use a JPEG, PNG, or WebP audit photo.');
   }
 
-  const size = await getAssetSize(asset);
+  const size = await getAssetSize(optimizedAsset);
   if (size > MAX_AUDIT_PHOTO_SIZE) {
     throw new Error(`The photo is ${formatFileSize(size)}. Retake it at a lower resolution; the 5 MB limit is strict.`);
   }
 
   const extension = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg';
   return {
-    uri: asset.uri,
-    fileName: asset.fileName || `truckload-audit-${Date.now()}.${extension}`,
+    uri: optimizedAsset.uri,
+    fileName: optimizedAsset.fileName || `truckload-audit-${Date.now()}.${extension}`,
     mimeType,
     size,
-    width: asset.width,
-    height: asset.height,
+    width: optimizedAsset.width,
+    height: optimizedAsset.height,
     capturedAt: new Date().toISOString(),
-    webFile: asset.file,
+    webFile: optimizedAsset.file,
   };
 }
 
@@ -280,7 +300,6 @@ function auditPhotoMetadata(photo: AuditPhoto) {
 function AuditPhotoField({ disabled, label, loading, onPress, photo }: { disabled: boolean; label: string; loading?: boolean; onPress: () => void; photo: AuditPhoto | null }) {
   return (
     <View style={styles.photoSlot}>
-      <Text style={styles.label}>{label} photo <Text style={styles.required}>*</Text></Text>
       <Pressable
         accessibilityLabel={`${label} proof photo`}
         accessibilityRole="button"
@@ -305,15 +324,16 @@ function AuditPhotoField({ disabled, label, loading, onPress, photo }: { disable
           <Text style={[styles.photoTitle, photo && styles.photoOverlayTitle]}>
             {loading ? `Opening camera...` : photo ? `${label} photo attached` : `Capture ${label} photo`}
           </Text>
-          <Text style={[styles.photoCaption, photo && styles.photoCaptionAttached]}>{photo ? `${formatFileSize(photo.size)} · Ready` : 'Original image · 5 MB maximum'}</Text>
+          <Text style={[styles.photoCaption, photo && styles.photoCaptionAttached]}>{photo ? `${formatFileSize(photo.size)} · Ready` : 'JPEG, PNG or WebP · 5 MB max'}</Text>
         </View>
       </Pressable>
     </View>
   );
 }
 
-function SelectField({ disabled = false, label, onChange, options, placeholder, value }: { disabled?: boolean; label: string; onChange: (value: string) => void; options: AppSelectOption[]; placeholder: string; value: string }) {
-  return <AppSelect disabled={disabled} label={label} onChange={onChange} options={options} placeholder={placeholder} value={value} />;
+function SelectField({ disabled = false, loading = false, error, icon, label, onChange, options, placeholder, value }: { disabled?: boolean; loading?: boolean; error?: string; icon: 'truck' | 'map-pin' | 'user' | 'trending-up'; label: string; onChange: (value: string) => void; options: AppSelectOption[]; placeholder: string; value: string }) {
+  const skeleton = useSkeletonVisible(loading, options.length > 0, error);
+  return <SkeletonRegion state={skeleton} placeholder={<View style={styles.selectSkeleton}><Text style={styles.measurementLabel}>{label}</Text><SkeletonBlock height={56} radius={16} /></View>}><AppSelect appearance="staff" disabled={disabled} leadingIcon={icon} label={label} onChange={onChange} options={options} placeholder={placeholder} value={value} /></SkeletonRegion>;
 }
 
 function MeasurementField({ label, value }: { label: string; value: string }) {
@@ -330,6 +350,7 @@ function MeasurementField({ label, value }: { label: string; value: string }) {
 
 function BottomNavigation({ activeTab, onChange }: { activeTab: Tab; onChange: (tab: Tab) => void }) {
   const insets = useSafeAreaInsets();
+  const pill = useSlidingTabPill(activeTab);
   const items: { key: Tab; label: string; icon: 'clipboard' | 'activity' | 'user' }[] = [
     { key: 'input', label: 'Input', icon: 'clipboard' },
     { key: 'history', label: 'History', icon: 'activity' },
@@ -337,19 +358,23 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: Tab; onChange: (
   ];
 
   return (
-    <View style={[styles.bottomNav, { height: 72 + insets.bottom, paddingBottom: insets.bottom }]}>
+    <View style={[styles.bottomNav, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+      {pill.indicator}
       {items.map((item) => {
         const active = activeTab === item.key;
         return (
           <Pressable
+            motionDisabled
+            onLayout={(event) => pill.itemLayout(item.key, event)}
             accessibilityRole="tab"
             accessibilityState={{ selected: active }}
             key={item.key}
             onPress={() => onChange(item.key)}
             style={styles.navItem}>
-            <Feather color={active ? '#07815f' : '#9aa29d'} name={item.icon} size={21} />
+            <View onLayout={(event) => pill.iconLayout(item.key, event)} collapsable={false} style={styles.navIcon}>
+              <Feather color={active ? '#086B42' : '#5A6761'} name={item.icon} size={21} />
+            </View>
             <Text style={[styles.navLabel, active && styles.navLabelActive]}>{item.label}</Text>
-            {active ? <View style={styles.navIndicator} /> : null}
           </Pressable>
         );
       })}
@@ -359,6 +384,8 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: Tab; onChange: (
 
 export default function StaffScreen() {
   const router = useRouter();
+  const { fontScale } = useWindowDimensions();
+  const cameraBusyRef = useRef(false);
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<Tab>('input');
   const [isOffline, setIsOffline] = useState(false);
@@ -390,6 +417,7 @@ export default function StaffScreen() {
   const [message, setMessage] = useState('');
   const [history, setHistory] = useState<Submission[]>([]);
   const [selectedSubmission, setSelectedSubmission] = useState<Submission | null>(null);
+  const closingSubmission = useClosingValue(selectedSubmission);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
   const [profile, setProfile] = useState<StaffProfile | null>(null);
@@ -397,6 +425,9 @@ export default function StaffScreen() {
   const [profileError, setProfileError] = useState('');
   const [isSignOutConfirmVisible, setIsSignOutConfirmVisible] = useState(false);
   const [pendingSync, setPendingSync] = useState(0);
+  const historySkeleton = useSkeletonVisible(historyLoading, history.length > 0, historyError);
+  const profileSkeleton = useSkeletonVisible(profileLoading, Boolean(profile), profileError);
+  const revealHistory = useFirstLoadReveal(historyLoading, history.length > 0, historySkeleton.pending);
 
   // Monitor network connection state
   useEffect(() => {
@@ -844,8 +875,12 @@ export default function StaffScreen() {
     let cancelled = false;
 
     const restorePendingCameraResult = async () => {
+      if (cameraBusyRef.current) return;
+      cameraBusyRef.current = true;
+      setIsOpeningAuditCamera(true);
       try {
         const savedContext = await getPendingCameraContext();
+        if (cancelled || savedContext?.type !== 'staff') return;
         if (savedContext?.type === 'staff') {
           if (savedContext.truckPlate) setTruckPlate(savedContext.truckPlate);
           if (savedContext.area) setArea(savedContext.area);
@@ -864,6 +899,9 @@ export default function StaffScreen() {
         if (cancelled) return;
 
         if (!pendingResult || 'code' in pendingResult || pendingResult.canceled || !pendingResult.assets?.length) {
+          if (pendingResult && 'code' in pendingResult) {
+            throw new Error(pendingResult.message || 'The camera could not recover the photo. Please retake it.');
+          }
           if (pendingResult && 'canceled' in pendingResult && pendingResult.canceled) {
             await clearPendingCameraContext();
           }
@@ -887,20 +925,18 @@ export default function StaffScreen() {
         if (!cancelled) {
           setMessage(error instanceof Error ? error.message : 'The camera returned, but the photo could not be recovered.');
         }
+      } finally {
+        cameraBusyRef.current = false;
+        if (!cancelled) setIsOpeningAuditCamera(false);
       }
     };
 
-    void restorePendingCameraResult();
-    return () => { cancelled = true; };
-  }, []);
-
-  // Pre-warm camera permission so the OS dialog never interrupts the camera launch.
-  useEffect(() => {
-    void ImagePicker.getCameraPermissionsAsync().then((status) => {
-      if (status.status === 'undetermined') {
-        void ImagePicker.requestCameraPermissionsAsync();
-      }
+    // Let a StrictMode effect replay cancel its first setup before claiming the
+    // camera lock or consuming Android's one-shot pending result.
+    void Promise.resolve().then(() => {
+      if (!cancelled) return restorePendingCameraResult();
     });
+    return () => { cancelled = true; };
   }, []);
 
   const totalTonnage = useMemo(() => history.reduce((total, submission) => total + submission.tonnes, 0), [history]);
@@ -936,7 +972,11 @@ export default function StaffScreen() {
   const signOut = () => setIsSignOutConfirmVisible(true);
 
   const captureAuditPhoto = async (slot: AuditPhotoSlot) => {
-    if (isSubmitting || isOpeningAuditCamera) return;
+    if (isSubmitting || cameraBusyRef.current) return;
+    // Lock synchronously, before permissions or state updates can yield to another tap.
+    cameraBusyRef.current = true;
+    setIsOpeningAuditCamera(true);
+    setOpeningSlot(slot);
 
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
@@ -944,9 +984,6 @@ export default function StaffScreen() {
         setMessage('Camera permission is required to capture the audit photo.');
         return;
       }
-
-      setIsOpeningAuditCamera(true);
-      setOpeningSlot(slot);
 
       // Persist the entire form and already taken photos before opening the native camera activity.
       // If the Android OS terminates MainActivity to free memory for the camera, the data can be fully restored upon return.
@@ -966,12 +1003,7 @@ export default function StaffScreen() {
         existingBackPhoto: backPhoto,
       });
 
-      const result = await ImagePicker.launchCameraAsync({
-        allowsEditing: false,
-        cameraType: ImagePicker.CameraType.back,
-        mediaTypes: ['images'],
-        quality: 0.55,
-      });
+      const result = await ImagePicker.launchCameraAsync(proofCameraOptions);
       if (result.canceled || !result.assets?.[0]?.uri) {
         await clearPendingCameraContext();
         return;
@@ -986,6 +1018,7 @@ export default function StaffScreen() {
       await clearPendingCameraContext();
       setMessage(error instanceof Error ? error.message : 'Unable to capture the audit photo.');
     } finally {
+      cameraBusyRef.current = false;
       setIsOpeningAuditCamera(false);
       setOpeningSlot(null);
     }
@@ -1135,18 +1168,18 @@ export default function StaffScreen() {
   };
 
   const renderInput = () => (
-    <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+    <ScrollView contentContainerStyle={styles.inputScrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <Text style={styles.inputEyebrow}>NEW MEASUREMENT</Text>
+      <Text style={styles.inputTitle}>Volumetric Input</Text>
       {isOffline && (
         <View style={styles.offlineBanner}>
-          <Feather color="#856404" name="wifi-off" size={15} />
+          <Feather color="#5C3B00" name="wifi-off" size={18} />
           <Text style={styles.offlineBannerText}>
             Offline Mode · Measurements are stored locally and will sync when internet returns
           </Text>
         </View>
       )}
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 11 }}>
-        <Text style={[styles.sectionEyebrow, { marginBottom: 0 }]}>NEW MEASUREMENT</Text>
-        {pendingSync > 0 ? (
+      {pendingSync > 0 && <View style={styles.syncRow}>
           <Pressable
             accessibilityLabel={`Sync ${pendingSync} pending measurements`}
             accessibilityRole="button"
@@ -1162,17 +1195,15 @@ export default function StaffScreen() {
               {isSyncing ? 'Syncing…' : `${pendingSync} pending sync · Tap to sync`}
             </Text>
           </Pressable>
-        ) : isOffline ? (
-          <View style={styles.offlinePill}>
-            <Feather color="#65756c" name="cloud-off" size={12} />
-            <Text style={styles.offlinePillText}>Offline</Text>
-          </View>
-        ) : null}
-      </View>
-      <Card style={styles.formCard}>
+      </View>}
+      <View>
+        <Text style={styles.formSectionTitle}>Load details</Text>
         <SelectField
+          loading={isLoadingTrucks}
+          error={truckLoadError}
           disabled={isLoadingTrucks || trucks.length === 0}
           label="Truck"
+          icon="truck"
           onChange={(option) => {
             const truck = trucks.find((item) => item.plate === option);
             if (truck) {
@@ -1189,8 +1220,11 @@ export default function StaffScreen() {
         />
         {truckLoadError && trucks.length === 0 ? <Text style={styles.truckLoadError}>{truckLoadError}</Text> : null}
         <SelectField
+          loading={isLoadingAreas}
+          error={areaLoadError}
           disabled={isLoadingAreas || areas.length === 0}
           label="Area"
+          icon="map-pin"
           onChange={(option) => {
             const selectedArea = areas.find((item) => areaLabel(item) === option);
             setArea(option);
@@ -1202,8 +1236,11 @@ export default function StaffScreen() {
         />
         {areaLoadError && areas.length === 0 ? <Text style={styles.truckLoadError}>{areaLoadError}</Text> : null}
         <SelectField
+          loading={isLoadingDrivers}
+          error={driverLoadError}
           disabled={isLoadingDrivers || drivers.length === 0}
           label="Driver"
+          icon="user"
           onChange={setDriver}
           options={drivers.map((item) => ({ label: item, value: item }))}
           placeholder={isLoadingDrivers ? 'Loading drivers…' : drivers.length ? 'Select driver' : 'No drivers available'}
@@ -1211,6 +1248,7 @@ export default function StaffScreen() {
         />
         {driverLoadError && drivers.length === 0 ? <Text style={styles.truckLoadError}>{driverLoadError}</Text> : null}
 
+        <Text style={[styles.formSectionTitle, styles.sectionSpacing]}>Measurements</Text>
         <View style={styles.measurementRow}>
           <MeasurementField label="Length (m)" value={length} />
           <MeasurementField label="Width (m)" value={width} />
@@ -1218,7 +1256,7 @@ export default function StaffScreen() {
         </View>
         <Text style={styles.helperText}>{selectedTruck ? `Dimensions are locked to the admin registration for ${truckPlate}.` : 'Register a truck in the dashboard, then reopen this screen to select it.'}</Text>
 
-        <SelectField label="Slope (m³)" onChange={(option) => { setSlope(option); setTonnagePreview(null); }} options={SLOPES.map((option) => ({ label: option, value: option }))} placeholder="Select slope" value={slope} />
+        <SelectField icon="trending-up" label="Slope (m³)" onChange={(option) => { setSlope(option); setTonnagePreview(null); }} options={SLOPES.map((option) => ({ label: option, value: option }))} placeholder="Select slope" value={slope} />
 
         <Pressable
           accessibilityLabel="Calculate estimated tonnage"
@@ -1230,21 +1268,28 @@ export default function StaffScreen() {
           <Text style={[styles.calculateButtonLabel, !selectedTruck && styles.calculateButtonLabelDisabled]}>Calculate Tonnage</Text>
         </Pressable>
 
+        {message === 'Select a truck with complete registered dimensions before calculating tonnage.' ? (
+          <View style={styles.calculationError} accessibilityRole="alert">
+            <Feather name="alert-circle" size={16} color="#B3261E" />
+            <Text style={styles.calculationErrorText}>{message}</Text>
+          </View>
+        ) : null}
         {tonnagePreview ? (
           <View accessibilityRole="summary" style={styles.tonnagePreview}>
             <View style={styles.tonnagePreviewDetails}>
               <Text style={styles.tonnagePreviewLabel}>ESTIMATED TONNAGE</Text>
+              <Text style={styles.tonnagePreviewValue}>{formatTonnage(tonnagePreview.tonnes).replace(/ t$/, '')}<Text style={styles.tonnageUnit}> t</Text></Text>
               <Text style={styles.tonnagePreviewFormula}>
                 ({tonnagePreview.volumeCubicM.toFixed(2)} m³ + {tonnagePreview.slopeCubicM.toFixed(1)} m³ slope) × 294 kg/m³
               </Text>
             </View>
-            <Text style={styles.tonnagePreviewValue}>{formatTonnage(tonnagePreview.tonnes)}</Text>
           </View>
         ) : null}
 
         <View style={styles.fieldGroup}>
-          <Text style={styles.label}>Proof photos <Text style={styles.required}>*</Text></Text>
+          <Text style={styles.formSectionTitle}>Proof photos <Text style={styles.required}>*</Text></Text>
           <Text style={styles.photoInstruction}>Submit the original images. They will not be cropped before upload.</Text>
+          <View style={[styles.photoRow, fontScale > 1.3 && { flexDirection: 'column' }]}>
           <AuditPhotoField
             disabled={isSubmitting || isOpeningAuditCamera}
             label="Side"
@@ -1259,37 +1304,37 @@ export default function StaffScreen() {
             onPress={() => captureAuditPhoto('back')}
             photo={backPhoto}
           />
+          </View>
         </View>
 
         <View style={styles.fieldGroup}>
-          <Text style={styles.label}>Notes</Text>
+          <Text style={[styles.formSectionTitle, { marginBottom: 12 }]}>Notes</Text>
           <TextInput
             accessibilityLabel="Notes"
             multiline
             onChangeText={setNotes}
             placeholder="Add an observation about this load"
-            placeholderTextColor="#9ca9a3"
+            placeholderTextColor="#5A6761"
             style={styles.notesInput}
             textAlignVertical="top"
             value={notes}
           />
         </View>
 
-        {message ? <Text accessibilityRole="alert" style={styles.message}>{message}</Text> : null}
+        {message && message !== 'Select a truck with complete registered dimensions before calculating tonnage.' ? <ToastMotion><Text accessibilityRole="alert" style={[styles.message, !/^(Synced |All measurements are up to date|(?:Side|Back) photo (?:attached|recovered)|Measurement saved|(?:No connection|Connection lost|Server unavailable)\. Measurement saved)/.test(message) && styles.validationMessage]}>{message}</Text></ToastMotion> : null}
         <Button accessibilityRole="button" isDisabled={isSubmitting} onPress={submitMeasurement} style={styles.submitButton} variant="primary">
           <Button.Label style={styles.submitButtonLabel}>{isSubmitting ? 'Uploading…' : 'Submit Measurement'}</Button.Label>
           <Feather color="#ffffff" name="arrow-right" size={20} />
         </Button>
-      </Card>
-      <Text style={styles.placeholderNote}>Truckloads, audit photos, profile details, and submission history are connected to the backend.</Text>
+      </View>
     </ScrollView>
   );
 
   const renderHistory = () => (
-    <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+    <ScrollView contentContainerStyle={styles.historyScrollContent} showsVerticalScrollIndicator={false}>
       <View style={styles.historyTitleRow}>
-        <Text style={styles.sectionEyebrow}>SUBMISSION HISTORY</Text>
-        <Text style={styles.recordCount}>{historyLoading ? 'Loading…' : `${history.length} records`}</Text>
+        <Text style={styles.historyPageTitle}>Submission history</Text>
+        <Text style={styles.recordCount}>{historyLoading ? 'Loading…' : `${history.length} ${history.length === 1 ? 'record' : 'records'}`}</Text>
       </View>
 
       {pendingSync > 0 && (
@@ -1323,57 +1368,75 @@ export default function StaffScreen() {
         </View>
       )}
 
-      <Card style={styles.totalCard}>
-        <View>
-          <Text style={styles.totalLabel}>TOTAL TONNAGE</Text>
-          <Text style={styles.totalValue}>{formatTonnage(totalTonnage)}</Text>
-          <Text style={styles.totalCaption}>All recorded submissions</Text>
+      <SkeletonRegion state={historySkeleton} placeholder={<View style={styles.summarySkeleton}><SkeletonBlock height={100} radius={24} /></View>}>
+      <View style={styles.totalCard}>
+        <LinearGradient pointerEvents="none" colors={['#24846E', '#0D2E27']} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={styles.cardGradient} />
+        <View pointerEvents="none" style={styles.cardGradientShade} />
+        <View style={styles.totalStat}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.historyNumberScroll}>
+            <NativeText accessibilityLabel={`${formatTonnage(totalTonnage)} total tonnage`} numberOfLines={1} style={styles.totalValue}>{formatHistoryNumber(totalTonnage)}<NativeText style={styles.historyStatUnit}> t</NativeText></NativeText>
+          </ScrollView>
+          <NativeText style={styles.totalLabel}>Total tonnage</NativeText>
         </View>
-        <View style={styles.totalEntries}>
-          <Text style={styles.entriesLabel}>ENTRIES</Text>
-          <Text style={styles.entriesValue}>{history.length}</Text>
+        <View style={styles.historyStatDivider} />
+        <View style={styles.totalStat}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.historyNumberScroll}>
+            <NativeText accessibilityLabel={`${history.length} entries`} numberOfLines={1} style={styles.totalValue}>{formatHistoryNumber(history.length)}</NativeText>
+          </ScrollView>
+          <NativeText style={styles.totalLabel}>Entries</NativeText>
         </View>
-      </Card>
+      </View>
 
-      {historyLoading ? <Text style={styles.placeholderNote}>Loading your real submission history…</Text> : null}
-      {!historyLoading && historyError ? <Text accessibilityRole="alert" style={styles.dataError}>{historyError}</Text> : null}
-      {!historyLoading && !historyError && history.length === 0 ? (
+      </SkeletonRegion>
+      <SkeletonRegion state={historySkeleton} placeholder={<SkeletonRows kind="staff" count={4} />}>
+      {historyError ? <Text accessibilityRole="alert" style={styles.dataError}>{historyError}</Text> : null}
+      {!historyError && history.length === 0 ? (
         <Card style={styles.emptyHistoryCard}>
-          <MaterialCommunityIcons color="#07815f" name="clipboard-text-outline" size={30} />
+          <View style={styles.emptyHistoryIcon}><MaterialCommunityIcons color="#0A7F4F" name="clipboard-text-outline" size={30} /></View>
           <Text style={styles.emptyHistoryTitle}>No submissions yet</Text>
           <Text style={styles.emptyHistoryText}>Your completed truckload submissions will appear here after you submit one.</Text>
         </Card>
       ) : null}
-      {!historyLoading && !historyError ? history.map((submission) => (
+      {history.map((submission, index) => (
+        <RevealRow key={submission.id} animate={revealHistory} index={index}>
         <Pressable
           accessibilityHint="Opens the submission details and audit photo"
           accessibilityRole="button"
+          accessibilityLabel={`${submission.barangay || 'No area assigned'}, ${submission.driver}, ${formatTonnage(submission.tonnes)}, ${submission.submittedAt}${submission.status === 'Pending' ? ', Pending sync' : ''}`}
           key={submission.id}
           onPress={() => setSelectedSubmission(submission)}
           style={styles.historyCardPressable}>
-          <Card style={styles.historyCard}>
+          <View style={styles.historyCard}>
             <View style={styles.historyTopRow}>
-              <View style={styles.loadIcon}><MaterialCommunityIcons color="#07815f" name="truck-outline" size={20} /></View>
               <View style={styles.historyMain}>
-                <Text style={styles.historyBarangay}>{submission.barangay}</Text>
-                <Text style={styles.historyDriver}>{submission.driver}</Text>
+                <NativeText numberOfLines={1} ellipsizeMode="tail" style={[styles.historyBarangay, (!submission.barangay || submission.barangay === 'No area assigned') && styles.historyMissingArea]}>{submission.barangay || 'No area assigned'}</NativeText>
+                <NativeText numberOfLines={1} ellipsizeMode="tail" style={styles.historyDriver}>{submission.driver} · {submission.submittedAt}{submission.status === 'Pending' ? ' · Pending sync' : ''}</NativeText>
               </View>
-              <View style={styles.historyAmount}>
-                <Text style={styles.tonnage}>{formatTonnage(submission.tonnes)}</Text>
-                <Text style={styles.historyDate}>{submission.submittedAt}</Text>
+              <View style={styles.historyRight}>
+                <NativeText numberOfLines={1} style={styles.tonnage}>{formatHistoryTonnage(submission.tonnes)}</NativeText>
+                <Feather color="#5A6761" name="chevron-right" size={20} />
               </View>
-              <Feather color="#9aa9a1" name="chevron-right" size={18} />
             </View>
-            <View style={styles.historyDetailRow}>
-              <Text style={styles.historyDetail}>L {submission.length} m</Text>
-              <Text style={styles.historyDetail}>W {submission.width} m</Text>
-              <Text style={styles.historyDetail}>H {submission.height} m</Text>
-              <Text style={styles.historyDetail}>Slope {submission.slope}</Text>
-              {submission.status === 'Pending' ? <Text style={styles.pendingPill}>Pending</Text> : null}
+            <View style={styles.historyMeasurements}>
+              {[
+                ['Length', `${submission.length} m`],
+                ['Width', `${submission.width} m`],
+                ['Height', `${submission.height} m`],
+                ['Slope', submission.slope],
+              ].map(([label, value]) => (
+                <View key={label} style={styles.historyMeasurementColumn}>
+                  <NativeText numberOfLines={1} style={styles.historyMeasurementLabel}>{label}</NativeText>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.historyNumberScroll}>
+                    <NativeText accessibilityLabel={`${label}: ${value}`} numberOfLines={1} style={styles.historyMeasurementValue}>{value}</NativeText>
+                  </ScrollView>
+                </View>
+              ))}
             </View>
-          </Card>
+          </View>
         </Pressable>
-      )) : null}
+        </RevealRow>
+      ))}
+      </SkeletonRegion>
     </ScrollView>
   );
 
@@ -1381,157 +1444,85 @@ export default function StaffScreen() {
     const currentMonth = history.length;
     const currentMonthTonnage = history.reduce((total, submission) => total + submission.tonnes, 0);
     const profileName = profile?.name || 'Staff profile';
-    const profileArea = profile?.barangay || 'Not assigned';
     const profileShift = profile?.shift ? `${formatRole(profile.shift)} shift` : 'Not provided';
     return (
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView contentContainerStyle={styles.profileScrollContent} showsVerticalScrollIndicator={false}>
+        <SkeletonRegion state={profileSkeleton} placeholder={<SkeletonBlock height={215} radius={24} />}>
         <Card style={styles.profileCard}>
+          <LinearGradient pointerEvents="none" colors={['#24846E', '#0D2E27']} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={styles.cardGradient} />
+          <View pointerEvents="none" style={styles.cardGradientShade} />
+          <View style={styles.profileHeroRow}>
           <View style={styles.avatar}>{profile?.profilePhotoUrl ? <ExpoImage accessibilityLabel="Profile picture" source={{ uri: profile.profilePhotoUrl }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{initials(profile?.name)}</Text>}</View>
+          <View style={styles.profileHeroCopy}>
           <Text style={styles.profileName}>{profileName}</Text>
           <Text style={styles.profileRole}>{profile ? `${formatRole(profile.role)} · Volumetric Auditor` : 'Loading profile…'}</Text>
-          <Text style={styles.profileArea}>{profileArea}</Text>
-          <View style={styles.profileBadges}>
-            <View style={styles.staffBadge}><Text style={styles.staffBadgeText}>Staff</Text></View>
-            <View style={styles.activeBadge}><Text style={styles.activeBadgeText}>Active</Text></View>
+          <View style={styles.activeBadge}><View style={styles.activeStatusDot} /><Text style={styles.activeBadgeText}>Active</Text></View>
           </View>
-        </Card>
+          </View>
 
         <View style={styles.statsRow}>
-          <Card style={styles.statCard}>
-            <Text style={styles.statValue}>{currentMonth}</Text>
+          <View style={styles.statCard}>
+            <Text numberOfLines={1} adjustsFontSizeToFit style={styles.statValue}>{currentMonth.toLocaleString('en-PH', { maximumFractionDigits: 2 })}</Text>
             <Text style={styles.statLabel}>Submissions</Text>
-            <Text style={styles.statCaption}>All recorded</Text>
-          </Card>
-          <Card style={styles.statCard}>
-            <Text style={styles.statValue}>{formatTonnage(currentMonthTonnage)}</Text>
-            <Text style={styles.statLabel}>Total Tonnage</Text>
-            <Text style={styles.statCaption}>Computed</Text>
-          </Card>
+          </View>
+          <View style={[styles.statCard, styles.tonnageStat]}>
+            <Text numberOfLines={1} adjustsFontSizeToFit accessibilityLabel={`${currentMonthTonnage.toLocaleString('en-PH', { maximumFractionDigits: 2 })} tonnes`} style={styles.statValue}>{currentMonthTonnage.toLocaleString('en-PH', { maximumFractionDigits: 2 })}<Text style={styles.profileStatUnit}> t</Text></Text>
+            <Text style={styles.statLabel}>Total tonnage</Text>
+          </View>
+        </View>
+        </Card>
+        </SkeletonRegion>
+
+        <View style={styles.accountCard}>
+          <Text style={styles.accountHeading}>Account details</Text>
+          <SkeletonRegion state={profileSkeleton} placeholder={<SkeletonRows kind="account" count={5} />}>
+          {profileError ? <Text accessibilityRole="alert" style={styles.dataError}>{profileError}</Text> : null}
+          {profile || !profileError ? <>
+            <ProfileAccountRow icon="id-card" label="Employee ID" value={profile?.employeeId || 'Not provided'} />
+            <ProfileAccountRow icon="phone" label="Contact" value={profile?.contact || 'Not provided'} />
+            <ProfileAccountRow icon="mail" label="Email" value={profile?.email || 'Not provided'} />
+            <ProfileAccountRow icon="map-pin" label="Assigned area" value={profile?.barangay || 'Not assigned'} />
+            <ProfileAccountRow icon="clock" label="Shift" value={profileShift} last />
+          </> : null}
+          </SkeletonRegion>
         </View>
 
-        <Card style={styles.accountCard}>
-          <Text style={styles.accountHeading}>ACCOUNT DETAILS</Text>
-          {profileLoading ? <Text style={styles.placeholderNote}>Loading your account details…</Text> : null}
-          {!profileLoading && profileError ? <Text accessibilityRole="alert" style={styles.dataError}>{profileError}</Text> : null}
-          {!profileLoading && !profileError ? <>
-            <DetailRow label="Employee ID" value={profile?.employeeId || 'Not provided'} />
-            <DetailRow label="Contact" value={profile?.contact || 'Not provided'} />
-            <DetailRow label="Email" value={profile?.email || 'Not provided'} />
-            <DetailRow label="Assigned Area" value={profile?.barangay || 'Not assigned'} />
-            <DetailRow label="Shift" value={profileShift} />
-          </> : null}
-        </Card>
-
+        <ProfileSettingsRow onSignOut={completeSignOut} />
         <Pressable accessibilityRole="button" onPress={signOut} style={styles.signOutButton}>
-          <Feather color="#e23d4f" name="log-out" size={17} />
-          <Text style={styles.signOutText}>Sign Out</Text>
+          <Feather color="#B3261E" name="log-out" size={20} />
+          <Text style={styles.signOutText}>Sign out</Text>
         </Pressable>
       </ScrollView>
     );
   };
 
-  const renderSubmissionDetails = () => {
-    if (!selectedSubmission) return null;
-
-    return (
-      <Modal animationType="slide" onRequestClose={() => setSelectedSubmission(null)} transparent visible>
-        <View style={styles.modalBackdrop}>
-          <Pressable accessibilityLabel="Close submission details" onPress={() => setSelectedSubmission(null)} style={styles.modalDismissArea} />
-          <View style={[styles.detailsSheet, { paddingBottom: insets.bottom + 18 }]}>
-            <View style={styles.detailsHeader}>
-              <View style={styles.detailsHeaderText}>
-                <Text style={styles.detailsEyebrow}>AUDIT SUBMISSION</Text>
-                <Text style={styles.detailsTitle}>Submission details</Text>
-              </View>
-              <Pressable accessibilityLabel="Close submission details" accessibilityRole="button" onPress={() => setSelectedSubmission(null)} style={styles.detailsClose}>
-                <Feather color="#314238" name="x" size={20} />
-              </Pressable>
-            </View>
-
-            <ScrollView
-              contentContainerStyle={[styles.detailsContent, { paddingBottom: insets.bottom + 28 }]}
-              nestedScrollEnabled
-              showsVerticalScrollIndicator
-              style={styles.detailsScroll}>
-              {selectedSubmission.sidePhotoUrl || selectedSubmission.backPhotoUrl || selectedSubmission.photoUrl ? (
-                <View style={styles.detailsPhotoGrid}>
-                  {selectedSubmission.sidePhotoUrl ? <View style={styles.detailsPhotoItem}><Text style={styles.detailsPhotoLabel}>Side photo</Text><ExpoImage accessibilityLabel="Side audit submission photo" contentFit="contain" source={{ uri: selectedSubmission.sidePhotoUrl }} style={styles.detailsPhoto} transition={150} /></View> : null}
-                  {selectedSubmission.backPhotoUrl ? <View style={styles.detailsPhotoItem}><Text style={styles.detailsPhotoLabel}>Back photo</Text><ExpoImage accessibilityLabel="Back audit submission photo" contentFit="contain" source={{ uri: selectedSubmission.backPhotoUrl }} style={styles.detailsPhoto} transition={150} /></View> : null}
-                  {!selectedSubmission.sidePhotoUrl && !selectedSubmission.backPhotoUrl && selectedSubmission.photoUrl ? <View style={styles.detailsPhotoItem}><Text style={styles.detailsPhotoLabel}>Audit photo</Text><ExpoImage accessibilityLabel="Audit submission photo" contentFit="contain" source={{ uri: selectedSubmission.photoUrl }} style={styles.detailsPhoto} transition={150} /></View> : null}
-                </View>
-              ) : (
-                <View style={styles.noPhotoCard}>
-                  <MaterialCommunityIcons color="#07815f" name="image-off-outline" size={28} />
-                  <Text style={styles.noPhotoText}>Audit photo unavailable</Text>
-                </View>
-              )}
-
-              <View style={styles.detailsStatusRow}>
-                <View style={selectedSubmission.status === 'Pending' ? styles.pendingPillWrap : styles.syncedPill}>
-                  <View style={selectedSubmission.status === 'Pending' ? styles.pendingDot : styles.syncedDot} />
-                  <Text style={selectedSubmission.status === 'Pending' ? styles.pendingPillText : styles.syncedPillText}>
-                    {selectedSubmission.status === 'Pending' ? 'Pending Sync' : selectedSubmission.status}
-                  </Text>
-                </View>
-                <Text style={styles.detailsDate}>{selectedSubmission.submittedAt}</Text>
-              </View>
-
-              <Text style={styles.detailsSectionTitle}>Load information</Text>
-              <DetailRow label="Truck" value={selectedSubmission.truckPlate} />
-              <DetailRow label="Area" value={selectedSubmission.barangay} />
-              <DetailRow label="Driver" value={selectedSubmission.driver} />
-
-              <Text style={styles.detailsSectionTitle}>Measurements</Text>
-              <View style={styles.detailsMeasurementGrid}>
-                <View style={styles.detailsMeasurementItem}>
-                  <Text style={styles.detailsMeasurementLabel}>Length</Text>
-                  <Text style={styles.detailsMeasurementValue}>{selectedSubmission.length} m</Text>
-                </View>
-                <View style={styles.detailsMeasurementItem}>
-                  <Text style={styles.detailsMeasurementLabel}>Width</Text>
-                  <Text style={styles.detailsMeasurementValue}>{selectedSubmission.width} m</Text>
-                </View>
-                <View style={styles.detailsMeasurementItem}>
-                  <Text style={styles.detailsMeasurementLabel}>Height</Text>
-                  <Text style={styles.detailsMeasurementValue}>{selectedSubmission.height} m</Text>
-                </View>
-              </View>
-              <DetailRow label="Slope" value={selectedSubmission.slope} />
-              <DetailRow label="Estimated tonnage" value={formatTonnage(selectedSubmission.tonnes)} />
-
-              {selectedSubmission.notes ? (
-                <View style={styles.notesPreview}>
-                  <Text style={styles.detailsMeasurementLabel}>Notes</Text>
-                  <Text style={styles.notesPreviewText}>{selectedSubmission.notes}</Text>
-                </View>
-              ) : null}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
-    );
-  };
+  const renderSubmissionDetails = () => closingSubmission ? (
+    <StaffSubmissionDetails
+      key={closingSubmission.id}
+      visible={Boolean(selectedSubmission)}
+      submission={closingSubmission}
+      onClose={() => setSelectedSubmission(null)}
+    />
+  ) : null;
 
   return (
     <SafeAreaView edges={['left', 'right']} style={styles.safeArea}>
-      <StatusBar backgroundColor={activeTab === 'profile' ? '#f4f7f5' : '#EBF7F5'} style="dark" translucent={false} />
-      {activeTab !== 'profile' && (
+      <StatusBar backgroundColor="#ffffff" style="dark" translucent={false} />
         <View style={[styles.header, { paddingTop: insets.top }]}>
           <View style={styles.brandHeader}>
-            <BrandMark height={116} width={206} />
+            <BrandMark height={48} width={150} />
             <View style={styles.headerCopy}>
-              <Text style={styles.headerSubtitle}>Staff · Tonnage Audit</Text>
-              <Text style={styles.headerTitle}>Volumetric Input</Text>
+              <NativeText numberOfLines={1} ellipsizeMode="tail" adjustsFontSizeToFit style={styles.headerTitle}>{profile?.role ? formatRole(profile.role) : 'Staff'}</NativeText>
+              <NativeText numberOfLines={1} ellipsizeMode="tail" adjustsFontSizeToFit style={styles.headerSubtitle}>Tonnage Audit</NativeText>
             </View>
           </View>
         </View>
-      )}
 
-      <View style={[styles.content, activeTab === 'profile' && { paddingTop: insets.top }]}>
-        {activeTab === 'input' ? renderInput() : null}
-        {activeTab === 'history' ? renderHistory() : null}
-        {activeTab === 'profile' ? renderProfile() : null}
-      </View>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.content}>
+        <TabTransition activeKey={activeTab}>
+          {activeTab === 'input' ? renderInput() : activeTab === 'history' ? renderHistory() : renderProfile()}
+        </TabTransition>
+      </KeyboardAvoidingView>
       <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
 
       {renderSubmissionDetails()}
@@ -1540,153 +1531,161 @@ export default function StaffScreen() {
   );
 }
 
-function DetailRow({ label, value }: { label: string; value: string }) {
+function ProfileAccountRow({ icon, label, value, last = false }: { icon: 'id-card' | 'phone' | 'mail' | 'map-pin' | 'clock'; label: string; value: string; last?: boolean }) {
+  const placeholder = value === 'Not provided' || value === 'Not assigned';
   return (
-    <View style={styles.detailRow}>
-      <Text style={styles.detailLabel}>{label}</Text>
-      <Text style={styles.detailValue}>{value}</Text>
+    <View style={[styles.profileAccountRow, last && { borderBottomWidth: 0 }]}>
+      <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.profileAccountIcon}>
+        {icon === 'id-card' ? <MaterialCommunityIcons name="card-account-details-outline" size={20} color="#0A7F4F" /> : <Feather name={icon} size={20} color="#0A7F4F" />}
+      </View>
+      <View style={styles.profileAccountCopy}>
+        <Text style={styles.profileAccountLabel}>{label}</Text>
+        <Text style={[styles.profileAccountValue, placeholder && styles.profileAccountPlaceholder]}>{value}</Text>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#f4f7f5' },
-  header: { backgroundColor: '#EBF7F5' },
-  brandHeader: { alignItems: 'center', flexDirection: 'row', height: 70, paddingHorizontal: 20 },
-  headerCopy: { alignItems: 'flex-end', flex: 1, marginLeft: 8 },
-  headerTitle: { color: '#20372a', fontSize: 14, fontWeight: '800', marginTop: 1, textAlign: 'right' },
-  headerSubtitle: { color: '#5d7066', fontSize: 10, textAlign: 'right' },
-  syncBadge: { alignItems: 'center', backgroundColor: '#4d4b18', borderColor: '#81742a', borderRadius: 18, borderWidth: 1, flexDirection: 'row', gap: 5, paddingHorizontal: 10, paddingVertical: 6 },
+  summarySkeleton: { marginBottom: 20 },
+  selectSkeleton: { gap: 8, marginBottom: 16 },
+  safeArea: { flex: 1, backgroundColor: '#ffffff' },
+  header: { backgroundColor: '#ffffff' },
+  brandHeader: { alignItems: 'center', flexDirection: 'row', minHeight: 64, paddingHorizontal: 20, paddingVertical: 8, gap: 8 },
+  headerCopy: { flex: 1, minWidth: 0, justifyContent: 'center' },
+  headerTitle: { color: '#121A16', fontFamily: 'Roboto-Regular', fontSize: 14, fontWeight: '700', textAlign: 'right' },
+  headerSubtitle: { color: '#5A6761', fontFamily: 'Roboto-Regular', fontSize: 12, fontWeight: '400', marginTop: 1, textAlign: 'right' },
+  syncBadge: { alignItems: 'center', backgroundColor: '#4d4b18', borderColor: '#81742a', borderRadius: 18, borderWidth: 1, flexDirection: 'row', gap: 5, paddingHorizontal: 10, paddingVertical: 6, minHeight: 44 },
   syncText: { color: '#e7d768', fontSize: 11, fontWeight: '700' },
   content: { flex: 1 },
+  inputScrollContent: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 32 },
+  inputEyebrow: { color: '#086B42', fontSize: 11, fontWeight: '700', letterSpacing: 1.3 },
+  inputTitle: { color: '#121A16', fontSize: 28, fontWeight: '700', marginTop: 4, marginBottom: 28 },
+  formSectionTitle: { color: '#121A16', fontSize: 18, fontWeight: '700' },
+  sectionSpacing: { marginTop: 28 },
+  syncRow: { alignItems: 'flex-start', marginBottom: 16 },
+  photoRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  calculationError: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, marginTop: 10 },
+  calculationErrorText: { color: '#B3261E', fontSize: 13, flex: 1 },
+  validationMessage: { color: '#C62F3B' },
+  tonnageUnit: { fontSize: 16, fontWeight: '600' },
+  navIcon: { width: 56, height: 32, flexShrink: 0, borderRadius: 999, borderCurve: 'circular', overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+  navIconActive: { backgroundColor: '#E3F4EB', borderRadius: 999 },
   scrollContent: { padding: 14, paddingBottom: 32 },
   sectionEyebrow: { color: '#617168', fontSize: 12, fontWeight: '800', letterSpacing: 0.35, marginBottom: 11 },
   formCard: { backgroundColor: '#ffffff', borderColor: '#e5ebe7', borderRadius: 18, borderWidth: 1, elevation: 1, padding: 14, shadowColor: '#153528', shadowOpacity: 0.06, shadowRadius: 10 },
-  fieldGroup: { marginTop: 13 },
+  fieldGroup: { marginTop: 28 },
   label: { color: '#596a61', fontSize: 12, fontWeight: '700', marginBottom: 7 },
-  required: { color: '#d8434b' },
+  required: { color: '#C62F3B' },
   selectField: { alignItems: 'center', backgroundColor: '#f8faf9', borderColor: '#dce4df', borderRadius: 14, borderWidth: 1, flexDirection: 'row', height: 48, justifyContent: 'space-between', paddingHorizontal: 13 },
   selectText: { color: '#1b3025', flex: 1, fontSize: 15, paddingRight: 8 },
-  measurementRow: { flexDirection: 'row', gap: 8, marginTop: 16 },
+  measurementRow: { flexDirection: 'row', gap: 10, marginTop: 16 },
   measurementField: { flex: 1 },
-  measurementLabel: { color: '#69776f', fontSize: 11, fontWeight: '700', marginBottom: 6 },
-  measurementInputWrap: { alignItems: 'center', backgroundColor: '#f1f4f2', borderColor: '#e1e7e3', borderRadius: 14, borderWidth: 1, flexDirection: 'row', height: 43, paddingHorizontal: 10 },
-  measurementValue: { color: '#526159', flex: 1, fontSize: 14, marginLeft: 8 },
-  helperText: { color: '#96a29b', fontSize: 10, marginTop: 8 },
+  measurementLabel: { color: '#35463F', fontSize: 13, fontWeight: '600', marginBottom: 6 },
+  measurementInputWrap: { alignItems: 'center', backgroundColor: '#E8EDEA', borderRadius: 14, flexDirection: 'row', minHeight: 52, paddingHorizontal: 10, paddingVertical: 12 },
+  measurementValue: { color: '#35463F', flex: 1, fontSize: 16, fontWeight: '500', marginLeft: 6 },
+  helperText: { color: '#5A6761', fontSize: 12, marginTop: 10 },
   truckLoadError: { color: '#b42318', fontSize: 11, lineHeight: 16, marginTop: 8 },
-  calculateButton: { alignItems: 'center', backgroundColor: '#eff8f4', borderColor: '#92cbb4', borderRadius: 14, borderWidth: 1, flexDirection: 'row', gap: 8, height: 48, justifyContent: 'center', marginTop: 13 },
+  calculateButton: { alignItems: 'center', backgroundColor: '#E3F4EB', borderRadius: 16, flexDirection: 'row', gap: 8, minHeight: 52, padding: 12, justifyContent: 'center', marginTop: 16 },
   calculateButtonDisabled: { backgroundColor: '#f2f5f3', borderColor: '#dce4df' },
-  calculateButtonLabel: { color: '#07815f', fontSize: 14, fontWeight: '800' },
+  calculateButtonLabel: { color: '#086B42', fontSize: 16, fontWeight: '700', flexShrink: 1, textAlign: 'center' },
   calculateButtonLabelDisabled: { color: '#91a19a' },
-  tonnagePreview: { alignItems: 'center', backgroundColor: '#eaf8f1', borderColor: '#9ed4ba', borderRadius: 14, borderWidth: 1, flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, padding: 13 },
-  tonnagePreviewDetails: { flex: 1 },
-  tonnagePreviewLabel: { color: '#35745b', fontSize: 10, fontWeight: '800', letterSpacing: 0.4 },
-  tonnagePreviewFormula: { color: '#5d776a', fontSize: 10, marginTop: 5 },
-  tonnagePreviewValue: { color: '#067452', fontSize: 21, fontWeight: '800', marginLeft: 12 },
-  photoField: { alignItems: 'center', backgroundColor: '#fbfdfc', borderColor: '#d7e3dc', borderRadius: 16, borderStyle: 'dashed', borderWidth: 1.5, paddingVertical: 20 },
+  tonnagePreview: { backgroundColor: '#E3F4EB', borderRadius: 20, marginTop: 12, paddingVertical: 16, paddingHorizontal: 18 },
+  tonnagePreviewDetails: { alignSelf: 'stretch' },
+  tonnagePreviewLabel: { color: '#086B42', fontSize: 11, fontWeight: '700', letterSpacing: 1 },
+  tonnagePreviewFormula: { color: '#35463F', fontSize: 13, marginTop: 6 },
+  tonnagePreviewValue: { color: '#121A16', fontSize: 40, fontWeight: '700', marginTop: 4 },
+  photoField: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 156, backgroundColor: '#F8FAF9', borderColor: '#A9BDB1', borderRadius: 18, borderStyle: 'dashed', borderWidth: 1.5, paddingVertical: 18, paddingHorizontal: 8, overflow: 'hidden' },
   photoFieldAttached: { backgroundColor: '#f0faf5', borderColor: '#39a17e' },
   photoFieldDisabled: { opacity: 0.65 },
-  photoSlot: { marginTop: 12 },
-  photoInstruction: { color: '#718078', fontSize: 11, lineHeight: 16, marginTop: 4 },
-  photoPreview: { borderRadius: 14, height: 180, width: '100%' },
+  photoSlot: { marginTop: 12, flex: 1, minWidth: 140 },
+  photoInstruction: { color: '#5A6761', fontSize: 13, marginTop: 8 },
+  photoPreview: { ...StyleSheet.absoluteFillObject },
   photoOverlay: { alignItems: 'center' },
-  photoOverlayAttached: { backgroundColor: 'rgba(10, 28, 19, 0.52)', bottom: 0, justifyContent: 'center', left: 0, position: 'absolute', right: 0, top: 0 },
-  cameraBadge: { alignItems: 'center', backgroundColor: '#e7f5ef', borderRadius: 18, height: 36, justifyContent: 'center', width: 36 },
+  photoOverlayAttached: { backgroundColor: 'rgba(10, 28, 19, 0.82)', borderRadius: 12, padding: 8, alignSelf: 'stretch' },
+  cameraBadge: { alignItems: 'center', backgroundColor: '#E3F4EB', borderRadius: 22, height: 44, justifyContent: 'center', width: 44 },
   cameraBadgeAttached: { backgroundColor: '#07815f' },
   cameraBadgeLoading: { backgroundColor: '#d4ede3' },
-  photoTitle: { color: '#33463b', fontSize: 13, fontWeight: '800', marginTop: 8 },
+  photoTitle: { color: '#121A16', fontSize: 13, fontWeight: '700', marginTop: 8, textAlign: 'center' },
   photoOverlayTitle: { color: '#ffffff' },
-  photoCaption: { color: '#d95a65', fontSize: 11, fontWeight: '700', marginTop: 4 },
+  photoCaption: { color: '#5A6761', fontSize: 12, marginTop: 4, textAlign: 'center' },
   photoCaptionAttached: { color: '#ffffff' },
-  notesInput: { backgroundColor: '#f8faf9', borderColor: '#dce4df', borderRadius: 14, borderWidth: 1, color: '#20362a', fontSize: 14, minHeight: 75, padding: 12 },
+  notesInput: { backgroundColor: '#F1F5F3', borderRadius: 14, color: '#121A16', fontSize: 16, fontWeight: '500', minHeight: 100, padding: 14 },
   message: { color: '#0c7554', fontSize: 12, fontWeight: '600', lineHeight: 17, marginTop: 12 },
-  submitButton: { alignItems: 'center', backgroundColor: '#07815f', borderRadius: 14, flexDirection: 'row', gap: 8, height: 50, justifyContent: 'center', marginTop: 17 },
-  submitButtonLabel: { color: '#ffffff', fontSize: 15, fontWeight: '800' },
+  submitButton: { alignItems: 'center', backgroundColor: '#0A7F4F', borderRadius: 18, flexDirection: 'row', gap: 8, minHeight: 56, height: 'auto', paddingVertical: 14, justifyContent: 'center', marginTop: 28 },
+  submitButtonLabel: { color: '#ffffff', fontSize: 17, fontWeight: '700', flexShrink: 1, textAlign: 'center' },
   placeholderNote: { color: '#829087', fontSize: 11, lineHeight: 16, marginHorizontal: 5, marginTop: 13 },
   dataError: { color: '#b42318', fontSize: 12, lineHeight: 18, marginHorizontal: 5, marginTop: 13 },
-  emptyHistoryCard: { alignItems: 'center', backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 16, borderWidth: 1, marginTop: 4, padding: 24 },
+  emptyHistoryCard: { alignItems: 'center', backgroundColor: '#F4F6F5', borderRadius: 20, borderWidth: 0, marginTop: 4, padding: 24 },
+  emptyHistoryIcon: { width: 64, height: 64, borderRadius: 32, backgroundColor: '#E3F4EB', alignItems: 'center', justifyContent: 'center' },
   emptyHistoryTitle: { color: '#26382e', fontSize: 16, fontWeight: '800', marginTop: 10 },
-  emptyHistoryText: { color: '#718078', fontSize: 12, lineHeight: 18, marginTop: 6, textAlign: 'center' },
-  bottomNav: { backgroundColor: '#ffffff', borderTopColor: '#e3e9e5', borderTopWidth: 1, flexDirection: 'row', height: 72, justifyContent: 'space-around', paddingTop: 8 },
-  navItem: { alignItems: 'center', flex: 1, gap: 3 },
-  navLabel: { color: '#99a29d', fontSize: 11, fontWeight: '600' },
-  navLabelActive: { color: '#07815f', fontWeight: '800' },
+  emptyHistoryText: { color: '#5A6761', fontSize: 13, marginTop: 6, textAlign: 'center' },
+  bottomNav: { backgroundColor: '#ffffff', borderTopColor: '#E3EAE6', borderTopWidth: 1, flexDirection: 'row', justifyContent: 'space-around', paddingTop: 8 },
+  navItem: { alignItems: 'center', flex: 1, gap: 4, minHeight: 56 },
+  navLabel: { color: '#5A6761', fontSize: 11, fontWeight: '500', textAlign: 'center' },
+  navLabelActive: { color: '#086B42', fontWeight: '700' },
   navIndicator: { backgroundColor: '#07815f', borderRadius: 3, height: 4, marginTop: 1, width: 4 },
-  historyTitleRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  recordCount: { color: '#718078', fontSize: 12, marginBottom: 11 },
-  totalCard: { backgroundColor: '#07815f', borderRadius: 16, flexDirection: 'row', justifyContent: 'space-between', marginBottom: 13, overflow: 'hidden', padding: 17 },
-  totalLabel: { color: '#b8ded0', fontSize: 11, fontWeight: '800' },
-  totalValue: { color: '#ffffff', fontSize: 25, fontWeight: '800', marginTop: 5 },
-  totalCaption: { color: '#a8d2c3', fontSize: 11, marginTop: 4 },
-  totalEntries: { alignItems: 'flex-end', justifyContent: 'center' },
-  entriesLabel: { color: '#b8ded0', fontSize: 11, fontWeight: '700' },
-  entriesValue: { color: '#ffffff', fontSize: 24, fontWeight: '800', marginTop: 5 },
-  historyCard: { backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 16, borderWidth: 1, marginBottom: 9, padding: 13 },
-  historyCardPressable: { borderRadius: 16 },
-  historyTopRow: { alignItems: 'center', flexDirection: 'row' },
-  loadIcon: { alignItems: 'center', backgroundColor: '#e9f5ef', borderRadius: 13, height: 38, justifyContent: 'center', width: 38 },
-  historyMain: { flex: 1, marginLeft: 10 },
-  historyBarangay: { color: '#24372d', fontSize: 13, fontWeight: '800' },
-  historyDriver: { color: '#95a29b', fontSize: 11, marginTop: 3 },
-  historyAmount: { alignItems: 'flex-end' },
-  tonnage: { color: '#07815f', fontSize: 16, fontWeight: '800' },
-  historyDate: { color: '#9aa59f', fontSize: 10, marginTop: 3 },
-  historyDetailRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
-  historyDetail: { color: '#738179', fontSize: 10, fontWeight: '600' },
-  pendingPill: { color: '#a56300', fontSize: 10, fontWeight: '800' },
-  profileCard: { alignItems: 'center', backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 18, borderWidth: 1, padding: 22 },
-  avatar: { alignItems: 'center', backgroundColor: '#07815f', borderRadius: 29, height: 58, justifyContent: 'center', width: 58 },
-  avatarImage: { borderRadius: 29, height: 58, width: 58 },
-  avatarText: { color: '#ffffff', fontSize: 25, fontWeight: '700' },
-  profileName: { color: '#26382e', fontSize: 17, fontWeight: '800', marginTop: 12 },
-  profileRole: { color: '#718077', fontSize: 12, marginTop: 5 },
+  historyScrollContent: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 32 },
+  historyPageTitle: { color: '#121A16', fontSize: 28, fontWeight: '700' },
+  historyTitleRow: { marginBottom: 16 },
+  recordCount: { color: '#5A6761', fontSize: 14, marginTop: 6 },
+  cardGradient: { ...StyleSheet.absoluteFillObject, borderRadius: 24 },
+  // Keep secondary text above 4.5:1 even at the lightest gradient stop.
+  cardGradientShade: { ...StyleSheet.absoluteFillObject, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.10)' },
+  totalCard: { backgroundColor: '#0D2E27', borderRadius: 24, overflow: 'hidden', borderWidth: 0, flexDirection: 'row', marginBottom: 20, paddingVertical: 18, paddingHorizontal: 20 },
+  totalStat: { flex: 1, minWidth: 0 },
+  totalLabel: { color: '#E3F4EB', fontFamily: 'Roboto-Regular', fontSize: 13, marginTop: 4 },
+  totalValue: { color: '#ffffff', fontFamily: 'Roboto-Regular', fontSize: 30, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  historyStatUnit: { color: '#E3F4EB', fontFamily: 'Roboto-Regular', fontSize: 16, fontWeight: '500' },
+  historyStatDivider: { width: 1, marginHorizontal: 16, backgroundColor: 'rgba(255,255,255,0.2)' },
+  historyNumberScroll: { flexGrow: 0, flexShrink: 0 },
+  historyCard: { backgroundColor: '#F4F6F5', borderRadius: 20, paddingVertical: 14, paddingHorizontal: 16, alignSelf: 'stretch', flexShrink: 0, overflow: 'visible' },
+  historyCardPressable: { borderRadius: 20, minHeight: 44, marginBottom: 12 },
+  historyTopRow: { alignItems: 'center', flexDirection: 'row', gap: 8 },
+  historyMain: { flex: 1, minWidth: 0 },
+  historyBarangay: { color: '#121A16', fontFamily: 'Roboto-Regular', fontSize: 16, fontWeight: '700' },
+  historyMissingArea: { color: '#5A6761' },
+  historyDriver: { color: '#5A6761', fontFamily: 'Roboto-Regular', fontSize: 13, marginTop: 3 },
+  historyRight: { flexShrink: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 6 },
+  tonnage: { color: '#0A7F4F', fontFamily: 'Roboto-Regular', fontSize: 18, fontWeight: '700', fontVariant: ['tabular-nums'] },
+  historyMeasurements: { flexDirection: 'row', borderTopWidth: 1, borderTopColor: '#DCE4DF', paddingTop: 12, marginTop: 12, gap: 8 },
+  historyMeasurementColumn: { flex: 1, minWidth: 0 },
+  historyMeasurementLabel: { color: '#5A6761', fontFamily: 'Roboto-Regular', fontSize: 11 },
+  historyMeasurementValue: { color: '#121A16', fontFamily: 'Roboto-Regular', fontSize: 14, fontWeight: '600', marginTop: 4 },
+  profileScrollContent: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 32 },
+  profileCard: { backgroundColor: '#0D2E27', borderRadius: 24, overflow: 'hidden', borderWidth: 0, padding: 20, gap: 0 },
+  profileHeroRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  profileHeroCopy: { flex: 1, minWidth: 0 },
+  avatar: { alignItems: 'center', backgroundColor: '#E3F4EB', borderRadius: 32, height: 64, justifyContent: 'center', width: 64, flexShrink: 0, overflow: 'hidden' },
+  avatarImage: { borderRadius: 32, height: 64, width: 64 },
+  avatarText: { color: '#0B5D44', fontSize: 24, fontWeight: '700' },
+  profileName: { color: '#ffffff', fontSize: 22, fontWeight: '700' },
+  profileRole: { color: '#E3F4EB', fontSize: 14, marginTop: 4 },
   profileArea: { color: '#718077', fontSize: 12, marginTop: 3 },
   profileBadges: { flexDirection: 'row', gap: 9, marginTop: 13 },
   staffBadge: { backgroundColor: '#fcecff', borderRadius: 8, paddingHorizontal: 9, paddingVertical: 4 },
   staffBadgeText: { color: '#a032b3', fontSize: 11, fontWeight: '800' },
-  activeBadge: { backgroundColor: '#e7f8ee', borderRadius: 8, paddingHorizontal: 9, paddingVertical: 4 },
-  activeBadgeText: { color: '#0b8658', fontSize: 11, fontWeight: '800' },
-  statsRow: { flexDirection: 'row', gap: 10, marginTop: 13 },
-  statCard: { alignItems: 'center', backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 17, borderWidth: 1, flex: 1, paddingVertical: 16 },
-  statValue: { color: '#07815f', fontSize: 23, fontWeight: '800' },
-  statLabel: { color: '#314238', fontSize: 12, fontWeight: '800', marginTop: 5 },
+  activeBadge: { backgroundColor: 'rgba(13,46,39,0.45)', borderRadius: 12, paddingHorizontal: 9, paddingVertical: 4, flexDirection: 'row', gap: 5, alignItems: 'center', alignSelf: 'flex-start', marginTop: 8 },
+  activeStatusDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#7BE0A8' },
+  activeBadgeText: { color: '#ffffff', fontSize: 12, fontWeight: '600' },
+  statsRow: { flexDirection: 'row', marginTop: 18, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.2)', paddingTop: 16 },
+  statCard: { flex: 1, minWidth: 0, paddingRight: 12 },
+  tonnageStat: { borderLeftWidth: 1, borderLeftColor: 'rgba(255,255,255,0.2)', paddingLeft: 16, paddingRight: 0 },
+  statValue: { color: '#ffffff', fontSize: 30, fontWeight: '700' },
+  profileStatUnit: { color: '#E3F4EB', fontSize: 16, fontWeight: '500' },
+  statLabel: { color: '#E3F4EB', fontSize: 13, marginTop: 4 },
   statCaption: { color: '#a0aaa4', fontSize: 11, marginTop: 3 },
-  accountCard: { backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 18, borderWidth: 1, marginTop: 14, padding: 16 },
-  accountHeading: { color: '#65756c', fontSize: 12, fontWeight: '800', letterSpacing: 0.45, marginBottom: 12 },
-  detailRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 13 },
-  detailLabel: { color: '#9aa49f', fontSize: 12 },
-  detailValue: { color: '#344239', fontSize: 12, fontWeight: '600', maxWidth: '58%', textAlign: 'right' },
-  signOutButton: { alignItems: 'center', borderColor: '#ffdadd', borderRadius: 13, borderWidth: 1, flexDirection: 'row', gap: 7, height: 45, justifyContent: 'center', marginTop: 13 },
-  signOutText: { color: '#e23d4f', fontSize: 12, fontWeight: '800' },
-  modalBackdrop: { backgroundColor: 'rgba(10, 28, 19, 0.42)', flex: 1, justifyContent: 'flex-end' },
-  modalDismissArea: { bottom: 0, left: 0, position: 'absolute', right: 0, top: 0 },
+  accountCard: { marginTop: 28 },
+  accountHeading: { color: '#121A16', fontSize: 18, fontWeight: '700', marginBottom: 8 },
+  profileAccountRow: { minHeight: 60, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: 1, borderBottomColor: '#E3EAE6' },
+  profileAccountIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#E3F4EB', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  profileAccountCopy: { flex: 1, minWidth: 0 },
+  profileAccountLabel: { color: '#5A6761', fontSize: 12, marginBottom: 2 },
+  profileAccountValue: { color: '#121A16', fontSize: 15, fontWeight: '600' },
+  profileAccountPlaceholder: { color: '#5A6761', fontWeight: '500' },
+  signOutButton: { alignItems: 'center', backgroundColor: '#FDECEA', borderRadius: 16, flexDirection: 'row', gap: 8, minHeight: 52, paddingVertical: 12, paddingHorizontal: 16, justifyContent: 'center', marginTop: 28 },
+  signOutText: { color: '#B3261E', fontSize: 16, fontWeight: '700', flexShrink: 1, textAlign: 'center' },
   pickerSheet: { backgroundColor: '#ffffff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '75%', padding: 18, paddingBottom: 32 },
-  detailsSheet: { backgroundColor: '#ffffff', borderTopLeftRadius: 24, borderTopRightRadius: 24, flexShrink: 1, maxHeight: '90%', paddingHorizontal: 18, paddingTop: 18, width: '100%' },
-  detailsHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
-  detailsHeaderText: { flex: 1 },
-  detailsEyebrow: { color: '#07815f', fontSize: 11, fontWeight: '800', letterSpacing: 0.5 },
-  detailsTitle: { color: '#20362a', fontSize: 20, fontWeight: '800', marginTop: 4 },
-  detailsClose: { alignItems: 'center', backgroundColor: '#f1f5f2', borderRadius: 18, height: 36, justifyContent: 'center', width: 36 },
-  detailsScroll: { flexShrink: 1 },
-  detailsContent: { paddingBottom: 30, paddingTop: 16 },
-  detailsPhotoGrid: { gap: 12 },
-  detailsPhotoItem: { gap: 6 },
-  detailsPhotoLabel: { color: '#65756c', fontSize: 11, fontWeight: '800' },
-  detailsPhoto: { backgroundColor: '#edf3ef', borderRadius: 16, height: 220, width: '100%' },
-  noPhotoCard: { alignItems: 'center', backgroundColor: '#f1f5f2', borderRadius: 16, height: 150, justifyContent: 'center' },
-  noPhotoText: { color: '#718077', fontSize: 12, fontWeight: '700', marginTop: 8 },
-  detailsStatusRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 },
-  syncedPill: { alignItems: 'center', backgroundColor: '#e7f8ee', borderRadius: 12, flexDirection: 'row', paddingHorizontal: 9, paddingVertical: 5 },
-  syncedDot: { backgroundColor: '#0b8658', borderRadius: 4, height: 7, marginRight: 6, width: 7 },
-  syncedPillText: { color: '#0b8658', fontSize: 11, fontWeight: '800' },
-  detailsDate: { color: '#8b9991', fontSize: 11 },
-  detailsSectionTitle: { color: '#65756c', fontSize: 11, fontWeight: '800', letterSpacing: 0.5, marginTop: 20 },
-  detailsMeasurementGrid: { flexDirection: 'row', gap: 8, marginTop: 12 },
-  detailsMeasurementItem: { backgroundColor: '#f4f8f5', borderRadius: 12, flex: 1, padding: 11 },
-  detailsMeasurementLabel: { color: '#8b9991', fontSize: 11, fontWeight: '700' },
-  detailsMeasurementValue: { color: '#26382e', fontSize: 14, fontWeight: '800', marginTop: 5 },
-  notesPreview: { backgroundColor: '#f8faf9', borderRadius: 12, marginTop: 18, padding: 12 },
-  notesPreviewText: { color: '#344239', fontSize: 13, lineHeight: 19, marginTop: 5 },
   sheetHandle: { alignSelf: 'center', backgroundColor: '#d6ded9', borderRadius: 3, height: 5, marginBottom: 16, width: 42 },
   pickerTitle: { color: '#20362a', fontSize: 17, fontWeight: '800', marginBottom: 8 },
   pickerOptionsScroll: { flexGrow: 0 },
@@ -1696,22 +1695,19 @@ const styles = StyleSheet.create({
   pickerOptionText: { color: '#314238', fontSize: 15, fontWeight: '600' },
   offlineBanner: {
     alignItems: 'center',
-    backgroundColor: '#fff8e6',
-    borderColor: '#f0d080',
+    backgroundColor: '#FFF4E0',
     borderRadius: 14,
-    borderWidth: 1,
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    marginBottom: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
   },
   offlineBannerText: {
-    color: '#855800',
+    color: '#5C3B00',
     flex: 1,
-    fontSize: 12,
-    fontWeight: '600',
-    lineHeight: 16,
+    fontSize: 13,
+    fontWeight: '500',
   },
   offlinePill: {
     alignItems: 'center',
@@ -1756,6 +1752,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   syncNowButton: {
+    minHeight: 44,
     alignItems: 'center',
     backgroundColor: '#07815f',
     borderRadius: 12,

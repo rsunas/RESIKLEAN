@@ -1,7 +1,8 @@
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
 import { Card } from 'heroui-native';
 import { useState } from 'react';
-import { Modal, Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { MotionModal as Modal, MotionPressable as Pressable } from '@/components/app-motion';
 import { AppText } from '@/components/app-text';
 
 type SignOutConfirmModalProps = {

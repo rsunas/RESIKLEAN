@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { dimensionSchema } = require('../utils/truckDimensions');
 
 // Default MSW density: 294 kg/m³ = 0.294 tonnes/m³
 const DEFAULT_DENSITY_FACTOR = 0.294;
@@ -17,9 +18,9 @@ const truckLoadSchema = new mongoose.Schema(
     truckPlate: { type: String, required: true },
     routeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Route' },
     // Triangulation measurements (metres)
-    length: { type: Number, required: true },
-    width: { type: Number, required: true },
-    height: { type: Number, required: true },
+    length: dimensionSchema('length'),
+    width: dimensionSchema('width'),
+    height: dimensionSchema('height'),
     slope: { type: Number, default: 0 },
     // Calculated tonnage (stored for reporting)
     volumeCubicM: { type: Number },

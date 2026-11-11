@@ -5,29 +5,22 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  Pressable,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import Svg, { Circle as SvgCircle, Path } from 'react-native-svg';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Path } from 'react-native-svg';
 import { BarangayPicker } from '@/components/barangay-picker';
-import { BrandMark } from '@/components/brand-mark';
+import { AuthField, AuthFooterLink, AuthHeader, authStyles } from '@/components/auth-ui';
+import { SignupProgress } from '@/components/signup-progress';
+import { MotionPressable as Pressable, SignupStepTransition } from '@/components/app-motion';
+import { AuthColors as C } from '@/constants/theme';
 import { saveSession, type AccountUser } from '@/lib/session';
 
-function BadgeCheckIcon({ color = '#176b3a', size = 18 }: { color?: string; size?: number }) {
-  return (
-    <Svg fill="none" height={size} stroke={color} strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} viewBox="0 0 24 24" width={size}>
-      <Path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z" />
-      <Path d="m9 12 2 2 4-4" />
-    </Svg>
-  );
-}
 
 type RegisterResponse = {
   success: boolean;
@@ -57,6 +50,7 @@ function GoogleLogo() {
 
 export default function SignupScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [step, setStep] = useState<SignupStep>(1);
   const [googleToken, setGoogleToken] = useState('');
   const [name, setName] = useState('');
@@ -191,236 +185,94 @@ export default function SignupScreen() {
     setError('');
   };
 
+  // Match only existing validation messages; do not invent field validation.
+  const nameError = error === 'Please enter your full name.' ? error : '';
+  const passwordError = error === 'Please set a password with at least 6 characters.' ? error : '';
+  const locationError = error === 'Please select your collection location.' ? error : '';
+  const generalError = !nameError && !passwordError && !locationError ? error : '';
+
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar backgroundColor="#eaf6f3" barStyle="dark-content" />
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.keyboardView}>
-        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          <View style={styles.phoneFrame}>
-            <View style={styles.innerCanvas}>
-              <View style={styles.brandArea}>
-                <View style={styles.logoRow}>
-                  <BrandMark height={104} width={190} />
+    <SafeAreaView edges={['left', 'right']} style={authStyles.page}>
+      <StatusBar backgroundColor={C.tint} barStyle="dark-content" />
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={authStyles.keyboard}>
+        <ScrollView style={authStyles.scroll} contentContainerStyle={authStyles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <AuthHeader title="Create your account" subtitle="Join ResiKlean and track your collection schedule" />
+          <View style={authStyles.body}>
+            <SignupProgress step={step} />
+            <SignupStepTransition step={step}>
+            {step === 1 ? (
+              <View>
+                <View style={styles.stepIntro}>
+                  <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.mailBadge}>
+                    <Feather name="mail" size={24} color={C.primary} />
+                  </View>
+                  <Text style={styles.stepTitle}>Verify your email</Text>
+                  <Text style={styles.stepDescription}>Use your Google account to create a secure ResiKlean login.</Text>
                 </View>
-              </View>
-
-              <View style={styles.formCard}>
-                <Text style={styles.headline}>Create your account</Text>
-                <Text style={styles.subtext}>Join ResiKlean and track your collection schedule</Text>
-
-                <View style={styles.progressRow}>
-                  <View style={styles.progressStep}>
-                    <View style={[styles.progressCircle, step >= 1 && styles.progressCircleActive]}>
-                      <Text style={[styles.progressNumber, step >= 1 && styles.progressNumberActive]}>1</Text>
-                    </View>
-                    <Text style={[styles.progressLabel, step === 1 && styles.progressLabelActive]}>Google account</Text>
-                  </View>
-                  <View style={[styles.progressLine, step === 2 && styles.progressLineActive]} />
-                  <View style={styles.progressStep}>
-                    <View style={[styles.progressCircle, step === 2 && styles.progressCircleActive]}>
-                      <Text style={[styles.progressNumber, step === 2 && styles.progressNumberActive]}>2</Text>
-                    </View>
-                    <Text style={[styles.progressLabel, step === 2 && styles.progressLabelActive]}>Your details</Text>
-                  </View>
-                </View>
-
-                {step === 1 ? (
-                  <View>
-                    <View style={styles.stepIntro}>
-                      <Text style={styles.stepTitle}>Verify your email</Text>
-                      <Text style={styles.stepDescription}>Use your Google account to create a secure ResiKlean login.</Text>
-                    </View>
-
-                    <Pressable
-                      accessibilityRole="button"
-                      disabled={isGoogleSubmitting}
-                      onPress={handleGoogleSignup}
-                      style={[styles.googleButton, isGoogleSubmitting && styles.buttonDisabled]}>
-                      {isGoogleSubmitting ? (
-                        <ActivityIndicator color="#173322" />
-                      ) : (
-                        <View style={styles.buttonContent}>
-                          <GoogleLogo />
-                          <Text style={styles.googleButtonText}>Continue with Google</Text>
-                        </View>
-                      )}
-                    </Pressable>
-                  </View>
-                ) : (
-                  <View>
-                    <View style={styles.stepHeaderRow}>
-                      <View>
-                        <Text style={styles.stepTitle}>Finish your profile</Text>
-                        <Text style={styles.stepDescription}>Add the details needed for your collection account.</Text>
-                      </View>
-                      <Pressable accessibilityRole="button" onPress={returnToFirstStep} style={styles.backButton}>
-                        <Feather color="#176b3a" name="arrow-left" size={16} />
-                        <Text style={styles.backButtonText}>Back</Text>
-                      </Pressable>
-                    </View>
-
-                    <View style={styles.fieldGroup}>
-                      <Text style={styles.label}>Full Name</Text>
-                      <View style={styles.inputRow}>
-                        <Feather color="#83938a" name="user" size={19} />
-                        <TextInput
-                          accessibilityLabel="Full Name"
-                          autoComplete="name"
-                          onChangeText={setName}
-                          placeholder="Maria Santos"
-                          placeholderTextColor="#8c9b93"
-                          style={styles.input}
-                          value={name}
-                        />
-                      </View>
-                    </View>
-
-                    <View style={styles.fieldGroup}>
-                      <Text style={styles.label}>Email Address</Text>
-                      <View style={[styles.inputRow, styles.readOnlyInput]}>
-                        <Feather color="#83938a" name="mail" size={19} />
-                        <Text style={styles.readOnlyText}>{email}</Text>
-                        <BadgeCheckIcon />
-                      </View>
-                    </View>
-
-                    <View style={styles.fieldGroup}>
-                      <Text style={styles.label}>Phone Number</Text>
-                      <View style={styles.inputRow}>
-                        <Feather color="#83938a" name="phone" size={19} />
-                        <TextInput
-                          accessibilityLabel="Phone Number"
-                          autoComplete="tel"
-                          keyboardType="phone-pad"
-                          onChangeText={setPhone}
-                          placeholder="+63 9XX XXX XXXX"
-                          placeholderTextColor="#8c9b93"
-                          style={styles.input}
-                          value={phone}
-                        />
-                      </View>
-                    </View>
-
-                    <View style={styles.fieldGroup}>
-                      <Text style={styles.label}>Password</Text>
-                      <View style={styles.inputRow}>
-                        <Feather color="#83938a" name="lock" size={19} />
-                        <TextInput
-                          accessibilityLabel="Password"
-                          autoComplete="password-new"
-                          onChangeText={setPassword}
-                          placeholder="Set a password (min. 6 chars)"
-                          placeholderTextColor="#8c9b93"
-                          secureTextEntry={!showPassword}
-                          style={styles.input}
-                          value={password}
-                        />
-                        <Pressable onPress={() => setShowPassword((v) => !v)}>
-                          <Feather color="#83938a" name={showPassword ? 'eye-off' : 'eye'} size={19} />
-                        </Pressable>
-                      </View>
-                    </View>
-
-                    <View style={styles.fieldGroup}>
-                      <Text style={styles.label}>Collection Location</Text>
-                      <BarangayPicker onChange={setLocation} value={location} />
-                    </View>
-
-                    {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
-
-                    <Pressable
-                      accessibilityRole="button"
-                      disabled={isSubmitting}
-                      onPress={handleSignup}
-                      style={[styles.button, isSubmitting && styles.buttonDisabled]}>
-                      {isSubmitting ? (
-                        <ActivityIndicator color="#ffffff" />
-                      ) : (
-                        <View style={styles.buttonContent}>
-                          <Text style={styles.buttonText}>Finish sign up</Text>
-                          <Feather color="#ffffff" name="arrow-right" size={20} />
-                        </View>
-                      )}
-                    </Pressable>
-                  </View>
-                )}
-
-                {step === 1 && error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
-              </View>
-
-              <View style={styles.footer}>
-                <Text style={styles.footerText}>Already have an account? </Text>
-                <Pressable accessibilityRole="link" onPress={() => router.replace('/login')}>
-                  <Text style={styles.footerLink}>Sign In</Text>
+                <Pressable accessibilityRole="button" disabled={isGoogleSubmitting} onPress={handleGoogleSignup}
+                  style={[styles.googleButton, isGoogleSubmitting && authStyles.disabled]}>
+                  {isGoogleSubmitting ? <ActivityIndicator color={C.ink} /> : <View style={authStyles.buttonContent}>
+                    <GoogleLogo /><Text style={styles.googleButtonText}>Continue with Google</Text>
+                  </View>}
                 </Pressable>
               </View>
-            </View>
+            ) : (
+              <View>
+                <View style={styles.stepHeaderRow}>
+                  <Text style={styles.detailsTitle}>Finish your profile</Text>
+                  <Pressable accessibilityRole="button" onPress={returnToFirstStep} style={styles.backButton}>
+                    <Feather color={C.darkGreen} name="arrow-left" size={20} /><Text style={styles.backButtonText}>Back</Text>
+                  </Pressable>
+                </View>
+                <Text style={styles.stepDescription}>Add the details needed for your collection account.</Text>
+                <AuthField label="Full name" icon="user" accessibilityLabel="Full Name" autoComplete="name"
+                  onChangeText={setName} placeholder="Maria Santos" value={name} error={nameError} />
+                <AuthField label="Email address" icon="mail" accessibilityLabel="Email Address" value={email} locked helper="Verified with Google"
+                  trailing={<View accessible={false} style={styles.verifiedIcon}><Feather name="check-circle" color={C.primary} size={22} /></View>} />
+                <AuthField label="Phone number" icon="phone" accessibilityLabel="Phone Number" autoComplete="tel" keyboardType="phone-pad"
+                  onChangeText={setPhone} placeholder="+63 9XX XXX XXXX" value={phone} />
+                <AuthField label="Password" icon="lock" accessibilityLabel="Password" autoComplete="password-new"
+                  onChangeText={setPassword} placeholder="Create a password" secureTextEntry={!showPassword} value={password}
+                  helper="At least 6 characters" error={passwordError}
+                  trailing={<Pressable accessibilityRole="button" accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+                    onPress={() => setShowPassword((v) => !v)} style={authStyles.eye}>
+                    <Feather color={C.muted} name={showPassword ? 'eye-off' : 'eye'} size={20} />
+                  </Pressable>} />
+                <View style={authStyles.fieldGroup}>
+                  <Text style={authStyles.label}>Collection location</Text>
+                  <BarangayPicker appearance="auth" invalid={!!locationError} onChange={setLocation} value={location} />
+                  {locationError ? <Text accessibilityRole="alert" style={authStyles.error}>{locationError}</Text> : null}
+                </View>
+              </View>
+            )}
+            </SignupStepTransition>
+            {generalError ? <Text accessibilityRole="alert" style={authStyles.error}>{generalError}</Text> : null}
           </View>
         </ScrollView>
+        <View style={[authStyles.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+          {step === 2 ? <Pressable accessibilityRole="button" disabled={isSubmitting} onPress={handleSignup}
+            style={[authStyles.primaryButton, isSubmitting && authStyles.disabled]}>
+            {isSubmitting ? <ActivityIndicator color="#ffffff" /> : <View style={authStyles.buttonContent}>
+              <Text style={authStyles.buttonText}>Finish sign up</Text><Feather color="#ffffff" name="arrow-right" size={20} />
+            </View>}
+          </Pressable> : null}
+          <AuthFooterLink text="Already have an account?" label="Sign In" onPress={() => router.replace('/login')} />
+        </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#f4f8f5' },
-  keyboardView: { flex: 1 },
-  scrollContent: { flexGrow: 1, paddingVertical: 16 },
-  phoneFrame: { alignSelf: 'center', maxWidth: 420, width: '100%' },
-  innerCanvas: {},
-  brandArea: { paddingHorizontal: 24, paddingTop: 26 },
-  logoRow: { alignItems: 'flex-start', flexDirection: 'row' },
-  formCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 24,
-    marginHorizontal: 12,
-    marginTop: 22,
-    padding: 24,
-    shadowColor: '#173322',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.09,
-    shadowRadius: 18,
-  },
-  headline: { color: '#11271a', fontSize: 24, fontWeight: '800', letterSpacing: -0.5 },
-  subtext: { color: '#5c7566', fontSize: 14, lineHeight: 20, marginTop: 6 },
-  progressRow: { alignItems: 'flex-start', flexDirection: 'row', marginTop: 25 },
-  progressStep: { alignItems: 'center', width: 94 },
-  progressCircle: { alignItems: 'center', backgroundColor: '#edf3ef', borderRadius: 18, height: 36, justifyContent: 'center', width: 36 },
-  progressCircleActive: { backgroundColor: '#176b3a' },
-  progressNumber: { color: '#71857a', fontSize: 14, fontWeight: '800' },
-  progressNumberActive: { color: '#ffffff' },
-  progressLabel: { color: '#71857a', fontSize: 10, fontWeight: '700', marginTop: 6, textAlign: 'center' },
-  progressLabelActive: { color: '#176b3a' },
-  progressLine: { backgroundColor: '#dce7df', flex: 1, height: 2, marginTop: 17 },
-  progressLineActive: { backgroundColor: '#176b3a' },
-  stepIntro: { marginTop: 27 },
-  stepHeaderRow: { alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between', marginTop: 27 },
-  stepTitle: { color: '#173322', fontSize: 18, fontWeight: '800' },
-  stepDescription: { color: '#6d8275', fontSize: 13, lineHeight: 19, marginTop: 5, maxWidth: 250 },
-  googleButton: { alignItems: 'center', borderColor: '#cbdacf', borderRadius: 14, borderWidth: 1, height: 52, justifyContent: 'center', marginTop: 22 },
-  googleButtonText: { color: '#173322', fontSize: 15, fontWeight: '800' },
-  secondaryButton: { alignItems: 'center', flexDirection: 'row', justifyContent: 'center', marginTop: 17 },
-  secondaryButtonText: { color: '#176b3a', fontSize: 14, fontWeight: '800', marginRight: 8 },
-  backButton: { alignItems: 'center', flexDirection: 'row', marginTop: 2 },
-  backButtonText: { color: '#176b3a', fontSize: 12, fontWeight: '800', marginLeft: 4 },
-  fieldGroup: { marginTop: 18 },
-  fieldGroupCompact: { marginTop: 20 },
-  label: { color: '#203c2a', fontSize: 13, fontWeight: '700', marginBottom: 8 },
-  inputRow: { alignItems: 'center', backgroundColor: '#ffffff', borderColor: '#cfddd3', borderRadius: 14, borderWidth: 1, flexDirection: 'row', height: 53, paddingHorizontal: 14 },
-  input: { color: '#173322', flex: 1, fontSize: 15, height: '100%', marginLeft: 11, paddingVertical: 0 },
-  readOnlyInput: { backgroundColor: '#f4f8f5' },
-  readOnlyText: { color: '#61766a', flex: 1, fontSize: 15, marginLeft: 11 },
-  passwordDivider: { alignItems: 'center', flexDirection: 'row', gap: 10, marginTop: 23 },
-  dividerLine: { backgroundColor: '#d7e2da', flex: 1, height: 1 },
-  dividerText: { color: '#8a9d90', fontSize: 12, fontWeight: '700' },
-  infoNote: { alignItems: 'center', backgroundColor: '#eef8f1', borderRadius: 12, flexDirection: 'row', marginTop: 18, paddingHorizontal: 12, paddingVertical: 11 },
-  infoNoteText: { color: '#4e705b', flex: 1, fontSize: 12, lineHeight: 17, marginLeft: 8 },
-  error: { color: '#b42318', fontSize: 13, lineHeight: 18, marginTop: 14 },
-  button: { alignItems: 'center', backgroundColor: '#176b3a', borderRadius: 14, height: 52, justifyContent: 'center', marginTop: 20 },
-  buttonDisabled: { opacity: 0.65 },
-  buttonContent: { alignItems: 'center', flexDirection: 'row', gap: 9 },
-  buttonText: { color: '#ffffff', fontSize: 16, fontWeight: '800' },
-  footer: { alignItems: 'center', flexDirection: 'row', justifyContent: 'center', marginBottom: 27, marginTop: 23 },
-  footerText: { color: '#597062', fontSize: 13 },
-  footerLink: { color: '#176b3a', fontSize: 13, fontWeight: '800' },
+  stepIntro: { marginTop: 28 },
+  mailBadge: { width: 52, height: 52, borderRadius: 26, backgroundColor: C.tint, alignItems: 'center', justifyContent: 'center', marginBottom: 14 },
+  stepTitle: { color: C.ink, fontSize: 20, fontWeight: '700' },
+  detailsTitle: { color: C.ink, fontSize: 22, fontWeight: '700', flex: 1, minWidth: 0 },
+  stepDescription: { color: C.muted, fontSize: 15, lineHeight: 22, marginTop: 8 },
+  stepHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 28 },
+  backButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', minHeight: 44, minWidth: 44, gap: 6 },
+  backButtonText: { color: C.darkGreen, fontSize: 15, fontWeight: '600' },
+  googleButton: { backgroundColor: '#FFFFFF', borderColor: C.border, borderRadius: 18, borderWidth: 1.5, minHeight: 56, paddingHorizontal: 16, paddingVertical: 12, alignItems: 'center', justifyContent: 'center', marginTop: 28 },
+  googleButtonText: { color: C.ink, fontSize: 16, fontWeight: '600', flexShrink: 1, textAlign: 'center' },
+  verifiedIcon: { width: 44, alignItems: 'center' },
 });

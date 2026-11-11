@@ -1,9 +1,14 @@
+import { ProfileSettingsRow } from '@/components/profile-settings-row';
+import { SkeletonBlock, SkeletonRegion, SkeletonRows, useSkeletonVisible } from '@/components/loading-skeleton';
+import { RouteMonitoringConsentModal, useRouteMonitoringConsent } from '@/components/route-monitoring-consent-modal';
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, ActivityIndicator, AppState, Image, Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Alert, ActivityIndicator, AppState, Image, PanResponder, Platform, ScrollView, StyleSheet, View } from 'react-native';
+import { MotionPressable as Pressable, MotionModal as Modal, TabTransition, useSlidingTabPill, useClosingValue, RevealRow, useFirstLoadReveal, ToastMotion, MotionChevron } from '@/components/app-motion';
 import { io } from 'socket.io-client';
 import Svg, { Circle } from 'react-native-svg';
 import Mapbox from '@rnmapbox/maps';
@@ -11,23 +16,24 @@ import { useRouter } from 'expo-router';
 import { AppText as Text } from '@/components/app-text';
 import { SignOutConfirmModal } from '@/components/sign-out-confirm-modal';
 import { BrandMark } from '@/components/brand-mark';
-import { Card } from 'heroui-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { deleteOfflineRouteMap, downloadOfflineRouteMap, getOfflineRouteMapStatus, type OfflineRouteMapStatus } from '@/lib/driver-offline-map';
 import { enableDriverGeofencing, getDriverGeofencingStatus, stopDriverGeofencing, updateDriverGeofences } from '@/lib/driver-geofencing';
 import { getQueuedRouteLogStopIds, getRouteLogQueueStats, subscribeToRouteLogSync, syncRouteLogQueue, type RouteLogSyncResult } from '@/lib/driver-route-log-queue';
 import { isRouteCompletionQueued, queueRouteCompletion, subscribeToRouteCompletionSync } from '@/lib/driver-route-completion';
 import { getRouteHistoryCache, saveRouteHistoryCache } from '@/lib/driver-route-history-cache';
-import { recordDriverTrailLocation, startDriverTrailSession, subscribeToDriverTrailSync, syncDriverTrailQueue } from '@/lib/driver-trail-queue';
-import { cacheAssignedRoute, clearCachedAssignedRoute, clearRouteProximityEvents, enableRouteProximityTracking, getCachedAssignedRoute, getRouteProximityEvents, getRouteProximityStatus, ROUTE_ENTER_TOLERANCE_METERS, ROUTE_EXIT_TOLERANCE_METERS, stopRouteProximityTracking, subscribeToRouteProximityStatus, updateRouteProximityTracking, type RoutePresenceEvent, type RoutePresenceStatus } from '@/lib/driver-route-proximity';
+import { subscribeToDriverTrailSync, syncDriverTrailQueue } from '@/lib/driver-trail-queue';
+import { getRouteMonitoringPreference, setRouteMonitoringConsent, pauseRouteMonitoringToday, processDriverRouteLocation, cacheAssignedRoute, clearCachedAssignedRoute, clearRouteProximityEvents, enableRouteProximityTracking, getCachedAssignedRoute, getRouteProximityEvents, getRouteProximityStatus, stopRouteProximityTracking, subscribeToRouteProximityStatus, type RoutePresenceEvent, type RoutePresenceStatus } from '@/lib/driver-route-proximity';
 import { clearSession, getSession, type AccountUser, type AuthSession } from '@/lib/session';
 import { queueCapacityLog, syncCapacityQueue } from '@/lib/driver-capacity-queue';
 import NetInfo from '@react-native-community/netinfo';
+import { monitoringDay } from '@/lib/route-presence-filter';
 import {
   clearPendingCameraContext,
   getPendingCameraContext,
   savePendingCameraContext,
 } from '@/lib/camera-recovery';
+import { optimizeProofPhoto, proofCameraOptions } from '@/lib/proof-photo';
 
 const TONNES_PER_STOP = 0.1;
 const TRUCK_DENSITY = 0.294;
@@ -175,6 +181,13 @@ const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL?.replace(/\/$/, '') || API_URL?.replace(/\/api\/?$/, '');
 const MAPBOX_ACCESS_TOKEN = process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN?.trim();
 const MAP_CENTER: [number, number] = [123.1815, 13.6192];
+// Start the native map over Naga, before location/route camera updates arrive.
+const INITIAL_MAP_CAMERA = {
+  centerCoordinate: MAP_CENTER,
+  zoomLevel: 12,
+  animationMode: 'none' as const,
+  animationDuration: 0,
+};
 // Visual approach indicator only. Stop collection still uses the platform
 // geofence radius configured in driver-geofencing.ts (50 m).
 const STOP_NEAR_RADIUS_METERS = 100;
@@ -323,8 +336,17 @@ function HistoryHeader({ hasError, isLoading, route, shift }: { hasError: boolea
   );
 }
 
+// Decorative background only; no route or sync state lives in this component.
+function CollectorGradient() {
+  return <>
+    <LinearGradient pointerEvents="none" colors={['#24846E', '#0D2E27']} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={styles.cardGradient} />
+    <View pointerEvents="none" style={styles.cardGradientShade} />
+  </>;
+}
+
 function BottomNavigation({ activeTab, onChange }: { activeTab: CollectorTab; onChange: (tab: CollectorTab) => void }) {
   const insets = useSafeAreaInsets();
+  const pill = useSlidingTabPill(activeTab);
   const tabs: Array<{ key: CollectorTab; label: string; icon: 'map-pin' | 'clock' | 'user' }> = [
     { key: 'map', label: 'Map', icon: 'map-pin' },
     { key: 'history', label: 'Route History', icon: 'clock' },
@@ -332,66 +354,83 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: CollectorTab; on
   ];
 
   return (
-    <View style={[styles.bottomNav, { height: 70 + insets.bottom, paddingBottom: insets.bottom }]}>
+    <View style={[styles.bottomNav, { paddingBottom: Math.max(8, insets.bottom) }]}>
+      {pill.indicator}
       {tabs.map((tab) => {
         const active = activeTab === tab.key;
-        return <Pressable accessibilityRole="tab" accessibilityState={{ selected: active }} key={tab.key} onPress={() => onChange(tab.key)} style={styles.navItem}><Feather color={active ? '#07815f' : '#a0aaa5'} name={tab.icon} size={18} /><Text style={[styles.navText, active && styles.navTextActive]}>{tab.label}</Text>{active ? <View style={styles.navIndicator} /> : <View style={styles.navIndicatorPlaceholder} />}</Pressable>;
+        return <Pressable motionDisabled onLayout={(event) => pill.itemLayout(tab.key, event)} accessibilityRole="tab" accessibilityState={{ selected: active }} key={tab.key} onPress={() => onChange(tab.key)} style={styles.navItem}><View onLayout={(event) => pill.iconLayout(tab.key, event)} collapsable={false} style={styles.navIconPill}><Feather color={active ? '#086B42' : '#5A6761'} name={tab.icon} size={21} /></View><Text numberOfLines={1} adjustsFontSizeToFit style={[styles.navText, active && styles.navTextActive]}>{tab.label}</Text></Pressable>;
       })}
     </View>
   );
 }
 
+// Historical maps are static previews: initialize at their target, never fly in.
+function HistoryMapCamera({ center, zoom }: { center: [number, number] | null; zoom: number }) {
+  const centerCoordinate = center ?? MAP_CENTER;
+  const zoomLevel = center ? zoom : 12;
+  return (
+    <Mapbox.Camera
+      defaultSettings={{ centerCoordinate, zoomLevel, animationMode: 'none', animationDuration: 0 }}
+      centerCoordinate={centerCoordinate}
+      zoomLevel={zoomLevel}
+      animationMode="none"
+      animationDuration={0}
+    />
+  );
+}
+
 function ProgressRing({ percent }: { percent: number }) {
-  const size = 59;
-  const stroke = 5;
+  const size = 84;
+  const stroke = 8;
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
   const clampedPercent = Math.min(100, Math.max(0, percent));
   return (
     <View style={styles.progressRing}>
       <Svg height={size} width={size}>
-        <Circle cx={size / 2} cy={size / 2} fill="none" r={radius} stroke="#5aa687" strokeWidth={stroke} />
-        <Circle cx={size / 2} cy={size / 2} fill="none" r={radius} rotation="-90" stroke="#d2ffe8" strokeDasharray={`${circumference} ${circumference}`} strokeDashoffset={circumference * (1 - clampedPercent / 100)} strokeLinecap="round" strokeWidth={stroke} transform={`rotate(-90 ${size / 2} ${size / 2})`} />
+        <Circle cx={size / 2} cy={size / 2} fill="none" r={radius} stroke="rgba(255,255,255,0.25)" strokeWidth={stroke} />
+        <Circle cx={size / 2} cy={size / 2} fill="none" r={radius} rotation="-90" stroke="#ffffff" strokeDasharray={`${circumference} ${circumference}`} strokeDashoffset={circumference * (1 - clampedPercent / 100)} strokeLinecap="round" strokeWidth={stroke} transform={`rotate(-90 ${size / 2} ${size / 2})`} />
       </Svg>
       <Text style={styles.progressPercent}>{Math.round(clampedPercent)}%</Text>
     </View>
   );
 }
 
-function StreetRow({ street }: { street: Street }) {
+function StreetRow({ street, last = false }: { street: Street; last?: boolean }) {
   const collected = street.status === 'Collected';
   const statusLabel = street.flaggedForReview ? 'Collected · Review' : street.status;
   return (
-    <Card style={styles.streetCard}>
-      <View style={[styles.streetMarker, street.flaggedForReview ? styles.reviewMarker : collected ? styles.collectedMarker : styles.notCollectedMarker]} />
-      <View style={styles.streetInfo}>
-        <View style={styles.streetNameRow}>
-          <Text style={styles.streetName}>{street.name}</Text>
-          {street.flaggedForReview ? (
-            <View style={styles.flagChip}>
-              <Feather color="#ffffff" name="flag" size={9} />
-              <Text style={styles.flagChipText}>Flagged</Text>
-            </View>
-          ) : null}
+    <View style={styles.streetCard}>
+      <View style={styles.timelineRail}>
+        {!last && <View style={styles.timelineLine} />}
+        <View style={[styles.streetMarker, street.flaggedForReview ? styles.reviewMarker : collected ? styles.collectedMarker : styles.notCollectedMarker]}>
+          {street.flaggedForReview ? <Feather name="flag" color="#5C3B00" size={12} /> : collected ? <Feather name="check" color="#ffffff" size={14} /> : null}
         </View>
+      </View>
+      <View style={styles.streetInfo}>
+        <Text numberOfLines={1} ellipsizeMode="tail" style={styles.streetName}>{street.name}</Text>
         <Text style={styles.streetBarangay}>{street.barangay}</Text>
+        {street.flaggedForReview ? <Text style={styles.reviewText}>Flagged</Text> : null}
       </View>
-      <View style={[styles.streetStatus, collected ? styles.collectedPill : styles.notCollectedPill]}>
-        <Text style={[styles.streetStatusText, collected ? styles.collectedText : styles.notCollectedText]}>• {statusLabel}</Text>
-        <Text style={[styles.streetTime, collected ? styles.collectedText : styles.notCollectedText]}>{street.time || '—'}</Text>
+      <View style={styles.streetStatus}>
+        <Text style={[styles.streetStatusText, street.flaggedForReview ? styles.reviewText : collected ? styles.collectedText : styles.notCollectedText]}>{statusLabel}</Text>
+        <Text style={styles.streetTime}>{street.time || '—'}</Text>
       </View>
-    </Card>
+    </View>
   );
 }
 
 function AccountDetail({ label, value }: { label: string; value: string }) {
-  return <View style={styles.accountRow}><Text style={styles.accountLabel}>{label}</Text><Text style={styles.accountValue}>{value}</Text></View>;
+  const icons: Record<string, React.ComponentProps<typeof Feather>['name']> = { 'Employee ID': 'credit-card', Contact: 'phone', Email: 'mail', Shift: 'clock', 'Assigned route': 'git-branch', 'Assigned truck': 'truck' };
+  return <View style={styles.accountRow}><View style={styles.detailIconBadge}><Feather name={icons[label]} size={20} color="#0A7F4F" /></View><View style={styles.flexText}><Text style={styles.accountLabel}>{label}</Text><Text style={[styles.accountValue, value === 'Not provided' && styles.placeholderValue]}>{value}</Text></View></View>;
 }
 
 export default function CollectorScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<CollectorTab>('history');
+  const [expandedStopsRouteId, setExpandedStopsRouteId] = useState<string | null>(null);
+  const [showAllPastCollections, setShowAllPastCollections] = useState(false);
   const [session, setSession] = useState<AuthSession | null>(null);
   const [driver, setDriver] = useState<AccountUser | null>(null);
   const [assignedRoute, setAssignedRoute] = useState<DriverRoute | null>(null);
@@ -415,6 +454,7 @@ export default function CollectorScreen() {
   const [queuedRouteStopIds, setQueuedRouteStopIds] = useState<string[]>([]);
   const [complaints, setComplaints] = useState<ComplaintMarker[]>([]);
   const [selectedComplaint, setSelectedComplaint] = useState<ComplaintMarker | null>(null);
+  const closingComplaint = useClosingValue(selectedComplaint);
   const [pendingProofAsset, setPendingProofAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [isOpeningProofCamera, setIsOpeningProofCamera] = useState(false);
   const [isResolvingComplaint, setIsResolvingComplaint] = useState(false);
@@ -433,6 +473,10 @@ export default function CollectorScreen() {
   const [localResetTimestamp, setLocalResetTimestamp] = useState<number>(0);
   const emptyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTogglingMonitoringRef = useRef(false);
+  const monitoringSuspendedRef = useRef(false);
+  const monitoringRequestRef = useRef(0);
+  const autoMonitoringAttemptsRef = useRef(new Set<string>());
+  const [autoMonitoringRevision, setAutoMonitoringRevision] = useState(0);
   
   const handleTruckEmptied = () => {
     setIsEmptiedUndoing(true);
@@ -466,6 +510,13 @@ export default function CollectorScreen() {
     },
   }), []);
   const collectorId = session?.user._id || session?.user.id;
+  const monitoringContextRef = useRef({ collectorId, routeId: assignedRoute?._id, eligible: false });
+  const scheduledWeekday = new Date(Date.now() + 8 * 60 * 60 * 1000).getUTCDay();
+  const monitoringEligible = Boolean(session?.token && assignedRoute?.routePath
+    && assignedRoute.isScheduledToday !== false && !assignedRoute.isCompletedToday
+    && assignedRoute.schedule.includes(scheduledWeekday) && !isSubmittingRoute);
+  monitoringContextRef.current = { collectorId, routeId: assignedRoute?._id, eligible: monitoringEligible };
+  const { visible: isMonitoringConsentVisible, requestConsent: requestMonitoringConsent, respond: respondToMonitoringConsent } = useRouteMonitoringConsent(`${collectorId ?? ''}:${assignedRoute?._id ?? ''}:${monitoringEligible}`);
   const refreshQueuedRouteStops = useCallback(async () => {
     if (!collectorId) return;
     try {
@@ -497,11 +548,13 @@ export default function CollectorScreen() {
           return;
         }
 
-        const recoveredAsset = pendingResult.assets?.[0];
-        if (!isUsableProofAsset(recoveredAsset)) {
+        const pendingAsset = pendingResult.assets?.[0];
+        if (!isUsableProofAsset(pendingAsset)) {
           await clearPendingCameraContext();
           return;
         }
+        const recoveredAsset = await optimizeProofPhoto(pendingAsset);
+        if (cancelled) return;
 
         setPendingProofAsset(recoveredAsset);
         setComplaintMessage('Proof photo recovered after returning from the camera.');
@@ -510,9 +563,10 @@ export default function CollectorScreen() {
         if (savedContext?.type === 'collector' && savedContext.complaintId) {
           setSelectedComplaint((current) => current || complaints.find((c) => c._id === savedContext.complaintId) || null);
         }
-      } catch {
-        // The camera result is optional until the driver taps resolve again.
-      }
+    } catch {
+      await clearPendingCameraContext();
+      // The camera result is optional until the driver taps resolve again.
+    }
     };
 
     void restorePendingProofPhoto();
@@ -732,13 +786,14 @@ export default function CollectorScreen() {
       if (accuracy > 30) return;
 
       const { latitude, longitude } = location.coords;
+      if (!isMounted) return;
+      void processDriverRouteLocation(location, { collectorId, routeId: assignedRoute._id });
       if (lastCoords) {
         const moved = getDistance(lastCoords.latitude, lastCoords.longitude, latitude, longitude);
         if (moved < 3) return;
       }
       lastCoords = { latitude, longitude };
 
-      void recordDriverTrailLocation(location, collectorId);
       if (!isMounted) return;
       setDriverLocation({
         latitude,
@@ -760,16 +815,8 @@ export default function CollectorScreen() {
 
         if (!isMounted || permission.status !== 'granted' || AppState.currentState !== 'active') return;
 
-        // Start a local trail as soon as the assigned route is opened. The
-        // points remain in SQLite while offline and are uploaded in batches.
-        if (collectorId && assignedRoute) {
-          await startDriverTrailSession({
-            collectorId,
-            routeId: assignedRoute._id,
-            routeName: assignedRoute.name,
-          });
-        }
-
+        // The location dot is independent of recording. The shared detector saves
+        // trail points only when monitoring is armed and entry is confirmed.
         const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
         updateLocation(current);
 
@@ -810,6 +857,11 @@ export default function CollectorScreen() {
   }, [activeTab, assignedRoute?._id, assignedRoute?.name, collectorId]);
 
   const profile = driver || session?.user || null;
+  const routeSkeleton = useSkeletonVisible(isLoading, Boolean(assignedRoute), loadError, collectorId);
+  const profileSkeleton = useSkeletonVisible(isLoading, Boolean(profile), loadError, collectorId);
+  const historySkeleton = useSkeletonVisible(historyLoading, historyGroups.length > 0, historyLoadError, collectorId);
+  const revealStops = useFirstLoadReveal(isLoading, Boolean(assignedRoute), routeSkeleton.pending, collectorId);
+  const revealHistory = useFirstLoadReveal(historyLoading, historyGroups.length > 0, historySkeleton.pending, collectorId);
   const collectorName = profile?.name?.trim() || 'Driver';
   const initial = collectorName.charAt(0).toUpperCase();
   const routeStops = assignedRoute?.stops || [];
@@ -866,6 +918,10 @@ export default function CollectorScreen() {
       flaggedForReview: log?.flaggedForReview,
     };
   });
+  // Presentation only: progress, tracking and completion still use the full route.
+  const showAllStops = Boolean(assignedRoute && expandedStopsRouteId === assignedRoute._id);
+  const visibleTodayStreets = showAllStops ? todayStreets : todayStreets.slice(0, 5);
+  const visibleHistoryGroups = showAllPastCollections ? historyGroups : historyGroups.slice(0, 3);
   const completed = progress?.completed ?? completedStopIds.size;
   const totalStops = progress?.totalStops ?? routeStops.length;
   const pending = Math.max(0, progress?.remaining ?? totalStops - completedStopIds.size);
@@ -910,14 +966,14 @@ export default function CollectorScreen() {
   const mapCenter: [number, number] = firstMapStop ? [firstMapStop.longitude, firstMapStop.latitude] : firstRoutePoint || MAP_CENTER;
   const cameraCenter: [number, number] = driverLocation ? [driverLocation.longitude, driverLocation.latitude] : mapCenter;
   const barangay = displayBarangay(assignedRoute?.barangay) || profile?.barangay || profile?.location || 'No route assigned';
-  const historyGroupCenter = useCallback((group: RouteHistoryGroup): [number, number] | null => {
-    const trailFeature = routeLineFeature(group.trailPath);
-    if (trailFeature) return firstRouteCoordinate(trailFeature);
-    const feature = routeLineFeature(group.routePath);
-    if (feature) return firstRouteCoordinate(feature);
+  const historyGroupLastLocation = useCallback((group: RouteHistoryGroup): [number, number] | null => {
+    const trailLastLocation = lastRouteCoordinate(routeLineFeature(group.trailPath));
+    if (trailLastLocation) return trailLastLocation;
+    const routeLastLocation = lastRouteCoordinate(routeLineFeature(group.routePath));
+    if (routeLastLocation) return routeLastLocation;
     if (group.stopLogs?.length) {
-      const first = group.stopLogs.find((log) => Number.isFinite(log.latitude) && Number.isFinite(log.longitude));
-      if (first && first.longitude != null && first.latitude != null) return [first.longitude, first.latitude];
+      const last = [...group.stopLogs].reverse().find((log) => Number.isFinite(Number(log.latitude)) && Number.isFinite(Number(log.longitude)));
+      if (last && last.longitude != null && last.latitude != null) return [Number(last.longitude), Number(last.latitude)];
     }
     return null;
   }, []);
@@ -1134,21 +1190,9 @@ export default function CollectorScreen() {
   }, [assignedRoute?._id, refreshRoutePresence]);
 
   useEffect(() => {
-    const route = assignedRoute;
-    const routePath = route?.routePath;
-    if (!route || !routePath) return;
-
-    let isMounted = true;
-    const refreshTrackedRoute = async () => {
-      const status = await getRouteProximityStatus();
-      if (!status.enabled) return;
-      await updateRouteProximityTracking({ collectorId, routeId: route._id, routeName: route.name, routePath });
-      if (isMounted) void refreshRoutePresence();
-    };
-
-    void refreshTrackedRoute();
-    return () => { isMounted = false; };
-  }, [assignedRoute?._id, assignedRoute?.name, assignedRoute?.routePath, collectorId, refreshRoutePresence]);
+    // Route geometry changes use the same consent-aware setup path as auto-arm.
+    setAutoMonitoringRevision(value => value + 1);
+  }, [assignedRoute?._id, assignedRoute?.name, assignedRoute?.routePath, collectorId]);
 
   const applyQueueResult = useCallback((result: RouteLogSyncResult) => {
     setPendingRouteLogs(result.pending);
@@ -1226,74 +1270,123 @@ export default function CollectorScreen() {
     return () => { isMounted = false; };
   }, [geofenceStops, isLoading, loadError, session]);
 
-  const enableBackgroundGeofencing = useCallback(async () => {
-    if (isTogglingMonitoringRef.current) return;
-    if (!assignedRoute?.routePath || !mapRouteLine) {
-      setGeofencingMessage('Load an assigned route before enabling background geofencing.');
+  const enableBackgroundGeofencing = useCallback(async ({ automatic = false }: { automatic?: boolean } = {}) => {
+    if (isTogglingMonitoringRef.current || monitoringSuspendedRef.current) return;
+    if (!collectorId || !assignedRoute?.routePath || !mapRouteLine || !monitoringEligible) {
+      setGeofencingMessage('A scheduled, unfinished route with a valid road line is required.');
       return;
     }
-
+    const requestId = ++monitoringRequestRef.current;
+    const contextIsCurrent = () => requestId === monitoringRequestRef.current && !monitoringSuspendedRef.current
+      && monitoringContextRef.current.collectorId === collectorId
+      && monitoringContextRef.current.routeId === assignedRoute._id
+      && monitoringContextRef.current.eligible;
     isTogglingMonitoringRef.current = true;
     setIsUpdatingGeofence(true);
     setGeofencingMessage(null);
-    // Optimistic UI update: switch immediately shows active
-    setRoutePresence((prev) => ({ ...prev, enabled: true }));
-    setIsGeofencingEnabled(true);
-
     try {
+      const preference = await getRouteMonitoringPreference(collectorId);
+      if (!contextIsCurrent()) return;
+      if (automatic && (preference.consent === false || preference.pausedDay === monitoringDay())) {
+        await Promise.all([stopRouteProximityTracking({ forgetConfiguration: true }), stopDriverGeofencing({ forgetConfiguration: true })]);
+        setRoutePresence({ enabled: false, state: 'unknown' });
+        setGeofencingMessage(preference.pausedDay === monitoringDay() ? 'Auto-start is paused for today. Turn the switch on to resume.' : 'Automatic monitoring is off. Use the switch when you are ready.');
+        return;
+      }
+      let newlyConsented = false;
+      if (preference.consent !== true) {
+        const accepted = await requestMonitoringConsent();
+        if (!contextIsCurrent()) return;
+        await setRouteMonitoringConsent(collectorId, accepted);
+        if (!accepted) {
+          await Promise.all([stopRouteProximityTracking({ forgetConfiguration: true }), stopDriverGeofencing({ forgetConfiguration: true })]);
+          setRoutePresence({ enabled: false, state: 'unknown' });
+          setGeofencingMessage('Automatic monitoring is off. Use the switch when you are ready.');
+          return;
+        }
+        newlyConsented = true;
+      }
+      if (!contextIsCurrent() || AppState.currentState !== 'active') return;
+      // An explicit switch-on resumes today's paused detector. Automatic checks
+      // never clear the driver's pause or keep asking for revoked permissions.
+      if (!automatic) await setRouteMonitoringConsent(collectorId, true);
+      if (!contextIsCurrent()) return;
       const routeResult = await enableRouteProximityTracking({
-        collectorId,
-        routeId: assignedRoute._id,
-        routeName: assignedRoute.name,
-        routePath: assignedRoute.routePath,
-      });
-      let stopMessage = '';
-      if (API_URL && geofenceStops.length) {
+        collectorId, routeId: assignedRoute._id, routeName: assignedRoute.name, routePath: assignedRoute.routePath,
+      }, { requestPermissions: !automatic || newlyConsented });
+      if (!contextIsCurrent()) {
+        await stopRouteProximityTracking({ forgetConfiguration: true });
+        return;
+      }
+      if (routeResult.enabled && API_URL && geofenceStops.length) {
         const stopResult = await enableDriverGeofencing({ apiUrl: API_URL, stops: geofenceStops });
         setIsGeofencingEnabled(stopResult.enabled);
-        stopMessage = stopResult.enabled ? ` Also monitoring ${geofenceStops.length} stop zone${geofenceStops.length === 1 ? '' : 's'}.` : ` Stop zones: ${stopResult.message}`;
+        setGeofencingMessage(stopResult.enabled ? null : `Route detection is on. Stop zones: ${stopResult.message}`);
       } else {
+        await stopDriverGeofencing({ forgetConfiguration: true });
         setIsGeofencingEnabled(false);
+        setGeofencingMessage(routeResult.enabled ? null : routeResult.message);
       }
-      setGeofencingMessage(`${routeResult.message}${stopMessage}`);
-
-      // Background sync without blocking the UI or causing switch lag
-      if (routeResult.enabled && session?.token && collectorId && API_URL) {
+      if (!contextIsCurrent()) {
+        await Promise.all([stopDriverGeofencing({ forgetConfiguration: true }), stopRouteProximityTracking({ forgetConfiguration: true })]);
+        return;
+      }
+      if (routeResult.enabled && session?.token && API_URL) {
         void syncRouteLogQueue({ apiUrl: API_URL, token: session.token, collectorId }).then(applyQueueResult).catch(() => {});
         void syncDriverTrailQueue({ apiUrl: API_URL, token: session.token, collectorId }).catch(() => {});
       }
       await refreshRoutePresence();
     } catch {
-      setGeofencingMessage('Unable to enable background geofencing.');
-      setRoutePresence((prev) => ({ ...prev, enabled: false }));
-      setIsGeofencingEnabled(false);
+      setGeofencingMessage('Unable to enable automatic monitoring. Check location permissions and try again.');
+      await refreshRoutePresence();
     } finally {
       setIsUpdatingGeofence(false);
       isTogglingMonitoringRef.current = false;
     }
-  }, [API_URL, applyQueueResult, assignedRoute, collectorId, geofenceStops, mapRouteLine, refreshRoutePresence, session?.token]);
+  }, [API_URL, applyQueueResult, assignedRoute, collectorId, geofenceStops, mapRouteLine, monitoringEligible, refreshRoutePresence, requestMonitoringConsent, session?.token]);
 
   const disableBackgroundGeofencing = useCallback(async () => {
-    if (isTogglingMonitoringRef.current) return;
-    isTogglingMonitoringRef.current = true;
+    // Cancel pending startup even if a permission request is still open.
+    monitoringRequestRef.current += 1;
+    respondToMonitoringConsent(false);
+    const stopRoute = stopRouteProximityTracking({ forgetConfiguration: true });
     setIsUpdatingGeofence(true);
-    // Optimistic UI update: switch immediately shows off
-    setRoutePresence((prev) => ({ ...prev, enabled: false, state: 'unknown' }));
-    setIsGeofencingEnabled(false);
-
     try {
-      await Promise.all([
-        stopDriverGeofencing({ forgetConfiguration: true }),
-        stopRouteProximityTracking({ forgetConfiguration: true }),
-      ]);
-      setGeofencingMessage('Route monitoring is off. Existing stop logs will still sync when you reconnect.');
+      await Promise.all([stopRoute, collectorId ? pauseRouteMonitoringToday(collectorId) : Promise.resolve(), stopDriverGeofencing({ forgetConfiguration: true })]);
+      setRoutePresence({ enabled: false, state: 'unknown' });
+      setIsGeofencingEnabled(false);
+      setGeofencingMessage('Auto-start is paused for today. Existing logs will still sync. Turn the switch on to resume.');
     } catch {
-      setGeofencingMessage('Unable to turn off background geofencing.');
+      setGeofencingMessage('Unable to fully stop monitoring. Check the location notification and try again.');
+      await refreshRoutePresence();
     } finally {
       setIsUpdatingGeofence(false);
-      isTogglingMonitoringRef.current = false;
     }
+  }, [collectorId, refreshRoutePresence, respondToMonitoringConsent]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', state => {
+      if (state === 'active') setAutoMonitoringRevision(value => value + 1);
+    });
+    const interval = setInterval(() => {
+      if (AppState.currentState === 'active') setAutoMonitoringRevision(value => value + 1);
+    }, 60_000);
+    return () => { subscription.remove(); clearInterval(interval); };
   }, []);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' || isLoading || isUpdatingGeofence || !collectorId || monitoringSuspendedRef.current || AppState.currentState !== 'active') return;
+    if (!monitoringEligible) {
+      // A completed/unassigned route must not keep a previous detector running.
+      if (!loadError) void Promise.all([stopRouteProximityTracking({ forgetConfiguration: true }), stopDriverGeofencing({ forgetConfiguration: true })]).catch(() => {});
+      return;
+    }
+    const attemptKey = `${collectorId}:${assignedRoute?._id}:${monitoringDay()}:${autoMonitoringRevision}`;
+    if (autoMonitoringAttemptsRef.current.has(attemptKey)) return;
+    autoMonitoringAttemptsRef.current.clear();
+    autoMonitoringAttemptsRef.current.add(attemptKey);
+    void enableBackgroundGeofencing({ automatic: true });
+  }, [assignedRoute?._id, autoMonitoringRevision, collectorId, enableBackgroundGeofencing, isLoading, isUpdatingGeofence, loadError, monitoringEligible]);
 
   const toggleOfflineMap = useCallback(async () => {
     if (!assignedRoute?.routePath) {
@@ -1330,6 +1423,9 @@ export default function CollectorScreen() {
   }, [assignedRoute, offlineMap.downloaded]);
 
   const completeSignOut = async () => {
+    monitoringSuspendedRef.current = true;
+    monitoringRequestRef.current += 1;
+    respondToMonitoringConsent(false);
     try {
       await Promise.all([
         stopDriverGeofencing({ forgetConfiguration: true }),
@@ -1368,12 +1464,7 @@ export default function CollectorScreen() {
           complaintId: selectedComplaint._id,
         });
         try {
-          const result = await ImagePicker.launchCameraAsync({
-            allowsEditing: false,
-            cameraType: ImagePicker.CameraType.back,
-            mediaTypes: ['images'],
-            quality: 0.55,
-          });
+          const result = await ImagePicker.launchCameraAsync(proofCameraOptions);
           if (result.canceled) {
             await clearPendingCameraContext();
             return;
@@ -1383,7 +1474,7 @@ export default function CollectorScreen() {
             await clearPendingCameraContext();
             throw new Error('The camera did not return a usable photo. Please try again.');
           }
-          asset = capturedAsset;
+          asset = await optimizeProofPhoto(capturedAsset);
           await clearPendingCameraContext();
         } finally {
           setIsOpeningProofCamera(false);
@@ -1448,12 +1539,30 @@ export default function CollectorScreen() {
     }
   };
 
+  const awaitingEntry = routePresence.enabled && !routePresence.hasEntered && routePresence.state !== 'on_route';
+  const weakRouteSignal = routePresence.signal === 'poor' || routePresence.signal === 'stale';
+  const monitoringTitle = !routePresence.enabled ? 'Route monitoring off'
+    : weakRouteSignal ? 'Waiting for accurate GPS'
+    : awaitingEntry ? 'Waiting for route entry'
+    : routePresence.state === 'on_route' ? 'On assigned route' : 'Off assigned route';
+  const monitoringCaption = geofencingMessage || (!routePresence.enabled
+    ? 'Enable automatic detection for your scheduled route, including while minimized.'
+    : weakRouteSignal ? 'No entry or exit will be confirmed until fresh, accurate GPS readings return.'
+    : awaitingEntry ? 'Entry needs three accurate readings over at least 10 seconds. Your trip is not recorded yet.'
+    : `${Math.round(routePresence.distanceMeters || 0)} m from the route · last checked ${formatTime(routePresence.lastCheckedAt)}`);
+
   const mapScreen = (
     <View style={styles.mapScreen}>
       <View style={styles.mapPlaceholder}>
         {MAPBOX_ACCESS_TOKEN ? (
-          <Mapbox.MapView style={styles.mapView} styleURL={Mapbox.StyleURL.Street}>
-            <Mapbox.Camera centerCoordinate={cameraCenter} zoomLevel={driverLocation ? 14 : hasMapFocus ? 14 : 12} />
+          <Mapbox.MapView scaleBarEnabled={false} style={styles.mapView} styleURL={Mapbox.StyleURL.Street}>
+            <Mapbox.Camera
+              defaultSettings={INITIAL_MAP_CAMERA}
+              centerCoordinate={cameraCenter}
+              zoomLevel={driverLocation ? 15 : hasMapFocus ? 14 : 12}
+              animationMode="easeTo"
+              animationDuration={500}
+            />
             {mapRouteLine ? (
               <Mapbox.ShapeSource id="assigned-route-path" shape={mapRouteLine}>
                 <Mapbox.LineLayer id="assigned-route-corridor" style={{ lineCap: 'round', lineColor: '#14A87D', lineJoin: 'round', lineOpacity: 0.18, lineWidth: 18 }} />
@@ -1523,13 +1632,13 @@ export default function CollectorScreen() {
             <Feather color="#c05d36" name="wifi-off" size={17} />
           </View>
         )}
-        {MAPBOX_ACCESS_TOKEN && !isLoading && !assignedRoute && (
+        {MAPBOX_ACCESS_TOKEN && !routeSkeleton.pending && !assignedRoute && (
           <View style={styles.mapPlaceholderLabel}>
             <Feather color={loadError ? '#c05d36' : '#4d7e69'} name={loadError ? 'alert-circle' : 'map'} size={17} />
             <Text style={styles.mapPlaceholderText}>{loadError || 'No route is scheduled for today.'}</Text>
           </View>
         )}
-        {MAPBOX_ACCESS_TOKEN && !isLoading && assignedRoute && routeStops.length === 0 && (
+        {MAPBOX_ACCESS_TOKEN && !routeSkeleton.pending && assignedRoute && routeStops.length === 0 && (
           <View style={styles.mapPlaceholderLabel}>
             <Feather color="#c77d10" name="map-pin" size={17} />
             <Text style={styles.mapPlaceholderText}>No stops configured for this route.</Text>
@@ -1541,8 +1650,8 @@ export default function CollectorScreen() {
               <View style={styles.geofenceStatusRow}>
                 <Feather color={routePresence.enabled && routePresence.state === 'on_route' ? '#07815f' : routePresence.enabled ? '#c77d10' : '#68776e'} name={routePresence.enabled ? 'navigation' : 'map-pin'} size={17} />
                 <View style={styles.geofenceTextWrap}>
-                  <Text style={styles.geofenceTitle}>{routePresence.enabled ? routePresence.state === 'on_route' ? 'On assigned route' : routePresence.state === 'off_route' ? 'Away from assigned route' : 'Finding your route position' : 'Route monitoring off'}</Text>
-                  <Text numberOfLines={2} style={styles.geofenceCaption}>{geofencingMessage || (routePresence.enabled ? `${Math.round(routePresence.distanceMeters || 0)} m from the route - last checked ${formatTime(routePresence.lastCheckedAt)}` : `Enable to detect entry within ${ROUTE_ENTER_TOLERANCE_METERS} m and exit beyond ${ROUTE_EXIT_TOLERANCE_METERS} m.`)}</Text>
+                  <Text style={styles.geofenceTitle}>{monitoringTitle}</Text>
+                  <Text style={styles.geofenceCaption}>{monitoringCaption}</Text>
                 </View>
               </View>
               <Pressable
@@ -1559,9 +1668,10 @@ export default function CollectorScreen() {
             {pendingRouteLogs > 0 && <Text style={styles.geofenceQueueText}>{pendingRouteLogs} route log{pendingRouteLogs === 1 ? '' : 's'} queued for sync{failedRouteLogs ? ` (${failedRouteLogs} need attention)` : ''}.</Text>}
           </View>
         )}
-        {assignedRoute && (
+        {(assignedRoute || routeSkeleton.pending) && (
           <View {...capacityPanResponder.panHandlers} style={[styles.capacityFloatingCard, { transform: [{ translateX: capacityPosition.x }, { translateY: capacityPosition.y }] }]}>
             <Text numberOfLines={2} style={styles.capacityCylinderLabel}>Truck load</Text>
+            <SkeletonRegion state={routeSkeleton} placeholder={<SkeletonBlock width={76} height={112} />}>
             <View style={[styles.capacityCylinder, capacityStatus === 'CRITICAL' && styles.capacityCylinderCritical, capacityStatus === 'WARNING' && styles.capacityCylinderWarning]}>
               <View style={[styles.capacityCylinderFill, { height: `${cylinderPct}%` }, capacityStatus === 'CRITICAL' && styles.capacityCylinderFillCritical, capacityStatus === 'WARNING' && styles.capacityCylinderFillWarning]} />
               <View style={[styles.capacityCylinderTop, capacityStatus === 'CRITICAL' && styles.capacityCylinderTopCritical, capacityStatus === 'WARNING' && styles.capacityCylinderTopWarning]} />
@@ -1569,31 +1679,34 @@ export default function CollectorScreen() {
                 ? <Text style={styles.capacityNoLoadText}>No stops{`\n`}collected yet.</Text>
                 : <Text style={[styles.capacityCylinderPercent, capacityStatus === 'CRITICAL' && styles.capacityCylinderPercentCritical]}>{Math.round(cylinderPct)}%</Text>}
             </View>
+            </SkeletonRegion>
             <View style={styles.routeProgressIndicator}>
               <Text style={styles.routeProgressLabel}>Route progress</Text>
+              <SkeletonRegion state={routeSkeleton} placeholder={<SkeletonBlock height={6} radius={3} />}>
               <View style={styles.routeProgressTrack}><View style={[styles.routeProgressFill, { width: `${routeProgressPct}%` }]} /></View>
+              </SkeletonRegion>
             </View>
             {isEmptiedUndoing ? (
               <Pressable onPress={cancelTruckEmptied} style={styles.capacityEmptiedUndoButton}>
                 <Text style={styles.capacityEmptiedUndoText}>Undo (10s)</Text>
               </Pressable>
             ) : (
-              <Pressable onPress={handleTruckEmptied} style={styles.capacityEmptiedButton}>
+              <Pressable disabled={!assignedRoute} accessibilityState={{ disabled: !assignedRoute }} onPress={handleTruckEmptied} style={styles.capacityEmptiedButton}>
                 <Text style={styles.capacityEmptiedButtonText}>Truck emptied</Text>
               </Pressable>
             )}
           </View>
         )}
         {complaintMessage ? (
-          <View style={styles.complaintToast}>
+          <ToastMotion style={styles.complaintToast}>
             <Feather color="#07815f" name="check-circle" size={15} />
             <Text style={styles.complaintToastText}>{complaintMessage}</Text>
-          </View>
+          </ToastMotion>
         ) : null}
         <Modal animationType="slide" onRequestClose={() => setSelectedComplaint(null)} transparent visible={Boolean(selectedComplaint)}>
           <View style={styles.complaintModalBackdrop}>
             <Pressable accessibilityLabel="Close complaint" onPress={() => setSelectedComplaint(null)} style={styles.complaintModalDismissArea} />
-            {selectedComplaint ? (
+            {closingComplaint ? (
               <View style={styles.complaintSheet}>
                 <View style={styles.complaintSheetHeader}>
                   <View style={styles.complaintSheetTitleWrap}>
@@ -1605,10 +1718,10 @@ export default function CollectorScreen() {
                   </Pressable>
                 </View>
                 <ScrollView contentContainerStyle={styles.complaintSheetContent} showsVerticalScrollIndicator={false}>
-                  {selectedComplaint.photoUrl ? <Image accessibilityLabel="Resident complaint photo" source={{ uri: selectedComplaint.photoUrl }} style={styles.complaintPhoto} /> : null}
-                  <Text style={styles.complaintDescription}>{selectedComplaint.description || 'Resident requested collection at this location.'}</Text>
-                  <View style={styles.complaintDetailRow}><Feather color="#07815f" name="map-pin" size={16} /><View style={styles.complaintDetailText}><Text style={styles.complaintDetailLabel}>Exact request location</Text><Text style={styles.complaintDetailValue}>{Number(selectedComplaint.photoMetadata?.latitude).toFixed(6)}, {Number(selectedComplaint.photoMetadata?.longitude).toFixed(6)}</Text><Text style={styles.complaintDetailCaption}>{selectedComplaint.barangay || 'Location captured from resident photo'}</Text></View></View>
-                  <View style={styles.complaintDetailRow}><Feather color="#07815f" name="clock" size={16} /><View style={styles.complaintDetailText}><Text style={styles.complaintDetailLabel}>Submitted</Text><Text style={styles.complaintDetailValue}>{formatTime(selectedComplaint.createdAt)}</Text><Text style={styles.complaintDetailCaption}>{selectedComplaint.photoMetadata?.capturedAt ? `Photo captured ${formatTime(selectedComplaint.photoMetadata.capturedAt)}` : 'Photo capture time unavailable'}</Text></View></View>
+                  {closingComplaint.photoUrl ? <Image accessibilityLabel="Resident complaint photo" source={{ uri: closingComplaint.photoUrl }} style={styles.complaintPhoto} /> : null}
+                  <Text style={styles.complaintDescription}>{closingComplaint.description || 'Resident requested collection at this location.'}</Text>
+                  <View style={styles.complaintDetailRow}><Feather color="#07815f" name="map-pin" size={16} /><View style={styles.complaintDetailText}><Text style={styles.complaintDetailLabel}>Exact request location</Text><Text style={styles.complaintDetailValue}>{Number(closingComplaint.photoMetadata?.latitude).toFixed(6)}, {Number(closingComplaint.photoMetadata?.longitude).toFixed(6)}</Text><Text style={styles.complaintDetailCaption}>{closingComplaint.barangay || 'Location captured from resident photo'}</Text></View></View>
+                  <View style={styles.complaintDetailRow}><Feather color="#07815f" name="clock" size={16} /><View style={styles.complaintDetailText}><Text style={styles.complaintDetailLabel}>Submitted</Text><Text style={styles.complaintDetailValue}>{formatTime(closingComplaint.createdAt)}</Text><Text style={styles.complaintDetailCaption}>{closingComplaint.photoMetadata?.capturedAt ? `Photo captured ${formatTime(closingComplaint.photoMetadata.capturedAt)}` : 'Photo capture time unavailable'}</Text></View></View>
                   <Pressable
                     disabled={isResolvingComplaint || isOpeningProofCamera}
                     onPress={() => void resolveSelectedComplaint()}
@@ -1652,11 +1765,14 @@ export default function CollectorScreen() {
   const historyScreen = (
     <View style={styles.historyScreen}>
       <ScrollView contentContainerStyle={styles.historyScrollContent} showsVerticalScrollIndicator={false}>
-        <Card style={styles.progressCard}>
-          <View><Text style={styles.progressLabel}>COLLECTION PROGRESS</Text><Text style={styles.progressNumber}>{completed} <Text style={styles.progressTotal}>/ {totalStops} stops</Text></Text><Text style={styles.progressCaption}>{pending ? `${pending} stops remaining` : totalStops ? 'Route completed' : (assignedRoute ? (assignedRoute.isScheduledToday ? 'Starting soon' : 'Not scheduled today') : 'No route scheduled')}</Text></View>
+        <SkeletonRegion state={routeSkeleton} placeholder={<SkeletonBlock height={150} radius={24} />}>
+        <View style={styles.progressCard}>
+          <CollectorGradient />
+          <View style={styles.progressCopy}><Text style={styles.progressLabel}>COLLECTION PROGRESS</Text><Text style={styles.progressNumber}>{completed} <Text style={styles.progressTotal}>/ {totalStops} stops</Text></Text><Text style={styles.progressCaption}>{pending ? `${pending} stops remaining` : totalStops ? 'Route completed' : (assignedRoute ? (assignedRoute.isScheduledToday ? 'Starting soon' : 'Not scheduled today') : 'No route scheduled')}</Text></View>
           <ProgressRing percent={progressPercent} />
-        </Card>
-        {assignedRoute && (
+        </View>
+        </SkeletonRegion>
+        {(assignedRoute || routeSkeleton.pending) && (
           <View style={styles.todayStopsSection}>
             <View style={styles.todayStopsHeading}>
               <View>
@@ -1665,11 +1781,26 @@ export default function CollectorScreen() {
               </View>
               <Text style={styles.todayStopsCount}>{completed}/{todayStreets.length}</Text>
             </View>
-            {todayStreets.length ? todayStreets.map((street) => <StreetRow key={street.id} street={street} />) : (
-              <Card style={styles.emptyCard}>
+            <SkeletonRegion state={routeSkeleton} placeholder={<SkeletonRows kind="stop" count={6} />}>
+            {todayStreets.length ? visibleTodayStreets.map((street, index) => <RevealRow key={street.id} animate={revealStops} index={index}><StreetRow street={street} last={index === visibleTodayStreets.length - 1} /></RevealRow>) : (
+              <View style={styles.emptyCard}>
                 <Feather color="#7d8c84" name="map-pin" size={18} />
                 <Text style={styles.emptyStateText}>No stops have been configured for this route yet.</Text>
-              </Card>
+              </View>
+            )}
+            </SkeletonRegion>
+            {assignedRoute && todayStreets.length > 5 && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={showAllStops ? 'Show fewer stops' : `View all ${todayStreets.length} stops`}
+                accessibilityState={{ expanded: showAllStops }}
+                testID="collector-stops-toggle"
+                onPress={() => setExpandedStopsRouteId(showAllStops ? null : assignedRoute._id)}
+                style={styles.stopsToggle}
+              >
+                <Text style={styles.stopsToggleText}>{showAllStops ? 'Show fewer' : `View all ${todayStreets.length} stops`}</Text>
+                <MotionChevron expanded={showAllStops}><Feather name="chevron-down" color="#086B42" size={20} /></MotionChevron>
+              </Pressable>
             )}
           </View>
         )}
@@ -1685,39 +1816,41 @@ export default function CollectorScreen() {
           </Pressable>
         )}
 
-        {assignedRoute && <Card style={styles.routePresenceHistoryCard}>
+        {assignedRoute && <View style={styles.routePresenceHistoryCard}>
           <View style={styles.routePresenceHistoryHeading}>
-            <View><Text style={styles.dateLabel}>ROUTE PRESENCE</Text><Text style={styles.routePresenceHistoryTitle}>Road-route entries and exits</Text></View>
-            <View style={[styles.routePresencePill, routePresence.state === 'on_route' ? styles.routePresencePillOn : routePresence.state === 'off_route' ? styles.routePresencePillOff : styles.routePresencePillUnknown]}><Text style={[styles.routePresencePillText, routePresence.state === 'on_route' ? styles.routePresencePillTextOn : routePresence.state === 'off_route' ? styles.routePresencePillTextOff : styles.routePresencePillTextUnknown]}>{routePresence.state === 'on_route' ? 'On route' : routePresence.state === 'off_route' ? 'Off route' : 'Waiting'}</Text></View>
+            <View style={styles.flexText}><Text style={styles.dateLabel}>ROUTE PRESENCE</Text><Text style={styles.routePresenceHistoryTitle}>Road-route entries and exits</Text></View>
+            <View style={[styles.routePresencePill, routePresence.state === 'on_route' ? styles.routePresencePillOn : routePresence.state === 'off_route' ? styles.routePresencePillOff : styles.routePresencePillUnknown]}><Text style={[styles.routePresencePillText, routePresence.state === 'on_route' ? styles.routePresencePillTextOn : routePresence.state === 'off_route' ? styles.routePresencePillTextOff : styles.routePresencePillTextUnknown]}>{!routePresence.enabled ? 'Off' : weakRouteSignal ? 'GPS weak' : awaitingEntry ? 'Waiting' : routePresence.state === 'on_route' ? 'On route' : routePresence.state === 'off_route' ? 'Off route' : 'Waiting'}</Text></View>
           </View>
           {routePresenceEvents.length ? routePresenceEvents.map((event) => <View key={event.id} style={styles.routePresenceEvent}>
             <View style={[styles.routePresenceEventDot, event.eventType === 'entered' ? styles.routePresenceEventEntered : styles.routePresenceEventLeft]} />
             <View style={styles.routePresenceEventTextWrap}><Text style={styles.routePresenceEventTitle}>{event.eventType === 'entered' ? 'Entered assigned route' : 'Left assigned route'}</Text><Text style={styles.routePresenceEventCaption}>{formatTime(event.occurredAt)} - {Math.round(event.distanceMeters)} m from route{event.accuracyMeters ? ` - GPS ±${Math.round(event.accuracyMeters)} m` : ''}</Text></View>
           </View>) : <Text style={styles.routePresenceEmpty}>Enable route monitoring to record timestamped route-entry and route-exit events, even while offline.</Text>}
-        </Card>}
-        {assignedRoute && <Card style={styles.offlineMapCard}>
+        </View>}
+        {assignedRoute && <View style={styles.offlineMapCard}>
           <View style={styles.offlineMapRow}>
+            <View style={styles.detailIconBadge}><Feather name="download" size={20} color="#0A7F4F" /></View>
             <View style={styles.offlineMapTextWrap}>
               <Text style={styles.offlineMapTitle}>{offlineMap.downloaded ? 'Offline map ready' : offlineMap.downloading ? `Downloading map - ${offlineMap.percentage}%` : 'Download route map'}</Text>
-              <Text numberOfLines={2} style={styles.offlineMapCaption}>{offlineMapMessage || (offlineMap.downloaded ? `${formatStorage(offlineMap.completedSizeBytes)} stored on this phone.` : 'Save this assigned route map for use without mobile data.')}</Text>
+              <Text style={styles.offlineMapCaption}>{offlineMapMessage || (offlineMap.downloaded ? `${formatStorage(offlineMap.completedSizeBytes)} stored on this phone.` : 'Save this assigned route map for use without mobile data.')}</Text>
             </View>
             <Pressable disabled={isUpdatingOfflineMap} onPress={() => void toggleOfflineMap()} style={[styles.offlineMapButton, offlineMap.downloaded && styles.offlineMapButtonDownloaded, isUpdatingOfflineMap && styles.geofenceButtonDisabled]}>
               <Feather color={offlineMap.downloaded ? '#9d3139' : '#286349'} name={offlineMap.downloaded ? 'trash-2' : 'download'} size={14} />
               <Text style={[styles.offlineMapButtonText, offlineMap.downloaded && styles.offlineMapButtonTextDownloaded]}>{isUpdatingOfflineMap ? 'Working…' : offlineMap.downloaded ? 'Remove' : 'Download'}</Text>
             </Pressable>
           </View>
-        </Card>}
+        </View>}
         <View style={styles.historyGroup}>
-          <Text style={styles.dateLabel}>PAST COLLECTIONS</Text>
-          {historyLoading ? (
-            <Card style={styles.emptyCard}><Feather color="#7d8c84" name="loader" size={14} /><Text style={styles.emptyStateText}>Loading collection history…</Text></Card>
-          ) : historyGroups.length ? historyGroups.map((group) => (
+          <Text style={styles.sectionHeading}>PAST COLLECTIONS</Text>
+          {historyLoading && historyGroups.length > 0 ? <ActivityIndicator accessibilityLabel="Loading" color="#0A7F4F" /> : null}
+          <SkeletonRegion state={historySkeleton} placeholder={<SkeletonRows kind="history" count={3} />}>
+          {historyGroups.length ? visibleHistoryGroups.map((group, index) => (
+            <RevealRow key={group.id} animate={revealHistory} index={index}>
             <Pressable accessibilityRole="button" key={group.id} onPress={() => openHistoryDetail(group)} style={styles.historyCardWrap}>
-              <Card style={styles.historyCard}>
+              <View style={styles.historyCard}>
                 <View style={styles.historyCardMap}>
                   {MAPBOX_ACCESS_TOKEN ? (
-                    <Mapbox.MapView key={group.id} styleURL={Mapbox.StyleURL.Light} style={styles.historyMapPreview} scrollEnabled={false} pitchEnabled={false} rotateEnabled={false} zoomEnabled={false}>
-                      {historyGroupCenter(group) ? <Mapbox.Camera centerCoordinate={historyGroupCenter(group) ?? undefined} zoomLevel={14} /> : null}
+                    <Mapbox.MapView key={group.id} scaleBarEnabled={false} styleURL={Mapbox.StyleURL.Light} style={styles.historyMapPreview} logoEnabled attributionEnabled logoPosition={{ bottom: 4, left: 4 }} attributionPosition={{ top: 4, right: 4 }} scrollEnabled={false} pitchEnabled={false} rotateEnabled={false} zoomEnabled={false}>
+                      <HistoryMapCamera center={historyGroupLastLocation(group)} zoom={15} />
                       {group.routePath ? (
                         <Mapbox.ShapeSource id={`h-rp-${group.id}`} shape={routeLineFeature(group.routePath) ?? undefined}>
                           <Mapbox.LineLayer id={`h-rl-${group.id}`} style={{ lineCap: 'round', lineColor: '#9ca9a2', lineDasharray: [2, 2], lineJoin: 'round', lineOpacity: 0.7, lineWidth: 3 }} />
@@ -1763,9 +1896,25 @@ export default function CollectorScreen() {
                     </View>
                   </View>
                 </View>
-              </Card>
+                <Feather color="#5A6761" name="chevron-right" size={20} />
+              </View>
             </Pressable>
-          )) : <Card style={styles.emptyCard}><Feather color="#7d8c84" name="archive" size={18} /><Text style={styles.emptyStateText}>{historyLoadError || 'No past collections yet. After finishing your first collection, it will appear here.'}</Text></Card>}
+            </RevealRow>
+          )) : <View style={styles.emptyCard}><Feather color="#7d8c84" name="archive" size={18} /><Text style={styles.emptyStateText}>{historyLoadError || 'No past collections yet. After finishing your first collection, it will appear here.'}</Text></View>}
+          </SkeletonRegion>
+          {historyGroups.length > 3 && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={showAllPastCollections ? 'Show fewer past collections' : `View all ${historyGroups.length} past collections`}
+              accessibilityState={{ expanded: showAllPastCollections }}
+              testID="collector-history-toggle"
+              onPress={() => setShowAllPastCollections((current) => !current)}
+              style={styles.stopsToggle}
+            >
+              <Text style={styles.stopsToggleText}>{showAllPastCollections ? 'Show fewer' : `View all ${historyGroups.length} collections`}</Text>
+              <MotionChevron expanded={showAllPastCollections}><Feather name="chevron-down" color="#086B42" size={20} /></MotionChevron>
+            </Pressable>
+          )}
         </View>
       </ScrollView>
     </View>
@@ -1774,52 +1923,62 @@ export default function CollectorScreen() {
   const profileScreen = (
     <View style={styles.profileScreen}>
       <ScrollView contentContainerStyle={styles.profileScrollContent} showsVerticalScrollIndicator={false}>
-        <Card style={styles.collectorProfileCard}>
-          <View style={styles.avatar}>{profile?.profilePhotoUrl ? <Image accessibilityLabel="Profile picture" source={{ uri: profile.profilePhotoUrl }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{initial}</Text>}</View>
-          <Text style={styles.collectorName}>{collectorName}</Text>
-          <Text style={styles.collectorRole}>Driver</Text>
-          <Text style={styles.collectorBarangay}>{barangay}</Text>
-          <View style={styles.profilePills}><View style={styles.collectorPill}><Text style={styles.collectorPillText}>Collector</Text></View><View style={styles.onShiftPill}><Text style={styles.onShiftText}>{displayShift(profile?.shift)}</Text></View></View>
-        </Card>
-
-        <View style={styles.statsRow}>
-          {[[String(completed), 'Collected'], [String(reviewCount), 'For review'], [String(pending), 'Pending']].map(([value, label]) => <Card key={label} style={styles.statCard}><Text style={styles.statValue}>{value}</Text><Text style={styles.statLabel}>{label}</Text><Text style={styles.statCaption}>stops</Text></Card>)}
+        <SkeletonRegion state={profileSkeleton} placeholder={<SkeletonBlock height={226} radius={24} />}>
+        <View style={styles.collectorProfileCard}>
+          <CollectorGradient />
+          <View style={styles.profileIdentity}>
+            <View style={styles.avatar}>{profile?.profilePhotoUrl ? <Image accessibilityLabel="Profile picture" source={{ uri: profile.profilePhotoUrl }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{initial}</Text>}</View>
+            <View style={styles.flexText}>
+              <Text style={styles.collectorName}>{collectorName}</Text>
+              <Text style={styles.collectorRole}>Driver · {barangay}</Text>
+              <View style={styles.profilePills}><View style={styles.collectorPill}><Text style={styles.collectorPillText}>Collector</Text></View><View style={styles.onShiftPill}><Text style={styles.onShiftText}>{displayShift(profile?.shift)}</Text></View></View>
+            </View>
+          </View>
+          <View style={styles.statsRow}>
+            {[[String(completed), 'Collected'], [String(reviewCount), 'For review'], [String(pending), 'Pending']].map(([value, label], index) => <View key={label} style={[styles.statCard, index > 0 && styles.statDivider]}><Text numberOfLines={1} style={styles.statValue}>{value}</Text><Text style={styles.statLabel}>{label}</Text><Text style={styles.statCaption}>stops</Text></View>)}
+          </View>
+        </View>
+        </SkeletonRegion>
+        <View style={styles.profileSyncCard}>
+          <View style={styles.detailIconBadge}><Feather color={isOffline || loadError ? '#B3261E' : '#0A7F4F'} name={isOffline ? 'wifi-off' : loadError ? 'alert-circle' : 'wifi'} size={20} /></View>
+          <View style={styles.syncCopy}><Text style={styles.syncBottomText}>{loadError || (isOffline ? 'Offline mode (using saved route)' : isLoading ? 'Refreshing driver data…' : 'Driver data is up to date')}</Text><Text style={styles.syncCount}>Needs sync · {pendingRouteLogs}</Text></View>
+          <Pressable disabled={!session || isLoading} onPress={() => session && void loadDriverData(session.token, collectorId)} style={[styles.syncButton, (!session || isLoading) && styles.syncButtonDisabled]}><Text style={styles.syncButtonText}>{isLoading ? 'Refreshing' : 'Refresh'}</Text></Pressable>
         </View>
 
-        <Card style={styles.profileSyncCard}>
-          <Text style={styles.profileSyncLabel}>NEEDS SYNC</Text>
-          <Text style={styles.profileSyncNumber}>{pendingRouteLogs}</Text>
-        </Card>
-
-        <Card style={styles.accountCard}>
+        <View style={styles.accountCard}>
           <Text style={styles.accountHeading}>ACCOUNT DETAILS</Text>
+          <SkeletonRegion state={profileSkeleton} placeholder={<SkeletonRows kind="account" count={6} />}>
           <AccountDetail label="Employee ID" value={profile?.employeeId || 'Not provided'} />
           <AccountDetail label="Contact" value={profile?.contact || profile?.phone || 'Not provided'} />
           <AccountDetail label="Email" value={profile?.email || 'Not provided'} />
           <AccountDetail label="Shift" value={displayShift(profile?.shift)} />
           <AccountDetail label="Assigned route" value={assignedRoute?.name || 'No route scheduled today'} />
           <AccountDetail label="Assigned truck" value={assignedRoute?.assignedTruck ? `${assignedRoute.assignedTruck.truckNumber || 'Truck'} · ${assignedRoute.assignedTruck.plateNumber || 'No plate'}` : 'No truck assigned'} />
-        </Card>
+          </SkeletonRegion>
+        </View>
 
+        <ProfileSettingsRow onSignOut={completeSignOut} />
         <Pressable accessibilityRole="button" onPress={signOut} style={styles.signOutButton}>
-          <Feather color="#e23d4f" name="log-out" size={17} />
+          <Feather color="#B3261E" name="log-out" size={20} />
           <Text style={styles.signOutText}>Sign Out</Text>
         </Pressable>
       </ScrollView>
-      <View style={styles.syncBottomBar}><View style={styles.syncBottomTextWrap}><Feather color={isOffline || loadError ? '#c05d36' : '#07815f'} name={isOffline ? 'wifi-off' : loadError ? 'alert-circle' : 'wifi'} size={15} /><Text style={styles.syncBottomText}>{loadError || (isOffline ? 'Offline mode (using saved route)' : isLoading ? 'Refreshing driver data…' : 'Driver data is up to date')}</Text></View><Pressable disabled={!session || isLoading} onPress={() => session && void loadDriverData(session.token, collectorId)} style={[styles.syncButton, (!session || isLoading) && styles.syncButtonDisabled]}><Text style={styles.syncButtonText}>{isLoading ? 'Refreshing' : 'Refresh'}</Text></Pressable></View>
+
     </View>
   );
 
   return (
     <SafeAreaView edges={['left', 'right']} style={styles.safeArea}>
-      <StatusBar backgroundColor={activeTab === 'profile' ? '#f3f6f4' : '#EBF7F5'} style="dark" translucent={false} />
-      {activeTab === 'history' && (<View style={[styles.header, { paddingTop: insets.top }]}><View style={styles.brandHeader}><BrandMark height={116} width={206} /><View style={styles.headerCopy}><Text style={styles.headerSubtitle}>Collector · Route Driver</Text><Text style={styles.headerTitle}>{collectorName || 'Driver'}</Text></View></View></View>)}<View style={[styles.content, activeTab === 'profile' && { paddingTop: insets.top }]}>{activeTab === 'map' ? mapScreen : activeTab === 'history' ? historyScreen : profileScreen}</View>
+      <StatusBar backgroundColor="#ffffff" style="dark" translucent={false} />
+      <View style={[styles.header, { paddingTop: insets.top }]}><View style={styles.brandHeader}><BrandMark height={48} width={150} /><View style={styles.headerCopy}><Text numberOfLines={1} adjustsFontSizeToFit style={styles.headerTitle}>{collectorName || 'Driver'}</Text><Text numberOfLines={1} adjustsFontSizeToFit style={styles.headerSubtitle}>Collector · Route Driver</Text></View></View></View>
+      <View style={styles.content}><TabTransition activeKey={activeTab}>{activeTab === 'map' ? mapScreen : activeTab === 'history' ? historyScreen : profileScreen}</TabTransition></View>
       <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
-      <Modal animationType="slide" onRequestClose={() => setIsHistoryDetailVisible(false)} transparent visible={isHistoryDetailVisible}>
-        <View style={styles.historyDetailBackdrop}>
+      <Modal animationType="slide" onRequestClose={() => setIsHistoryDetailVisible(false)} presentationStyle="fullScreen" visible={isHistoryDetailVisible}>
+        <SafeAreaView style={styles.historyDetailBackdrop}>
           <View style={styles.historyDetailSheet}>
+            <ScrollView contentContainerStyle={styles.historyDetailScroll} showsVerticalScrollIndicator={false}>
             <View style={styles.historyDetailHeader}>
-              <View>
+              <View style={styles.flexText}>
                 <Text style={styles.historyDetailEyebrow}>ROUTE HISTORY REPORT</Text>
                 <Text style={styles.historyDetailTitle}>{selectedHistoryGroup?.routeName || 'Collection details'}</Text>
                 <Text style={styles.historyDetailSubtitle}>Barangay {selectedHistoryGroup ? displayBarangay(selectedHistoryGroup.barangay) : ''} · {selectedHistoryGroup?.date || ''}</Text>
@@ -1828,7 +1987,84 @@ export default function CollectorScreen() {
                 <Feather color="#314238" name="x" size={20} />
               </Pressable>
             </View>
-            <ScrollView contentContainerStyle={styles.historyDetailScroll} showsVerticalScrollIndicator={false}>
+              <View style={styles.historyDetailSegment}>
+                <Text style={styles.historySectionLabel}>SEGMENT TRAIL</Text>
+                <View style={styles.segmentTrailPanel}>
+                  <View style={styles.segmentTrailMapWrap}>
+                    {MAPBOX_ACCESS_TOKEN && selectedHistoryGroup ? (
+                      <Mapbox.MapView scaleBarEnabled={false} styleURL={Mapbox.StyleURL.Light} style={styles.segmentTrailMap} logoEnabled attributionEnabled scrollEnabled={false} pitchEnabled={false} rotateEnabled={false} zoomEnabled={false}>
+                        <HistoryMapCamera center={historyGroupLastLocation(selectedHistoryGroup)} zoom={16} />
+                        {selectedHistoryGroup.routePath ? (
+                          <Mapbox.ShapeSource id={`d-rp-${selectedHistoryGroup.id}`} shape={routeLineFeature(selectedHistoryGroup.routePath) ?? undefined}>
+                            <Mapbox.LineLayer id={`d-expected-${selectedHistoryGroup.id}`} style={{ lineCap: 'round', lineColor: '#9ca9a2', lineDasharray: [2, 2], lineJoin: 'round', lineOpacity: 0.75, lineWidth: 4 }} />
+                          </Mapbox.ShapeSource>
+                        ) : null}
+                        {selectedHistoryGroup.trailPath ? (
+                          <Mapbox.ShapeSource id={`d-covered-${selectedHistoryGroup.id}`} shape={routeLineFeature(selectedHistoryGroup.trailPath) ?? undefined}>
+                            <Mapbox.LineLayer id={`d-covered-line-${selectedHistoryGroup.id}`} style={{ lineCap: 'round', lineColor: '#c53030', lineJoin: 'round', lineOpacity: 0.9, lineWidth: 5 }} />
+                          </Mapbox.ShapeSource>
+                        ) : null}
+                        {selectedHistoryGroup.firstEntry ? (
+                          <Mapbox.PointAnnotation coordinate={firstRouteCoordinate(routeLineFeature(selectedHistoryGroup.trailPath)) || historyGroupLastLocation(selectedHistoryGroup) || MAP_CENTER} id={`d-entry-${selectedHistoryGroup.id}`}>
+                            <View style={styles.trailEntryMarker}><Text style={styles.trailMarkerText}>Entry</Text></View>
+                          </Mapbox.PointAnnotation>
+                        ) : null}
+                        {selectedHistoryGroup.lastExit && lastRouteCoordinate(routeLineFeature(selectedHistoryGroup.trailPath)) ? (
+                          <Mapbox.PointAnnotation coordinate={lastRouteCoordinate(routeLineFeature(selectedHistoryGroup.trailPath)) as [number, number]} id={`d-exit-${selectedHistoryGroup.id}`}>
+                            <View style={styles.trailExitMarker}><Text style={styles.trailExitMarkerText}>Exit</Text></View>
+                          </Mapbox.PointAnnotation>
+                        ) : null}
+                        {selectedHistoryGroup.stopLogs.filter((stopLog) => Number.isFinite(Number(stopLog.latitude)) && Number.isFinite(Number(stopLog.longitude))).map((stopLog, index) => (
+                          <Mapbox.PointAnnotation
+                            coordinate={[Number(stopLog.longitude), Number(stopLog.latitude)]}
+                            id={`d-stop-${selectedHistoryGroup.id}-${stopLog.stopId || index}`}
+                            key={`${stopLog.stopId || 'stop'}-${index}`}
+                          >
+                            <View style={[styles.historyStopMarker, stopLog.flaggedForReview && styles.historyStopMarkerFlagged]}><Text style={styles.historyStopMarkerText}>{index + 1}</Text></View>
+                          </Mapbox.PointAnnotation>
+                        ))}
+                      </Mapbox.MapView>
+                    ) : (
+                      <View style={styles.segmentTrailPlaceholder}>
+                        <Feather color="#8d9a93" name="map" size={28} />
+                        <Text style={styles.segmentTrailCaption}>Route trail</Text>
+                      </View>
+                    )}
+                  </View>
+                  <View style={styles.segmentTrailLegend}>
+                    <Text style={styles.historySectionLabel}>LEGEND</Text>
+                    <View style={styles.legendRow}>
+                      <View style={[styles.legendSwatch, { backgroundColor: '#c53030' }]} />
+                      <Text style={styles.legendText}>Truck path — covered</Text>
+                    </View>
+                    <View style={styles.legendRow}>
+                      <View style={[styles.legendSwatch, styles.legendSwatchDashed]} />
+                      <Text style={styles.legendText}>Expected path — not covered</Text>
+                    </View>
+                    <View style={styles.legendRow}>
+                      <View style={styles.trailEntryDot} />
+                      <Text style={styles.legendText}>Entry time: {selectedHistoryGroup?.firstEntry ? formatTime(selectedHistoryGroup.firstEntry) : 'Not recorded'}</Text>
+                    </View>
+                    <View style={styles.legendRow}>
+                      <View style={styles.trailExitDot} />
+                      <Text style={[styles.legendText, !selectedHistoryGroup?.lastExit && styles.detailValueRed]}>Exit: {selectedHistoryGroup?.lastExit ? formatTime(selectedHistoryGroup.lastExit) : 'Not recorded'}</Text>
+                    </View>
+                    {selectedHistoryGroup?.stopLogs.some((stopLog) => Number.isFinite(Number(stopLog.latitude)) && Number.isFinite(Number(stopLog.longitude))) ? (
+                      <View style={styles.legendRow}>
+                        <View style={styles.trailStopDot} />
+                        <Text style={styles.legendText}>Numbered markers: collected stops</Text>
+                      </View>
+                    ) : null}
+                    {(selectedHistoryGroup?.flagged ?? 0) > 0 ? (
+                      <View style={styles.legendRow}>
+                        <Feather color="#c53030" name="flag" size={11} />
+                        <Text style={styles.legendText}>Dwell: {(selectedHistoryGroup?.flagged ?? 0)} stop{(selectedHistoryGroup?.flagged ?? 0) === 1 ? '' : 's'} flagged for review</Text>
+                      </View>
+                    ) : null}
+                  </View>
+                </View>
+                <Text style={styles.segmentFigCaption}>Fig. 1 — Segment traced via on-device geofencing. Red solid line: truck path. Dashed: uncovered portion.</Text>
+              </View>
               <View style={styles.historyDetailTwoCol}>
                 <View style={styles.historyDetailColLeft}>
                   <Text style={styles.historySectionLabel}>RECORD SUMMARY</Text>
@@ -1908,89 +2144,11 @@ export default function CollectorScreen() {
                   </View>
                 </View>
               </View>
-              <View style={styles.historyDetailSegment}>
-                <Text style={styles.historySectionLabel}>SEGMENT TRAIL</Text>
-                <View style={styles.segmentTrailPanel}>
-                  <View style={styles.segmentTrailMapWrap}>
-                    {MAPBOX_ACCESS_TOKEN && selectedHistoryGroup ? (
-                      <Mapbox.MapView styleURL={Mapbox.StyleURL.Light} style={styles.segmentTrailMap} scrollEnabled={false} pitchEnabled={false} rotateEnabled={false} zoomEnabled={false}>
-                        {historyGroupCenter(selectedHistoryGroup) ? <Mapbox.Camera centerCoordinate={historyGroupCenter(selectedHistoryGroup) ?? undefined} zoomLevel={15} /> : null}
-                        {selectedHistoryGroup.routePath ? (
-                          <Mapbox.ShapeSource id={`d-rp-${selectedHistoryGroup.id}`} shape={routeLineFeature(selectedHistoryGroup.routePath) ?? undefined}>
-                            <Mapbox.LineLayer id={`d-expected-${selectedHistoryGroup.id}`} style={{ lineCap: 'round', lineColor: '#9ca9a2', lineDasharray: [2, 2], lineJoin: 'round', lineOpacity: 0.75, lineWidth: 4 }} />
-                          </Mapbox.ShapeSource>
-                        ) : null}
-                        {selectedHistoryGroup.trailPath ? (
-                          <Mapbox.ShapeSource id={`d-covered-${selectedHistoryGroup.id}`} shape={routeLineFeature(selectedHistoryGroup.trailPath) ?? undefined}>
-                            <Mapbox.LineLayer id={`d-covered-line-${selectedHistoryGroup.id}`} style={{ lineCap: 'round', lineColor: '#c53030', lineJoin: 'round', lineOpacity: 0.9, lineWidth: 5 }} />
-                          </Mapbox.ShapeSource>
-                        ) : null}
-                        {selectedHistoryGroup.firstEntry ? (
-                          <Mapbox.PointAnnotation coordinate={firstRouteCoordinate(routeLineFeature(selectedHistoryGroup.trailPath)) || historyGroupCenter(selectedHistoryGroup) || MAP_CENTER} id={`d-entry-${selectedHistoryGroup.id}`}>
-                            <View style={styles.trailEntryMarker}><Text style={styles.trailMarkerText}>Entry</Text></View>
-                          </Mapbox.PointAnnotation>
-                        ) : null}
-                        {selectedHistoryGroup.lastExit && lastRouteCoordinate(routeLineFeature(selectedHistoryGroup.trailPath)) ? (
-                          <Mapbox.PointAnnotation coordinate={lastRouteCoordinate(routeLineFeature(selectedHistoryGroup.trailPath)) as [number, number]} id={`d-exit-${selectedHistoryGroup.id}`}>
-                            <View style={styles.trailExitMarker}><Text style={styles.trailExitMarkerText}>Exit</Text></View>
-                          </Mapbox.PointAnnotation>
-                        ) : null}
-                        {selectedHistoryGroup.stopLogs.filter((stopLog) => Number.isFinite(Number(stopLog.latitude)) && Number.isFinite(Number(stopLog.longitude))).map((stopLog, index) => (
-                          <Mapbox.PointAnnotation
-                            coordinate={[Number(stopLog.longitude), Number(stopLog.latitude)]}
-                            id={`d-stop-${selectedHistoryGroup.id}-${stopLog.stopId || index}`}
-                            key={`${stopLog.stopId || 'stop'}-${index}`}
-                          >
-                            <View style={[styles.historyStopMarker, stopLog.flaggedForReview && styles.historyStopMarkerFlagged]}><Text style={styles.historyStopMarkerText}>{index + 1}</Text></View>
-                          </Mapbox.PointAnnotation>
-                        ))}
-                      </Mapbox.MapView>
-                    ) : (
-                      <View style={styles.segmentTrailPlaceholder}>
-                        <Feather color="#8d9a93" name="map" size={28} />
-                        <Text style={styles.segmentTrailCaption}>Route trail</Text>
-                      </View>
-                    )}
-                  </View>
-                  <View style={styles.segmentTrailLegend}>
-                    <Text style={styles.historySectionLabel}>LEGEND</Text>
-                    <View style={styles.legendRow}>
-                      <View style={[styles.legendSwatch, { backgroundColor: '#c53030' }]} />
-                      <Text style={styles.legendText}>Truck path — covered</Text>
-                    </View>
-                    <View style={styles.legendRow}>
-                      <View style={[styles.legendSwatch, styles.legendSwatchDashed]} />
-                      <Text style={styles.legendText}>Expected path — not covered</Text>
-                    </View>
-                    <View style={styles.legendRow}>
-                      <View style={styles.trailEntryDot} />
-                      <Text style={styles.legendText}>Entry time: {selectedHistoryGroup?.firstEntry ? formatTime(selectedHistoryGroup.firstEntry) : 'Not recorded'}</Text>
-                    </View>
-                    <View style={styles.legendRow}>
-                      <View style={styles.trailExitDot} />
-                      <Text style={[styles.legendText, !selectedHistoryGroup?.lastExit && styles.detailValueRed]}>Exit: {selectedHistoryGroup?.lastExit ? formatTime(selectedHistoryGroup.lastExit) : 'Not recorded'}</Text>
-                    </View>
-                    {selectedHistoryGroup?.stopLogs.some((stopLog) => Number.isFinite(Number(stopLog.latitude)) && Number.isFinite(Number(stopLog.longitude))) ? (
-                      <View style={styles.legendRow}>
-                        <View style={styles.trailStopDot} />
-                        <Text style={styles.legendText}>Numbered markers: collected stops</Text>
-                      </View>
-                    ) : null}
-                    {(selectedHistoryGroup?.flagged ?? 0) > 0 ? (
-                      <View style={styles.legendRow}>
-                        <Feather color="#c53030" name="flag" size={11} />
-                        <Text style={styles.legendText}>Dwell: {(selectedHistoryGroup?.flagged ?? 0)} stop{(selectedHistoryGroup?.flagged ?? 0) === 1 ? '' : 's'} flagged for review</Text>
-                      </View>
-                    ) : null}
-                  </View>
-                </View>
-                <Text style={styles.segmentFigCaption}>Fig. 1 — Segment traced via on-device geofencing. Red solid line: truck path. Dashed: uncovered portion.</Text>
-              </View>
               {selectedHistoryGroup?.stopLogs?.length ? (
                 <View style={styles.historyDetailStops}>
                   <Text style={styles.historySectionLabel}>STOP LOGS</Text>
                   {selectedHistoryGroup.stopLogs.map((log, idx) => (
-                    <Card key={`${log.stopId}-${idx}`} style={styles.stopLogCard}>
+                    <View key={`${log.stopId}-${idx}`} style={styles.stopLogCard}>
                       <View style={[styles.stopLogDot, log.flaggedForReview ? styles.stopLogDotReview : styles.stopLogDotCollected]} />
                       <View style={styles.stopLogInfo}>
                         <View style={styles.stopLogHeaderRow}>
@@ -2007,13 +2165,13 @@ export default function CollectorScreen() {
                           {typeof log.dwellSeconds === 'number' ? ` · ${log.dwellSeconds}s dwell` : ''}
                         </Text>
                       </View>
-                    </Card>
+                    </View>
                   ))}
                 </View>
               ) : null}
             </ScrollView>
           </View>
-        </View>
+        </SafeAreaView>
       </Modal>
       <Modal
         animationType="fade"
@@ -2060,17 +2218,35 @@ export default function CollectorScreen() {
         </View>
       </Modal>
       <SignOutConfirmModal visible={isSignOutConfirmVisible} onCancel={() => setIsSignOutConfirmVisible(false)} onConfirm={completeSignOut} />
+      <RouteMonitoringConsentModal visible={isMonitoringConsentVisible} onCancel={() => respondToMonitoringConsent(false)} onEnable={() => respondToMonitoringConsent(true)} />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  header: { backgroundColor: '#EBF7F5' },
-  brandHeader: { alignItems: 'center', flexDirection: 'row', height: 70, paddingHorizontal: 20 },
-  headerCopy: { alignItems: 'flex-end', flex: 1, marginLeft: 8 },
-  headerTitle: { color: '#20372a', fontSize: 14, fontWeight: '800', marginTop: 1, textAlign: 'right' },
-  headerSubtitle: { color: '#5d7066', fontSize: 10, textAlign: 'right' },
-  safeArea: { flex: 1, backgroundColor: '#f3f6f4' },
+  flexText: { flex: 1, minWidth: 0 },
+  cardGradient: { ...StyleSheet.absoluteFillObject, borderRadius: 24 },
+  // Keeps the secondary tint text above 4.5:1 even at the light gradient stop.
+  cardGradientShade: { ...StyleSheet.absoluteFillObject, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.10)' },
+  profileIdentity: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  statDivider: { borderLeftWidth: 1, borderLeftColor: 'rgba(255,255,255,0.2)' },
+  detailIconBadge: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#E3F4EB', alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  placeholderValue: { color: '#5A6761', fontWeight: '500' },
+  syncCopy: { flexGrow: 1, flexShrink: 1, flexBasis: 130, minWidth: 0 },
+  syncCount: { color: '#5A6761', fontSize: 13, marginTop: 4 },
+  progressCopy: { flexGrow: 1, flexShrink: 1, flexBasis: 150, minWidth: 0 },
+  timelineRail: { width: 22, alignItems: 'center' },
+  timelineLine: { position: 'absolute', width: 2, top: 22, bottom: 0, backgroundColor: '#DCE4DF' },
+  reviewText: { color: '#5C3B00', fontSize: 13, fontWeight: '600' },
+  sectionHeading: { color: '#121A16', fontSize: 20, fontWeight: '700', marginBottom: 12 },
+  navIconPill: { width: 56, height: 32, borderRadius: 16, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+  navIconPillActive: { backgroundColor: '#E3F4EB', borderRadius: 16 },
+  header: { backgroundColor: '#ffffff' },
+  brandHeader: { alignItems: 'center', flexDirection: 'row', minHeight: 64, gap: 8, paddingHorizontal: 20, paddingVertical: 8 },
+  headerCopy: { alignItems: 'flex-end', flex: 1, minWidth: 0 },
+  headerTitle: { color: '#121A16', fontSize: 14, fontWeight: '700', textAlign: 'right' },
+  headerSubtitle: { color: '#5A6761', fontSize: 12, marginTop: 1, textAlign: 'right' },
+  safeArea: { flex: 1, backgroundColor: '#ffffff' },
   content: { flex: 1 },
   mapScreen: { flex: 1 },
   historyScreen: { flex: 1 },
@@ -2156,17 +2332,17 @@ const styles = StyleSheet.create({
   resolveSuccessMessage: { color: '#668075', fontSize: 13, lineHeight: 19, marginTop: 7, textAlign: 'center' },
   resolveSuccessButton: { alignItems: 'center', backgroundColor: '#07815f', borderRadius: 12, marginTop: 20, minHeight: 44, justifyContent: 'center', paddingHorizontal: 30, width: '100%' },
   resolveSuccessButtonText: { color: '#ffffff', fontSize: 13, fontWeight: '800' },
-  offlineMapCard: { backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 15, borderWidth: 1, marginTop: 12, padding: 13, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 7 },
-  offlineMapRow: { alignItems: 'center', borderTopColor: '#e3ece6', borderTopWidth: 1, flexDirection: 'row', gap: 8, marginTop: 9, paddingTop: 9 },
-  offlineMapTextWrap: { flex: 1 },
-  offlineMapTitle: { color: '#345345', fontSize: 10, fontWeight: '800' },
-  offlineMapCaption: { color: '#78877f', fontSize: 9, marginTop: 2 },
-  offlineMapButton: { alignItems: 'center', backgroundColor: '#edf6f1', borderColor: '#b6d6c5', borderRadius: 8, borderWidth: 1, flexDirection: 'row', gap: 4, paddingHorizontal: 8, paddingVertical: 6 },
+  offlineMapCard: { backgroundColor: '#F4F6F5', borderRadius: 20, borderWidth: 0, marginTop: 24, padding: 16, gap: 0 },
+  offlineMapRow: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  offlineMapTextWrap: { flexGrow: 1, flexShrink: 1, flexBasis: 120, minWidth: 0 },
+  offlineMapTitle: { color: '#121A16', fontSize: 16, fontWeight: '700' },
+  offlineMapCaption: { color: '#5A6761', fontSize: 13, marginTop: 4 },
+  offlineMapButton: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#E3F4EB', borderRadius: 14, flexDirection: 'row', gap: 4, minHeight: 44, paddingHorizontal: 12, paddingVertical: 8 },
   offlineMapButtonDownloaded: { backgroundColor: '#fff3f4', borderColor: '#f0c7cb' },
-  offlineMapButtonText: { color: '#286349', fontSize: 9, fontWeight: '800' },
+  offlineMapButtonText: { color: '#086B42', fontSize: 14, fontWeight: '700' },
   offlineMapButtonTextDownloaded: { color: '#9d3139' },
-  finishRouteButton: { alignItems: 'center', alignSelf: 'center', backgroundColor: '#176b3a', borderRadius: 12, flexDirection: 'row', gap: 8, justifyContent: 'center', marginBottom: 15, marginTop: 15, minHeight: 44, paddingHorizontal: 20, shadowColor: '#0b4b2b', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.16, shadowRadius: 6 },
-  finishRouteButtonText: { color: '#ffffff', fontSize: 12, fontWeight: '800' },
+  finishRouteButton: { alignItems: 'center', backgroundColor: '#0A7F4F', borderRadius: 18, flexDirection: 'row', gap: 8, justifyContent: 'center', marginTop: 12, minHeight: 56, padding: 12 },
+  finishRouteButtonText: { color: '#ffffff', fontSize: 16, fontWeight: '700', flexShrink: 1 },
   finishRouteBackdrop: { alignItems: 'center', backgroundColor: 'rgba(13, 35, 25, 0.56)', flex: 1, justifyContent: 'center', padding: 22 },
   finishRouteCard: { backgroundColor: '#ffffff', borderRadius: 22, maxWidth: 360, paddingHorizontal: 22, paddingVertical: 24, shadowColor: '#102d20', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.22, shadowRadius: 18, width: '100%' },
   finishRouteIcon: { alignItems: 'center', alignSelf: 'center', backgroundColor: '#e8f7ef', borderRadius: 30, height: 56, justifyContent: 'center', width: 56 },
@@ -2187,113 +2363,115 @@ const styles = StyleSheet.create({
   areaNameRow: { alignItems: 'center', flexDirection: 'row', gap: 5, marginTop: 4 },
   areaName: { color: '#ffffff', fontSize: 19, fontWeight: '800' },
   streetSubtitle: { color: '#a3c9b3', fontSize: 9, marginTop: 3, maxWidth: 215 },
-  historyScrollContent: { padding: 13, paddingBottom: 89 },
-  progressCard: { alignItems: 'center', backgroundColor: '#176b3a', borderRadius: 15, flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 15, paddingVertical: 13, shadowColor: '#0b4b2b', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.13, shadowRadius: 9 },
-  progressLabel: { color: '#b9dcc8', fontSize: 10, fontWeight: '800' },
-  progressNumber: { color: '#ffffff', fontSize: 27, fontWeight: '800', marginTop: 4 },
-  progressTotal: { color: '#cae4d4', fontSize: 14, fontWeight: '700' },
-  progressCaption: { color: '#abd1bc', fontSize: 10, marginTop: 2 },
-  progressRing: { alignItems: 'center', height: 59, justifyContent: 'center', width: 59 },
-  progressPercent: { color: '#ffffff', fontSize: 11, fontWeight: '800', position: 'absolute' },
-  routePresenceHistoryCard: { backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 15, borderWidth: 1, marginTop: 12, padding: 13, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 7 },
-  routePresenceHistoryHeading: { alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between' },
-  routePresenceHistoryTitle: { color: '#3d5246', fontSize: 12, fontWeight: '800', marginTop: -4 },
-  routePresencePill: { borderRadius: 9, paddingHorizontal: 8, paddingVertical: 4 },
+  historyScrollContent: { padding: 20, paddingBottom: 24 },
+  progressCard: { alignItems: 'center', backgroundColor: '#0D2E27', borderRadius: 24, overflow: 'hidden', flexDirection: 'row', flexWrap: 'wrap', gap: 16, justifyContent: 'space-between', padding: 20 },
+  progressLabel: { color: '#E3F4EB', fontSize: 11, fontWeight: '700', letterSpacing: 1 },
+  progressNumber: { color: '#ffffff', fontSize: 44, fontWeight: '700', marginTop: 8 },
+  progressTotal: { color: '#E3F4EB', fontSize: 18, fontWeight: '600' },
+  progressCaption: { color: '#E3F4EB', fontSize: 13, marginTop: 6 },
+  progressRing: { alignItems: 'center', height: 84, justifyContent: 'center', width: 84, flexShrink: 0 },
+  progressPercent: { color: '#ffffff', fontSize: 16, fontWeight: '700', position: 'absolute' },
+  routePresenceHistoryCard: { backgroundColor: '#F4F6F5', borderRadius: 20, borderWidth: 0, marginTop: 24, padding: 16, gap: 0 },
+  routePresenceHistoryHeading: { alignItems: 'flex-start', flexDirection: 'row', gap: 8 },
+  routePresenceHistoryTitle: { color: '#121A16', fontSize: 16, fontWeight: '700' },
+  routePresencePill: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5, maxWidth: '40%' },
   routePresencePillOn: { backgroundColor: '#e8fbf1' },
   routePresencePillOff: { backgroundColor: '#fff3df' },
   routePresencePillUnknown: { backgroundColor: '#f0f3f1' },
-  routePresencePillText: { fontSize: 9, fontWeight: '800' },
-  routePresencePillTextOn: { color: '#07815f' },
-  routePresencePillTextOff: { color: '#b66d08' },
-  routePresencePillTextUnknown: { color: '#68776e' },
+  routePresencePillText: { fontSize: 12, fontWeight: '600' },
+  routePresencePillTextOn: { color: '#086B42' },
+  routePresencePillTextOff: { color: '#5C3B00' },
+  routePresencePillTextUnknown: { color: '#5A6761' },
   routePresenceEvent: { alignItems: 'flex-start', borderTopColor: '#eef3f0', borderTopWidth: 1, flexDirection: 'row', gap: 8, marginTop: 10, paddingTop: 10 },
   routePresenceEventDot: { borderRadius: 4, height: 8, marginTop: 3, width: 8 },
   routePresenceEventEntered: { backgroundColor: '#13b981' },
   routePresenceEventLeft: { backgroundColor: '#e5a42f' },
   routePresenceEventTextWrap: { flex: 1 },
-  routePresenceEventTitle: { color: '#405147', fontSize: 10, fontWeight: '800' },
-  routePresenceEventCaption: { color: '#86938c', fontSize: 9, marginTop: 3 },
-  routePresenceEmpty: { color: '#7f8e85', fontSize: 10, lineHeight: 15, marginTop: 11 },
-  historyGroup: { marginTop: 16 },
-  todayStopsSection: { marginTop: 16 },
-  todayStopsHeading: { alignItems: 'flex-end', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8 },
-  todayStopsTitle: { color: '#3d5246', fontSize: 12, fontWeight: '800', marginTop: -4 },
-  todayStopsCount: { color: '#07815f', fontSize: 12, fontWeight: '800' },
-  dateLabel: { color: '#65766c', fontSize: 11, fontWeight: '800', letterSpacing: 0.3, marginBottom: 8 },
-  emptyStateText: { color: '#7f8e85', fontSize: 12, lineHeight: 18, paddingVertical: 16, textAlign: 'center' },
-  streetCard: { alignItems: 'center', backgroundColor: '#ffffff', borderColor: '#e1e8e4', borderRadius: 13, borderWidth: 1, flexDirection: 'row', marginBottom: 8, minHeight: 60, paddingHorizontal: 10, shadowColor: '#234837', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 5 },
-  streetMarker: { borderRadius: 3, height: 30, width: 5 },
-  collectedMarker: { backgroundColor: '#10c990' },
-  notCollectedMarker: { backgroundColor: '#aeb8b2' },
-  reviewMarker: { backgroundColor: '#8d53ce' },
-  streetInfo: { flex: 1, marginLeft: 10 },
-  streetName: { color: '#2a4134', fontSize: 12, fontWeight: '800' },
-  streetBarangay: { color: '#9aa69f', fontSize: 9, marginTop: 3 },
-  streetStatus: { alignItems: 'flex-end', borderRadius: 9, paddingHorizontal: 7, paddingVertical: 4 },
+  routePresenceEventTitle: { color: '#121A16', fontSize: 14, fontWeight: '600' },
+  routePresenceEventCaption: { color: '#5A6761', fontSize: 12, marginTop: 3 },
+  routePresenceEmpty: { color: '#5A6761', fontSize: 14, marginTop: 12 },
+  historyGroup: { marginTop: 24 },
+  todayStopsSection: { marginTop: 24 },
+  todayStopsHeading: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'space-between', marginBottom: 16 },
+  todayStopsTitle: { color: '#121A16', fontSize: 20, fontWeight: '700' },
+  todayStopsCount: { color: '#0A7F4F', fontSize: 16, fontWeight: '700' },
+  stopsToggle: { alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8, minHeight: 44, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 14, backgroundColor: '#E3F4EB' },
+  stopsToggleText: { color: '#086B42', fontSize: 14, fontWeight: '600', flexShrink: 1 },
+  dateLabel: { color: '#0A7F4F', fontSize: 11, fontWeight: '700', letterSpacing: 1, marginBottom: 6 },
+  emptyStateText: { color: '#5A6761', fontSize: 14, flex: 1, paddingVertical: 8 },
+  streetCard: { alignItems: 'stretch', flexDirection: 'row', gap: 12, minHeight: 64 },
+  streetMarker: { alignItems: 'center', justifyContent: 'center', borderRadius: 11, height: 22, width: 22, borderWidth: 2 },
+  collectedMarker: { backgroundColor: '#0A7F4F', borderColor: '#0A7F4F' },
+  notCollectedMarker: { backgroundColor: '#ffffff', borderColor: '#A9BDB1' },
+  reviewMarker: { backgroundColor: '#FFF4E0', borderColor: '#9A6700' },
+  streetInfo: { flex: 1, minWidth: 0, paddingBottom: 20 },
+  streetName: { color: '#121A16', fontSize: 16, fontWeight: '600' },
+  streetBarangay: { color: '#5A6761', fontSize: 13, marginTop: 3 },
+  streetStatus: { alignItems: 'flex-end', maxWidth: '38%', paddingBottom: 20 },
   collectedPill: { backgroundColor: '#e8fbf1' },
   notCollectedPill: { backgroundColor: '#f0f3f1' },
-  streetStatusText: { fontSize: 9, fontWeight: '800' },
-  streetTime: { fontSize: 8, marginTop: 2 },
-  collectedText: { color: '#07815f' },
-  notCollectedText: { color: '#66766d' },
-  profileScrollContent: { padding: 13, paddingBottom: 100 },
-  collectorProfileCard: { alignItems: 'center', backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 16, borderWidth: 1, padding: 18, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 8 },
-  avatar: { alignItems: 'center', backgroundColor: '#07815f', borderRadius: 27, height: 54, justifyContent: 'center', width: 54 },
-  avatarImage: { borderRadius: 27, height: 54, width: 54 },
-  avatarText: { color: '#ffffff', fontSize: 23, fontWeight: '800' },
-  collectorName: { color: '#2a4033', fontSize: 16, fontWeight: '800', marginTop: 9 },
-  collectorRole: { color: '#75857b', fontSize: 10, marginTop: 4 },
+  streetStatusText: { fontSize: 13, fontWeight: '600', textAlign: 'right' },
+  streetTime: { color: '#5A6761', fontSize: 12, marginTop: 3, textAlign: 'right' },
+  collectedText: { color: '#0A7F4F' },
+  notCollectedText: { color: '#5A6761' },
+  profileScrollContent: { padding: 20, paddingBottom: 24 },
+  collectorProfileCard: { backgroundColor: '#0D2E27', borderRadius: 24, overflow: 'hidden', padding: 20 },
+  avatar: { alignItems: 'center', backgroundColor: '#E3F4EB', borderRadius: 32, height: 64, justifyContent: 'center', width: 64, flexShrink: 0 },
+  avatarImage: { borderRadius: 32, height: 64, width: 64 },
+  avatarText: { color: '#0B5D44', fontSize: 24, fontWeight: '700' },
+  collectorName: { color: '#ffffff', fontSize: 22, fontWeight: '700' },
+  collectorRole: { color: '#E3F4EB', fontSize: 14, marginTop: 4 },
   collectorBarangay: { color: '#8d9a93', fontSize: 10, marginTop: 3 },
-  profilePills: { flexDirection: 'row', gap: 8, marginTop: 12 },
-  collectorPill: { backgroundColor: '#e7f1ff', borderRadius: 9, paddingHorizontal: 9, paddingVertical: 4 },
-  collectorPillText: { color: '#3476d5', fontSize: 9, fontWeight: '800' },
-  onShiftPill: { backgroundColor: '#e8fbf1', borderRadius: 9, paddingHorizontal: 9, paddingVertical: 4 },
-  onShiftText: { color: '#07815f', fontSize: 9, fontWeight: '800' },
-  statsRow: { flexDirection: 'row', gap: 9, marginTop: 12 },
-  statCard: { alignItems: 'center', backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 14, borderWidth: 1, flex: 1, paddingVertical: 13, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 7 },
-  statValue: { color: '#07815f', fontSize: 19, fontWeight: '800' },
-  statLabel: { color: '#415348', fontSize: 10, fontWeight: '800', marginTop: 4 },
-  statCaption: { color: '#9ba7a1', fontSize: 9, marginTop: 2 },
-  profileSyncCard: { alignItems: 'center', backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 14, borderWidth: 1, flexDirection: 'row', justifyContent: 'space-between', marginTop: 10, paddingHorizontal: 14, paddingVertical: 11, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 7 },
+  profilePills: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 },
+  collectorPill: { backgroundColor: 'rgba(13,46,39,0.45)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
+  collectorPillText: { color: '#ffffff', fontSize: 12, fontWeight: '600' },
+  onShiftPill: { backgroundColor: 'rgba(13,46,39,0.45)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
+  onShiftText: { color: '#ffffff', fontSize: 12, fontWeight: '600' },
+  statsRow: { flexDirection: 'row', marginTop: 18, paddingTop: 16, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.2)' },
+  statCard: { flex: 1, minWidth: 0, paddingHorizontal: 6 },
+  statValue: { color: '#ffffff', fontSize: 30, fontWeight: '700' },
+  statLabel: { color: '#E3F4EB', fontSize: 13, marginTop: 4 },
+  statCaption: { color: '#E3F4EB', fontSize: 13 },
+  profileSyncCard: { alignItems: 'center', backgroundColor: '#F4F6F5', borderRadius: 20, flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 24, padding: 16 },
   profileSyncLabel: { color: '#415348', fontSize: 10, fontWeight: '900', letterSpacing: 0.45 },
   profileSyncNumber: { color: '#0b4b2b', fontSize: 24, fontWeight: '900' },
-  accountCard: { backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 16, borderWidth: 1, marginTop: 12, padding: 14, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 7 },
-  accountHeading: { color: '#65766c', fontSize: 10, fontWeight: '800', letterSpacing: 0.4, marginBottom: 3 },
-  accountRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 12 },
-  accountLabel: { color: '#9aa59f', fontSize: 10 },
-  accountValue: { color: '#405147', fontSize: 10, fontWeight: '700', maxWidth: '60%', textAlign: 'right' },
-  signOutButton: { alignItems: 'center', borderColor: '#ffdadd', borderRadius: 13, borderWidth: 1, flexDirection: 'row', gap: 7, height: 45, justifyContent: 'center', marginTop: 13 },
-  signOutText: { color: '#e23d4f', fontSize: 12, fontWeight: '800' },
+  accountCard: { backgroundColor: '#ffffff', borderWidth: 0, marginTop: 24, padding: 0, gap: 0 },
+  accountHeading: { color: '#121A16', fontSize: 18, fontWeight: '700', marginBottom: 8 },
+  accountRow: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 60, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#E3EAE6' },
+  accountLabel: { color: '#5A6761', fontSize: 12 },
+  accountValue: { color: '#121A16', fontSize: 15, fontWeight: '600', marginTop: 2 },
+  signOutButton: { alignItems: 'center', backgroundColor: '#FDECEA', borderRadius: 16, flexDirection: 'row', gap: 10, minHeight: 52, padding: 12, justifyContent: 'center', marginTop: 24 },
+  signOutText: { color: '#B3261E', fontSize: 16, fontWeight: '700' },
   syncBottomBar: { alignItems: 'center', backgroundColor: '#ffffff', borderTopColor: '#e0e8e3', borderTopWidth: 1, flexDirection: 'row', justifyContent: 'space-between', minHeight: 57, paddingHorizontal: 13 },
   syncBottomTextWrap: { alignItems: 'center', flexDirection: 'row', flex: 1, gap: 6 },
-  syncBottomText: { color: '#7d6a42', fontSize: 10, fontWeight: '700' },
-  syncButton: { backgroundColor: '#07815f', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 9 },
-  syncButtonDisabled: { backgroundColor: '#8aa99a' },
-  syncButtonText: { color: '#ffffff', fontSize: 10, fontWeight: '800' },
-  bottomNav: { backgroundColor: '#ffffff', borderTopColor: '#e2e9e5', borderTopWidth: 1, flexDirection: 'row', height: 70, paddingTop: 8 },
-  navItem: { alignItems: 'center', flex: 1 },
-  navText: { color: '#99a7a0', fontSize: 9, fontWeight: '600', marginTop: 3 },
-  navTextActive: { color: '#07815f', fontWeight: '800' },
+  syncBottomText: { color: '#121A16', fontSize: 15, fontWeight: '600' },
+  syncButton: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#E3F4EB', borderRadius: 14, minHeight: 44, paddingHorizontal: 14, paddingVertical: 8 },
+  syncButtonDisabled: { opacity: 0.5 },
+  syncButtonText: { color: '#086B42', fontSize: 14, fontWeight: '700' },
+  bottomNav: { backgroundColor: '#ffffff', borderTopColor: '#E3EAE6', borderTopWidth: 1, flexDirection: 'row', paddingTop: 8 },
+  navItem: { alignItems: 'center', justifyContent: 'center', flex: 1, minWidth: 0, minHeight: 56, paddingHorizontal: 4, gap: 4 },
+  navText: { color: '#5A6761', fontSize: 12, fontWeight: '500' },
+  navTextActive: { color: '#086B42', fontWeight: '700' },
   navIndicator: { backgroundColor: '#07815f', borderRadius: 3, height: 3, marginTop: 4, width: 4 },
   navIndicatorPlaceholder: { height: 3, marginTop: 4, width: 4 },
   streetNameRow: { alignItems: 'center', flexDirection: 'row', gap: 6 },
   flagChip: { alignItems: 'center', backgroundColor: '#9d3139', borderRadius: 7, flexDirection: 'row', gap: 2, paddingHorizontal: 5, paddingVertical: 2 },
   flagChipText: { color: '#ffffff', fontSize: 8, fontWeight: '800' },
-  emptyCard: { alignItems: 'center', backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 14, borderWidth: 1, flexDirection: 'row', gap: 10, padding: 16 },
-  historyCardWrap: { marginBottom: 10 },
-  historyCard: { alignItems: 'stretch', backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 15, borderWidth: 1, flexDirection: 'row', overflow: 'hidden', shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 7 },
-  historyCardMap: { backgroundColor: '#dbe7df', height: 118, width: 124 },
+  emptyCard: { alignItems: 'center', backgroundColor: '#F4F6F5', borderRadius: 20, borderWidth: 0, flexDirection: 'row', gap: 10, padding: 16 },
+  historyCardWrap: { marginBottom: 12 },
+  historyCard: { alignItems: 'center', backgroundColor: '#F4F6F5', borderRadius: 20, borderWidth: 0, flexDirection: 'row', gap: 12, padding: 12 },
+  historyCardMap: { backgroundColor: '#CFE3D8', borderRadius: 14, height: 96, width: 96, flexShrink: 0, overflow: 'hidden' },
   historyMapPreview: { flex: 1 },
   historyMapFallback: { alignItems: 'center', flex: 1, gap: 5, justifyContent: 'center' },
   historyMapFallbackText: { color: '#4d7e69', fontSize: 9, fontWeight: '700' },
-  historyCardBody: { flex: 1, paddingHorizontal: 12, paddingVertical: 10 },
-  historyCardTitle: { color: '#263f33', fontSize: 13, fontWeight: '800' },
-  historyCardDate: { color: '#87948d', fontSize: 9, marginTop: 2 },
-  historyCardMetricRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 },
-  historyCardDistance: { color: '#243f31', fontSize: 20, fontWeight: '800' },
-  historyCardPillRow: { flexDirection: 'row', gap: 5 },
-  historyMiniMetric: { alignItems: 'center', backgroundColor: '#f0f3f1', borderRadius: 7, flexDirection: 'row', gap: 3, paddingHorizontal: 5, paddingVertical: 3 },
-  historyMiniMetricText: { color: '#566860', fontSize: 8, fontWeight: '700' },
+  historyCardBody: { flex: 1, minWidth: 0 },
+  historyCardTitle: { color: '#121A16', fontSize: 16, fontWeight: '700' },
+  historyCardDate: { color: '#5A6761', fontSize: 13, marginTop: 3 },
+  historyCardMetricRow: { marginTop: 6, gap: 4 },
+  historyCardDistance: { color: '#0A7F4F', fontSize: 22, fontWeight: '700' },
+  historyCardPillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  historyMiniMetric: { alignItems: 'center', flexDirection: 'row', gap: 3 },
+  historyMiniMetricText: { color: '#5A6761', fontSize: 12 },
   historyCardBottom: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 7 },
   historyFlag: { alignItems: 'center', borderRadius: 7, flexDirection: 'row', gap: 3, paddingHorizontal: 6, paddingVertical: 3 },
   historyFlagOff: { backgroundColor: '#f0f3f1' },
@@ -2305,43 +2483,43 @@ const styles = StyleSheet.create({
   historyNoMetricText: { color: '#87948d', fontSize: 8, fontWeight: '700' },
   historyTrailStartMarker: { backgroundColor: '#c53030', borderColor: '#ffffff', borderRadius: 7, borderWidth: 2, height: 14, shadowColor: '#7a1f2e', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.35, shadowRadius: 2, width: 14 },
   historyTrailEndMarker: { backgroundColor: '#ffffff', borderColor: '#c53030', borderRadius: 7, borderWidth: 3, height: 14, shadowColor: '#7a1f2e', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.25, shadowRadius: 2, width: 14 },
-  historyDetailBackdrop: { backgroundColor: 'rgba(10, 31, 22, 0.48)', flex: 1, justifyContent: 'flex-end' },
-  historyDetailSheet: { backgroundColor: '#ffffff', borderTopLeftRadius: 22, borderTopRightRadius: 22, maxHeight: '92%', overflow: 'hidden' },
-  historyDetailHeader: { alignItems: 'flex-start', borderBottomColor: '#eef3f0', borderBottomWidth: 1, flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 18, paddingTop: 18, paddingBottom: 14 },
-  historyDetailEyebrow: { color: '#07815f', fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
-  historyDetailTitle: { color: '#243f31', fontSize: 18, fontWeight: '800', marginTop: 3 },
-  historyDetailSubtitle: { color: '#75857b', fontSize: 10, marginTop: 2 },
-  historyDetailClose: { alignItems: 'center', height: 36, justifyContent: 'center', width: 36 },
-  historyDetailScroll: { paddingBottom: 26, paddingHorizontal: 16, paddingTop: 14 },
-  historyDetailTwoCol: { flexDirection: 'row', gap: 10 },
-  historyDetailColLeft: { flex: 1.05 },
-  historyDetailColRight: { flex: 0.95 },
-  historySectionLabel: { color: '#07815f', fontSize: 9, fontWeight: '800', letterSpacing: 0.4, marginBottom: 8 },
-  detailTable: { backgroundColor: '#ffffff', borderColor: '#e5eee8', borderRadius: 11, borderWidth: 1, overflow: 'hidden', padding: 2 },
-  detailTableRef: { backgroundColor: '#fbfcfa' },
-  detailRow: { borderBottomColor: '#eef3f0', borderBottomWidth: 1, paddingHorizontal: 9, paddingVertical: 8 },
-  detailRowTwoCol: { borderBottomColor: '#eef3f0', borderBottomWidth: 1, flexDirection: 'row', gap: 8, paddingHorizontal: 9, paddingVertical: 8 },
-  detailCell: { flex: 1 },
-  detailLabel: { color: '#7d8c84', fontSize: 9, fontWeight: '700', marginBottom: 3 },
-  detailValue: { color: '#263f33', fontSize: 10, fontWeight: '700' },
-  detailValueMono: { color: '#263f33', fontSize: 10, fontWeight: '800', letterSpacing: 0.3 },
-  detailSubvalue: { color: '#88988f', fontSize: 8, marginTop: 1 },
-  detailValueRed: { color: '#c53030', fontWeight: '700' },
-  detailValueGreen: { color: '#07815f', fontWeight: '700' },
-  detailValueRedBold: { color: '#c53030', fontWeight: '800' },
-  detailValueGreenBold: { color: '#07815f', fontWeight: '800' },
-  historyDetailSegment: { marginTop: 16 },
-  segmentTrailPanel: { backgroundColor: '#fbfcfa', borderColor: '#e0e8e3', borderRadius: 13, borderWidth: 1, flexDirection: 'row', gap: 10, overflow: 'hidden', padding: 10 },
-  segmentTrailMapWrap: { backgroundColor: '#eef3f0', borderRadius: 10, flex: 1.4, height: 200, overflow: 'hidden' },
+  historyDetailBackdrop: { backgroundColor: '#ffffff', flex: 1 },
+  historyDetailSheet: { backgroundColor: '#ffffff', flex: 1 },
+  historyDetailHeader: { alignItems: 'flex-start', flexDirection: 'row', gap: 12 },
+  historyDetailEyebrow: { color: '#0A7F4F', fontSize: 11, fontWeight: '700', letterSpacing: 1 },
+  historyDetailTitle: { color: '#121A16', fontSize: 28, fontWeight: '700', marginTop: 6 },
+  historyDetailSubtitle: { color: '#5A6761', fontSize: 14, marginTop: 6 },
+  historyDetailClose: { alignItems: 'center', backgroundColor: '#EEF3F0', borderRadius: 22, height: 44, justifyContent: 'center', width: 44, flexShrink: 0 },
+  historyDetailScroll: { paddingVertical: 24, paddingHorizontal: 20, gap: 24 },
+  historyDetailTwoCol: { gap: 24 },
+  historyDetailColLeft: { minWidth: 0 },
+  historyDetailColRight: { minWidth: 0 },
+  historySectionLabel: { color: '#121A16', fontSize: 18, fontWeight: '700', marginBottom: 12 },
+  detailTable: { backgroundColor: '#F4F6F5', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 4 },
+  detailTableRef: { backgroundColor: '#F4F6F5' },
+  detailRow: { borderBottomColor: '#E3EAE6', borderBottomWidth: 1, paddingVertical: 14 },
+  detailRowTwoCol: { borderBottomColor: '#E3EAE6', borderBottomWidth: 1, flexDirection: 'row', gap: 16, paddingVertical: 14 },
+  detailCell: { flex: 1, minWidth: 0 },
+  detailLabel: { color: '#5A6761', fontSize: 12, marginBottom: 4 },
+  detailValue: { color: '#121A16', fontSize: 15, fontWeight: '600' },
+  detailValueMono: { color: '#121A16', fontSize: 15, fontWeight: '600' },
+  detailSubvalue: { color: '#5A6761', fontSize: 12, marginTop: 3 },
+  detailValueRed: { color: '#B3261E', fontWeight: '600' },
+  detailValueGreen: { color: '#086B42', fontWeight: '600' },
+  detailValueRedBold: { color: '#B3261E', fontWeight: '700' },
+  detailValueGreenBold: { color: '#086B42', fontWeight: '700' },
+  historyDetailSegment: { gap: 0 },
+  segmentTrailPanel: { gap: 16 },
+  segmentTrailMapWrap: { backgroundColor: '#E3EAE6', borderRadius: 20, height: 190, overflow: 'hidden' },
   segmentTrailMap: { flex: 1 },
   segmentTrailPlaceholder: { alignItems: 'center', flex: 1, gap: 6, justifyContent: 'center' },
   segmentTrailCaption: { color: '#65766c', fontSize: 9, fontWeight: '700' },
-  segmentTrailLegend: { flex: 1, paddingHorizontal: 2, paddingTop: 2 },
-  segmentFigCaption: { color: '#75857b', fontSize: 9, fontStyle: 'italic', lineHeight: 13, marginTop: 8 },
+  segmentTrailLegend: { gap: 4 },
+  segmentFigCaption: { color: '#5A6761', fontSize: 12, fontStyle: 'italic', marginTop: 12 },
   legendRow: { alignItems: 'center', flexDirection: 'row', gap: 7, marginBottom: 7 },
   legendSwatch: { borderRadius: 2, height: 4, width: 22 },
   legendSwatchDashed: { backgroundColor: 'transparent', borderBottomColor: '#c53030', borderBottomWidth: 2, borderStyle: 'dashed', height: 2, width: 22 },
-  legendText: { color: '#405147', flex: 1, fontSize: 9, fontWeight: '600' },
+  legendText: { color: '#121A16', flex: 1, minWidth: 0, fontSize: 14 },
   trailEntryDot: { backgroundColor: '#c53030', borderRadius: 5, height: 10, width: 10 },
   trailExitDot: { backgroundColor: '#aeb8b2', borderColor: '#7f8b84', borderRadius: 5, borderWidth: 1.5, height: 10, width: 10 },
   trailStopDot: { backgroundColor: '#07815f', borderColor: '#ffffff', borderRadius: 5, borderWidth: 1.5, height: 10, width: 10 },
@@ -2353,14 +2531,14 @@ const styles = StyleSheet.create({
   historyStopMarkerText: { color: '#ffffff', fontSize: 8, fontWeight: '800' },
   trailMarkerText: { color: '#ffffff', fontSize: 7, fontWeight: '800' },
   historyDetailStops: { marginTop: 16 },
-  stopLogCard: { alignItems: 'center', backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 12, borderWidth: 1, flexDirection: 'row', marginBottom: 7, minHeight: 52, paddingHorizontal: 10 },
+  stopLogCard: { alignItems: 'center', backgroundColor: '#F4F6F5', borderRadius: 20, borderWidth: 0, flexDirection: 'row', marginBottom: 12, minHeight: 60, padding: 12 },
   stopLogDot: { borderRadius: 4, height: 26, width: 5 },
   stopLogDotCollected: { backgroundColor: '#10c990' },
-  stopLogDotReview: { backgroundColor: '#8d53ce' },
+  stopLogDotReview: { backgroundColor: '#9A6700' },
   stopLogInfo: { flex: 1, marginLeft: 10, paddingVertical: 8 },
   stopLogHeaderRow: { alignItems: 'center', flexDirection: 'row', gap: 6 },
-  stopLogName: { color: '#2a4134', fontSize: 11, fontWeight: '700' },
+  stopLogName: { color: '#121A16', fontSize: 15, fontWeight: '600', flexShrink: 1 },
   stopLogFlag: { alignItems: 'center', backgroundColor: '#9d3139', borderRadius: 6, flexDirection: 'row', gap: 2, paddingHorizontal: 5, paddingVertical: 2 },
   stopLogFlagText: { color: '#ffffff', fontSize: 8, fontWeight: '800' },
-  stopLogMeta: { color: '#88988f', fontSize: 9, marginTop: 3 },
+  stopLogMeta: { color: '#5A6761', fontSize: 12, marginTop: 4 },
 });

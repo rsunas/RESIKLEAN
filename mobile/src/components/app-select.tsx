@@ -1,6 +1,9 @@
-import { useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Feather } from 'expo/node_modules/@expo/vector-icons';
+import { useState, type ComponentProps } from 'react';
+import { ScrollView, StyleSheet, Text as NativeText, View, useWindowDimensions } from 'react-native';
+import { MotionModal as Modal, MotionPressable as Pressable } from '@/components/app-motion';
 import { AppText as Text } from '@/components/app-text';
+import { AuthColors as C } from '@/constants/theme';
 
 export type AppSelectOption = {
   value: string;
@@ -9,7 +12,10 @@ export type AppSelectOption = {
 };
 
 type AppSelectProps = {
+  appearance?: 'default' | 'staff' | 'auth';
+  invalid?: boolean;
   disabled?: boolean;
+  leadingIcon?: ComponentProps<typeof Feather>['name'];
   label?: string;
   onChange: (value: string) => void;
   options: AppSelectOption[];
@@ -17,8 +23,11 @@ type AppSelectProps = {
   value: string;
 };
 
-export function AppSelect({ disabled = false, label, onChange, options, placeholder = 'Select one', value }: AppSelectProps) {
+export function AppSelect({ appearance = 'default', invalid = false, disabled = false, leadingIcon, label, onChange, options, placeholder = 'Select one', value }: AppSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const { fontScale } = useWindowDimensions();
+  const TriggerText = appearance === 'auth' ? NativeText : Text;
   const selectedOption = options.find((option) => option.value === value);
 
   const selectOption = (option: AppSelectOption) => {
@@ -27,18 +36,29 @@ export function AppSelect({ disabled = false, label, onChange, options, placehol
   };
 
   return (
-    <View style={styles.container}>
-      {label ? <Text style={styles.label}>{label}</Text> : null}
+    <View style={[styles.container, appearance === 'staff' && styles.staffContainer]}>
+      {label ? <Text style={[styles.label, appearance === 'staff' && styles.staffLabel]}>{label}</Text> : null}
 
       <Pressable
+        accessibilityLabel={[label, selectedOption?.label ?? placeholder].filter(Boolean).join(', ')}
         accessibilityRole="button"
+        accessibilityState={{ disabled, expanded: isOpen }}
         disabled={disabled}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
         onPress={() => setIsOpen(true)}
-        style={({ pressed }) => [styles.trigger, pressed && styles.triggerPressed, disabled && styles.disabled]}>
-        <Text style={[styles.triggerText, !selectedOption && styles.placeholder]}>
+        style={({ pressed }) => [styles.trigger, appearance === 'staff' && styles.staffTrigger, pressed && styles.triggerPressed, appearance === 'auth' && styles.authTrigger, appearance === 'auth' && { minHeight: Math.max(56, 16 * fontScale * 1.4 + 20) }, appearance === 'auth' && (focused || isOpen) && styles.authFocus, appearance === 'auth' && invalid && styles.authInvalid, disabled && styles.disabled]}>
+        {leadingIcon ? (
+          <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none" style={[styles.leadingIcon, appearance === 'auth' && styles.authLeadingIcon]}>
+            <Feather name={leadingIcon} size={20} color={appearance === 'auth' ? C.muted : '#0A7F4F'} />
+          </View>
+        ) : null}
+        <TriggerText ellipsizeMode="tail" numberOfLines={appearance !== 'default' ? 1 : undefined} style={[styles.triggerText, !selectedOption && styles.placeholder, appearance === 'staff' && styles.staffText, appearance === 'auth' && styles.authText, appearance === 'auth' && !selectedOption && styles.authPlaceholder]}>
           {selectedOption?.label ?? placeholder}
-        </Text>
-        <Text style={styles.chevron}>⌄</Text>
+        </TriggerText>
+        <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none" style={[styles.chevron, isOpen && styles.chevronOpen]}>
+          <Feather name="chevron-down" size={appearance === 'auth' ? 22 : 20} color="#35463F" />
+        </View>
       </Pressable>
 
       <Modal
@@ -52,7 +72,7 @@ export function AppSelect({ disabled = false, label, onChange, options, placehol
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>{label ?? placeholder}</Text>
-              <Pressable accessibilityRole="button" accessibilityLabel="Close options" onPress={() => setIsOpen(false)} style={styles.closeButton}>
+              <Pressable accessibilityRole="button" accessibilityLabel="Close options" onPress={() => setIsOpen(false)} style={[styles.closeButton, appearance !== 'default' && styles.staffCloseButton]}>
                 <Text style={styles.closeText}>×</Text>
               </Pressable>
             </View>
@@ -82,6 +102,17 @@ export function AppSelect({ disabled = false, label, onChange, options, placehol
 }
 
 const styles = StyleSheet.create({
+  authTrigger: { backgroundColor: C.field, borderColor: 'transparent', borderWidth: 2, borderRadius: 16, height: 'auto', minHeight: 56, paddingLeft: 16, paddingRight: 16, paddingVertical: 12 },
+  authText: { color: C.ink, fontSize: 16 },
+  authLeadingIcon: { marginRight: 14 },
+  authPlaceholder: { color: C.muted },
+  authFocus: { backgroundColor: '#FFFFFF', borderColor: C.primary },
+  authInvalid: { borderColor: C.error },
+  staffContainer: { marginTop: 16 },
+  staffLabel: { color: '#35463F', fontSize: 13, fontWeight: '600', marginBottom: 6 },
+  staffTrigger: { backgroundColor: '#F1F5F3', borderWidth: 0, height: 'auto', minHeight: 52, paddingVertical: 12 },
+  staffText: { color: '#121A16', fontSize: 16, fontWeight: '500' },
+  staffCloseButton: { height: 44, width: 44 },
   container: { alignSelf: 'stretch' },
   label: { color: '#596a61', fontSize: 12, fontWeight: '700', marginBottom: 7 },
   trigger: {
@@ -93,13 +124,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     height: 48,
     justifyContent: 'space-between',
-    paddingHorizontal: 13,
+    paddingHorizontal: 14,
   },
   triggerPressed: { backgroundColor: '#eef7f2' },
   disabled: { opacity: 0.55 },
-  triggerText: { color: '#1c3027', flex: 1, fontSize: 16 },
+  triggerText: { color: '#1c3027', flex: 1, minWidth: 0, fontSize: 16 },
   placeholder: { color: '#718b7f' },
-  chevron: { color: '#718b7f', fontSize: 24, lineHeight: 18, marginLeft: 10, marginTop: -8 },
+  leadingIcon: { width: 20, height: 20, marginRight: 12, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  chevron: { width: 20, height: 20, marginLeft: 10, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  chevronOpen: { transform: [{ rotate: '180deg' }] },
   modalRoot: { flex: 1, justifyContent: 'center', paddingHorizontal: 20 },
   backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(9, 31, 23, 0.42)' },
   modalCard: { backgroundColor: '#ffffff', borderColor: '#dce4df', borderRadius: 20, borderWidth: 1, maxHeight: '76%', overflow: 'hidden' },

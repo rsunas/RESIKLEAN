@@ -17,15 +17,13 @@
  */
 
 import { Feather, MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-icons';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { LinearGradient } from 'expo-linear-gradient';
+import { Tabs } from 'heroui-native';
 import {
   ActivityIndicator,
   Alert,
-  Animated,
-  Easing,
   Linking,
-  Modal,
-  Pressable,
   ScrollView,
   StyleSheet,
   Switch,
@@ -34,6 +32,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText as Text } from '@/components/app-text';
+import { MotionModal as Modal, MotionPressable as Pressable, AccordionBody, MotionChevron } from '@/components/app-motion';
 import type { AuthSession } from '@/lib/session';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -66,7 +65,7 @@ type AppInfo = {
   email?: string;
   address?: string;
   wasteGuide: Array<{ category: string; color: string; accentColor: string; items: string[] }>;
-  faqs: Array<{ question: string; answer: string }>;
+  faqs: Array<{ question?: string; answer?: string; q?: string; a?: string }>;
   appVersion?: string;
 };
 
@@ -145,74 +144,43 @@ function SettingRow({
 
 // ─── Theme Pill Selector ───────────────────────────────────────────────────────
 
-function ThemePills({
-  value,
-  onChange,
-}: {
-  value: Theme;
-  onChange: (theme: Theme) => void;
+// Installed free HeroUI 1.0.8 compound Tabs; explicit native styles avoid
+// relying on className compilation for the rounded highlight.
+function PreferenceTabs({ value, onChange, options }: {
+  value: string;
+  onChange: (value: string) => void;
+  options: { key: string; label: string; icon?: 'sun' | 'moon' | 'smartphone'; flag?: string }[];
 }) {
-  const options: { key: Theme; label: string; icon: string }[] = [
+  return (
+    <Tabs value={value} onValueChange={onChange} animation="disable-all">
+      <Tabs.List style={ss.pillRow}>
+        <Tabs.Indicator style={ss.pillIndicator} />
+        {options.map((option) => (
+          <Tabs.Trigger key={option.key} value={option.key} style={ss.pill}>
+            {option.icon ? <Feather accessible={false} name={option.icon} size={14} color={value === option.key ? '#086B42' : '#5A6761'} /> : null}
+            {option.flag ? <Text style={ss.pillFlag}>{option.flag}</Text> : null}
+            <Tabs.Label numberOfLines={1} adjustsFontSizeToFit style={[ss.pillText, value === option.key && ss.pillTextActive]}>{option.label}</Tabs.Label>
+          </Tabs.Trigger>
+        ))}
+      </Tabs.List>
+    </Tabs>
+  );
+}
+
+function ThemePills({ value, onChange }: { value: Theme; onChange: (theme: Theme) => void }) {
+  return <PreferenceTabs value={value} onChange={(next) => onChange(next as Theme)} options={[
     { key: 'light', label: 'Light', icon: 'sun' },
     { key: 'dark', label: 'Dark', icon: 'moon' },
     { key: 'system', label: 'System', icon: 'smartphone' },
-  ];
-  return (
-    <View style={ss.pillRow}>
-      {options.map((opt) => {
-        const active = value === opt.key;
-        return (
-          <Pressable
-            accessibilityRole="radio"
-            accessibilityState={{ checked: active }}
-            key={opt.key}
-            onPress={() => onChange(opt.key)}
-            style={[ss.pill, active && ss.pillActive]}
-          >
-            <Feather color={active ? '#07815f' : '#7a8d82'} name={opt.icon as 'sun'} size={13} />
-            <Text style={[ss.pillText, active && ss.pillTextActive]}>{opt.label}</Text>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
+  ]} />;
 }
 
-// ─── Language Selector ────────────────────────────────────────────────────────
-
-function LanguageSelector({
-  value,
-  onChange,
-}: {
-  value: Language;
-  onChange: (lang: Language) => void;
-}) {
-  const options: { key: Language; label: string; flag: string }[] = [
+function LanguageSelector({ value, onChange }: { value: Language; onChange: (language: Language) => void }) {
+  return <PreferenceTabs value={value} onChange={(next) => onChange(next as Language)} options={[
     { key: 'en', label: 'English', flag: '🇵🇭' },
     { key: 'fil', label: 'Filipino', flag: '🇵🇭' },
-  ];
-  return (
-    <View style={ss.pillRow}>
-      {options.map((opt) => {
-        const active = value === opt.key;
-        return (
-          <Pressable
-            accessibilityRole="radio"
-            accessibilityState={{ checked: active }}
-            key={opt.key}
-            onPress={() => onChange(opt.key)}
-            style={[ss.pill, active && ss.pillActive]}
-          >
-            <Text style={ss.pillFlag}>{opt.flag}</Text>
-            <Text style={[ss.pillText, active && ss.pillTextActive]}>{opt.label}</Text>
-          </Pressable>
-        );
-      })}
-    </View>
-  );
+  ]} />;
 }
-
-// ─── Waste Guide Card ─────────────────────────────────────────────────────────
 
 function WasteGuideCard({
   category,
@@ -226,18 +194,20 @@ function WasteGuideCard({
   items: string[];
 }) {
   const [expanded, setExpanded] = useState(false);
+  const categoryColor = ({ Biodegradable: '#0A7F4F', 'Non-Biodegradable': '#1A56C4', Recyclables: '#B45309', Hazardous: '#B3261E' } as Record<string, string>)[category] || color;
   return (
     <Pressable
       accessibilityRole="button"
       onPress={() => setExpanded((e) => !e)}
-      style={[ss.wasteCard, { borderLeftColor: accentColor }]}
+      accessibilityState={{ expanded }}
+      style={ss.wasteCard}
     >
       <View style={ss.wasteCardHeader}>
-        <View style={[ss.wasteDot, { backgroundColor: accentColor }]} />
-        <Text style={[ss.wasteCategory, { color }]}>{category}</Text>
-        <Feather color={color} name={expanded ? 'chevron-up' : 'chevron-down'} size={15} />
+        <View style={[ss.wasteDot, { backgroundColor: categoryColor }]} />
+        <Text style={[ss.wasteCategory, { color: categoryColor }]}>{category}</Text>
+        <MotionChevron expanded={expanded}><Feather color={color} name="chevron-down" size={15} /></MotionChevron>
       </View>
-      {expanded ? (
+      <AccordionBody expanded={expanded}>
         <View style={ss.wasteItems}>
           {items.map((item) => (
             <View key={item} style={ss.wasteItemRow}>
@@ -246,7 +216,7 @@ function WasteGuideCard({
             </View>
           ))}
         </View>
-      ) : null}
+      </AccordionBody>
     </Pressable>
   );
 }
@@ -261,12 +231,12 @@ function FaqItem({ question, answer }: { question: string; answer: string }) {
   };
 
   return (
-    <Pressable accessibilityRole="button" onPress={toggle} style={ss.faqItem}>
+    <Pressable accessibilityRole="button" accessibilityState={{ expanded: open }} onPress={toggle} style={ss.faqItem}>
       <View style={ss.faqHeader}>
         <Text style={ss.faqQuestion}>{question}</Text>
-        <Feather color="#07815f" name={open ? 'minus' : 'plus'} size={15} />
+        <MotionChevron expanded={open}><Feather color="#07815f" name={open ? 'minus' : 'plus'} size={15} /></MotionChevron>
       </View>
-      {open ? <Text style={ss.faqAnswer}>{answer}</Text> : null}
+      <AccordionBody expanded={open}><Text style={ss.faqAnswer}>{answer}</Text></AccordionBody>
     </Pressable>
   );
 }
@@ -634,30 +604,30 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
         {/* ── Header ─────────────────────────────────────────── */}
         <View style={ss.header}>
           <Pressable accessibilityLabel="Back" hitSlop={10} onPress={onClose} style={ss.headerBack}>
-            <Feather color="#07815f" name="arrow-left" size={22} />
+            <Feather color="#07815f" name="chevron-left" size={22} />
           </Pressable>
           <Text style={ss.headerTitle}>Settings</Text>
-          {isSavingSettings ? <ActivityIndicator color="#07815f" size="small" /> : <View style={{ width: 22 }} />}
+          <View style={ss.headerBack}>{isSavingSettings ? <ActivityIndicator color="#0A7F4F" size="small" /> : null}</View>
         </View>
 
-        {isLoadingSettings ? (
-          <View style={ss.loadingContainer}>
-            <ActivityIndicator color="#07815f" size="large" />
-            <Text style={ss.loadingText}>Loading your preferences…</Text>
-          </View>
-        ) : (
+        {/* Account data is already in the session; FAQs have real fallback copy
+            and a separate request without a loading flag. Keep both visible.
+            Preserve the old loading lock on preferences, without blanking the page. */}
           <ScrollView
             contentContainerStyle={[ss.scrollContent, { paddingBottom: insets.bottom + 32 }]}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
+            {isLoadingSettings ? <Text accessibilityRole="text" style={ss.loadingText}>Loading your preferences…</Text> : null}
+            <View accessible={isLoadingSettings} accessibilityLabel={isLoadingSettings ? 'Loading' : undefined} accessibilityState={{ busy: isLoadingSettings }}>
+            <View pointerEvents={isLoadingSettings ? 'none' : 'auto'} accessibilityElementsHidden={isLoadingSettings} importantForAccessibility={isLoadingSettings ? 'no-hide-descendants' : 'auto'}>
             {settingsError ? <Text style={ss.globalError}>{settingsError}</Text> : null}
 
             {/* ── Account card ────────────────────────────────── */}
             <View style={ss.accountCard}>
-              <View style={ss.accountAvatar}>
+              <LinearGradient colors={['#24846E', '#0D2E27']} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={ss.accountAvatar}>
                 <Text style={ss.accountAvatarText}>{firstInitial}</Text>
-              </View>
+              </LinearGradient>
               <View style={{ flex: 1 }}>
                 <Text style={ss.accountName}>{displayName}</Text>
                 {session.user.email ? <Text style={ss.accountEmail}>{session.user.email}</Text> : null}
@@ -712,9 +682,10 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
                 right={
                   <Switch
                     ios_backgroundColor="#cdd9d3"
+                    accessibilityLabel="Push Notifications"
                     onValueChange={(value) => setNotificationToggle('pushEnabled', value)}
                     thumbColor="#ffffff"
-                    trackColor={{ false: '#cdd9d3', true: '#07815f' }}
+                    trackColor={{ false: '#cdd9d3', true: '#0A7F4F' }}
                     value={settings.notifications.pushEnabled}
                   />
                 }
@@ -729,9 +700,10 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
                   <Switch
                     disabled={!settings.notifications.pushEnabled}
                     ios_backgroundColor="#cdd9d3"
+                    accessibilityLabel="Collection Reminders"
                     onValueChange={(value) => setNotificationToggle('collectionReminders', value)}
                     thumbColor="#ffffff"
-                    trackColor={{ false: '#cdd9d3', true: '#07815f' }}
+                    trackColor={{ false: '#cdd9d3', true: '#0A7F4F' }}
                     value={settings.notifications.collectionReminders && settings.notifications.pushEnabled}
                   />
                 }
@@ -746,9 +718,10 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
                   <Switch
                     disabled={!settings.notifications.pushEnabled}
                     ios_backgroundColor="#cdd9d3"
+                    accessibilityLabel="Schedule Updates"
                     onValueChange={(value) => setNotificationToggle('scheduleUpdates', value)}
                     thumbColor="#ffffff"
-                    trackColor={{ false: '#cdd9d3', true: '#07815f' }}
+                    trackColor={{ false: '#cdd9d3', true: '#0A7F4F' }}
                     value={settings.notifications.scheduleUpdates && settings.notifications.pushEnabled}
                   />
                 }
@@ -764,9 +737,10 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
                   <Switch
                     disabled={!settings.notifications.pushEnabled}
                     ios_backgroundColor="#cdd9d3"
+                    accessibilityLabel="Announcements"
                     onValueChange={(value) => setNotificationToggle('announcements', value)}
                     thumbColor="#ffffff"
-                    trackColor={{ false: '#cdd9d3', true: '#07815f' }}
+                    trackColor={{ false: '#cdd9d3', true: '#0A7F4F' }}
                     value={settings.notifications.announcements && settings.notifications.pushEnabled}
                   />
                 }
@@ -872,7 +846,7 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
                 <Text style={ss.infoSectionLabelText}>FREQUENTLY ASKED QUESTIONS</Text>
               </View>
               {fallbackFaqs.map((faq) => (
-                <FaqItem answer={faq.answer} key={faq.question} question={faq.question} />
+                <FaqItem answer={faq.answer ?? faq.a ?? ''} key={faq.question ?? faq.q} question={faq.question ?? faq.q ?? ''} />
               ))}
             </View>
 
@@ -889,7 +863,7 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
             <SectionHeader label="Danger Zone" />
             <View style={ss.dangerCard}>
               <View style={ss.dangerIcon}>
-                <Feather color="#e23d4f" name="alert-triangle" size={18} />
+                <Feather color="#B3261E" name="alert-triangle" size={18} />
               </View>
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={ss.dangerTitle}>Delete Account</Text>
@@ -905,16 +879,17 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
               style={[ss.dangerButton, isDeletingAccount && ss.disabledButton]}
             >
               {isDeletingAccount ? (
-                <ActivityIndicator color="#e23d4f" size="small" />
+                <ActivityIndicator color="#B3261E" size="small" />
               ) : (
                 <>
-                  <Feather color="#e23d4f" name="trash-2" size={15} />
+                  <Feather color="#B3261E" name="trash-2" size={15} />
                   <Text style={ss.dangerButtonText}>Delete My Account</Text>
                 </>
               )}
             </Pressable>
+            </View>
+            </View>
           </ScrollView>
-        )}
       </View>
 
       {/* ── Change Password Sheet ───────────────────────────── */}
@@ -932,87 +907,88 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
 const ss = StyleSheet.create({
+  pillIndicator: { position: 'absolute', top: 4, left: 0, backgroundColor: '#FFFFFF', borderRadius: 12, shadowColor: '#121A16', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.12, shadowRadius: 3, elevation: 2 },
   // Layout
-  screen: { backgroundColor: '#f4f7f5', flex: 1 },
-  header: { alignItems: 'center', backgroundColor: '#ffffff', borderBottomColor: '#e8ede9', borderBottomWidth: 1, flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 18, paddingVertical: 14 },
-  headerBack: { alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { color: '#102c20', fontSize: 17, fontWeight: '800' },
+  screen: { backgroundColor: '#FFFFFF', flex: 1 },
+  header: { alignItems: 'center', backgroundColor: '#FFFFFF', borderBottomColor: '#E3EAE6', borderBottomWidth: 1, flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 6 },
+  headerBack: { alignItems: 'center', justifyContent: 'center', width: 44, height: 44 },
+  headerTitle: { color: '#121A16', fontSize: 18, fontWeight: '700' },
   loadingContainer: { alignItems: 'center', flex: 1, justifyContent: 'center', gap: 14 },
   loadingText: { color: '#7a8d82', fontSize: 13 },
-  scrollContent: { padding: 16 },
+  scrollContent: { paddingHorizontal: 20, paddingTop: 16 },
   globalError: { backgroundColor: '#fff0f2', borderColor: '#ffd6da', borderRadius: 10, borderWidth: 1, color: '#c0392b', fontSize: 12, marginBottom: 10, padding: 10 },
 
   // Section header
-  sectionHeader: { color: '#61746a', fontSize: 11, fontWeight: '800', letterSpacing: 0.6, marginBottom: 6, marginTop: 20, paddingHorizontal: 2, textTransform: 'uppercase' },
+  sectionHeader: { color: '#5A6761', fontSize: 12, fontWeight: '700', letterSpacing: 1, marginBottom: 12, marginTop: 28, textTransform: 'uppercase' },
 
   // Account card
-  accountCard: { alignItems: 'center', backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 16, borderWidth: 1, flexDirection: 'row', marginTop: 8, padding: 16, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 2 },
-  accountAvatar: { alignItems: 'center', backgroundColor: '#0c8765', borderRadius: 24, height: 48, justifyContent: 'center', marginRight: 14, width: 48 },
+  accountCard: { alignItems: 'center', flexDirection: 'row', paddingVertical: 12, gap: 12 },
+  accountAvatar: { alignItems: 'center', borderRadius: 28, overflow: 'hidden', height: 56, justifyContent: 'center', width: 56 },
   accountAvatarText: { color: '#ffffff', fontSize: 20, fontWeight: '800' },
-  accountName: { color: '#1c3828', fontSize: 15, fontWeight: '800' },
-  accountEmail: { color: '#718077', fontSize: 11, marginTop: 2 },
+  accountName: { color: '#121A16', fontSize: 17, fontWeight: '700' },
+  accountEmail: { color: '#5A6761', fontSize: 13, marginTop: 2 },
   googleBadge: { alignItems: 'center', backgroundColor: '#eef3ff', borderColor: '#d0dfff', borderRadius: 8, borderWidth: 1, flexDirection: 'row', gap: 4, paddingHorizontal: 8, paddingVertical: 4 },
   googleBadgeText: { color: '#4285f4', fontSize: 10, fontWeight: '800' },
 
   // Generic card
-  card: { backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 16, borderWidth: 1, marginTop: 8, overflow: 'hidden', shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 8, elevation: 2 },
-  cardRowNoBorder: { alignItems: 'center', flexDirection: 'row', padding: 14, paddingBottom: 10 },
+  card: { backgroundColor: '#FFFFFF', marginTop: 4 },
+  cardRowNoBorder: { alignItems: 'center', flexDirection: 'row', paddingVertical: 12, paddingBottom: 16 },
 
   // Setting row
-  settingRow: { alignItems: 'center', flexDirection: 'row', minHeight: 54, paddingHorizontal: 14, paddingVertical: 8 },
-  settingRowBorder: { borderBottomColor: '#edf1ef', borderBottomWidth: 1 },
-  settingIcon: { alignItems: 'center', borderRadius: 10, height: 34, justifyContent: 'center', width: 34 },
-  settingLabel: { flex: 1, marginLeft: 12 },
-  settingText: { color: '#1c3828', fontSize: 13, fontWeight: '700' },
-  settingSubtext: { color: '#7a8d82', fontSize: 10, marginTop: 2 },
+  settingRow: { alignItems: 'center', flexDirection: 'row', minHeight: 72, paddingVertical: 14 },
+  settingRowBorder: { borderBottomColor: '#E3EAE6', borderBottomWidth: 1 },
+  settingIcon: { alignItems: 'center', borderRadius: 18, height: 36, justifyContent: 'center', width: 36 },
+  settingLabel: { flex: 1, minWidth: 0, marginLeft: 12, marginRight: 8 },
+  settingText: { color: '#121A16', fontSize: 15, fontWeight: '600' },
+  settingSubtext: { color: '#5A6761', fontSize: 12, marginTop: 3 },
 
   // Pills
-  pillRow: { flexDirection: 'row', gap: 8, padding: 14, paddingTop: 4 },
-  pill: { alignItems: 'center', backgroundColor: '#f4f7f5', borderColor: '#dce5df', borderRadius: 10, borderWidth: 1.5, flex: 1, flexDirection: 'row', gap: 6, justifyContent: 'center', paddingVertical: 10 },
+  pillRow: { position: 'relative', flexDirection: 'row', backgroundColor: '#EEF3F0', borderRadius: 16, overflow: 'hidden', padding: 4, gap: 0 },
+  pill: { alignItems: 'center', borderRadius: 12, minHeight: 44, flex: 1, minWidth: 0, flexDirection: 'row', gap: 5, justifyContent: 'center', paddingHorizontal: 4, paddingVertical: 8 },
   pillActive: { backgroundColor: '#e8faf0', borderColor: '#07815f' },
-  pillText: { color: '#7a8d82', fontSize: 12, fontWeight: '700' },
-  pillTextActive: { color: '#07815f' },
+  pillText: { color: '#5A6761', fontSize: 13, fontWeight: '500', flexShrink: 1 },
+  pillTextActive: { color: '#086B42', fontWeight: '700' },
   pillFlag: { fontSize: 13 },
 
   // Info & Support
-  infoSectionLabel: { alignItems: 'center', borderBottomColor: '#edf1ef', borderBottomWidth: 1, flexDirection: 'row', gap: 6, paddingBottom: 10, paddingHorizontal: 14, paddingTop: 14 },
-  infoSectionLabelText: { color: '#61746a', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
-  hotlineRow: { alignItems: 'center', flexDirection: 'row', minHeight: 52, paddingHorizontal: 14, paddingVertical: 8 },
-  hotlineIconWrap: { alignItems: 'center', backgroundColor: '#e8faf0', borderRadius: 10, height: 34, justifyContent: 'center', marginRight: 12, width: 34 },
-  hotlineLabel: { color: '#829087', fontSize: 10, fontWeight: '600' },
-  hotlineNumber: { color: '#1c3828', fontSize: 14, fontWeight: '800', marginTop: 2 },
-  callBadge: { backgroundColor: '#e8faf0', borderColor: '#b5e8cc', borderRadius: 8, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 5 },
-  callBadgeText: { color: '#07815f', fontSize: 11, fontWeight: '800' },
+  infoSectionLabel: { alignItems: 'center', flexDirection: 'row', gap: 6, paddingBottom: 12, paddingTop: 20 },
+  infoSectionLabelText: { color: '#121A16', fontSize: 15, fontWeight: '700', flexShrink: 1 },
+  hotlineRow: { alignItems: 'center', flexDirection: 'row', minHeight: 64, paddingVertical: 12, gap: 12 },
+  hotlineIconWrap: { alignItems: 'center', backgroundColor: '#E3F4EB', borderRadius: 18, height: 36, justifyContent: 'center', width: 36 },
+  hotlineLabel: { color: '#5A6761', fontSize: 12 },
+  hotlineNumber: { color: '#121A16', fontSize: 17, fontWeight: '700', marginTop: 2 },
+  callBadge: { backgroundColor: '#E3F4EB', borderRadius: 14, minHeight: 44, minWidth: 60, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10 },
+  callBadgeText: { color: '#086B42', fontSize: 14, fontWeight: '700' },
 
   // Waste guide
-  wasteCard: { borderLeftWidth: 3, marginHorizontal: 14, marginTop: 10, paddingHorizontal: 12, paddingVertical: 10 },
+  wasteCard: { minHeight: 56, borderBottomWidth: 1, borderBottomColor: '#E3EAE6', justifyContent: 'center', paddingVertical: 16 },
   wasteCardHeader: { alignItems: 'center', flexDirection: 'row', gap: 8 },
   wasteDot: { borderRadius: 4, height: 8, width: 8 },
-  wasteCategory: { flex: 1, fontSize: 13, fontWeight: '800' },
+  wasteCategory: { flex: 1, fontSize: 15, fontWeight: '600' },
   wasteItems: { marginTop: 8, paddingLeft: 16 },
   wasteItemRow: { alignItems: 'center', flexDirection: 'row', gap: 8, marginTop: 5 },
   wasteItemDot: { borderRadius: 3, height: 5, width: 5 },
-  wasteItemText: { color: '#3f5549', fontSize: 12 },
+  wasteItemText: { color: '#35463F', fontSize: 14, flex: 1 },
 
   // FAQs
-  faqItem: { borderBottomColor: '#edf1ef', borderBottomWidth: 1, paddingHorizontal: 14, paddingVertical: 12 },
+  faqItem: { borderBottomColor: '#E3EAE6', borderBottomWidth: 1, minHeight: 56, justifyContent: 'center', paddingVertical: 16 },
   faqHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
-  faqQuestion: { color: '#1c3828', flex: 1, fontSize: 13, fontWeight: '700' },
-  faqAnswer: { color: '#526a5e', fontSize: 12, lineHeight: 18, marginTop: 8 },
+  faqQuestion: { color: '#121A16', flex: 1, fontSize: 14, fontWeight: '600' },
+  faqAnswer: { color: '#5A6761', fontSize: 14, marginTop: 10 },
 
   // Version
   versionRow: { alignItems: 'center', gap: 6, marginTop: 20, paddingVertical: 4 },
   versionBadge: { alignItems: 'center', backgroundColor: '#e8faf0', borderRadius: 20, flexDirection: 'row', gap: 6, paddingHorizontal: 12, paddingVertical: 6 },
   versionText: { color: '#07815f', fontSize: 11, fontWeight: '800' },
-  versionSub: { color: '#829087', fontSize: 10 },
+  versionSub: { color: '#5A6761', fontSize: 12, textAlign: 'center' },
 
   // Danger zone
-  dangerCard: { alignItems: 'flex-start', backgroundColor: '#fff5f5', borderColor: '#ffd6da', borderRadius: 14, borderWidth: 1, flexDirection: 'row', marginTop: 8, padding: 14 },
-  dangerIcon: { alignItems: 'center', backgroundColor: '#ffe0e3', borderRadius: 10, height: 36, justifyContent: 'center', width: 36 },
-  dangerTitle: { color: '#8b1a27', fontSize: 13, fontWeight: '800' },
-  dangerSubtext: { color: '#b85464', fontSize: 11, lineHeight: 16, marginTop: 4 },
-  dangerButton: { alignItems: 'center', borderColor: '#ffd6da', borderRadius: 12, borderWidth: 1.5, flexDirection: 'row', gap: 8, height: 46, justifyContent: 'center', marginTop: 10 },
-  dangerButtonText: { color: '#e23d4f', fontSize: 13, fontWeight: '800' },
+  dangerCard: { alignItems: 'flex-start', backgroundColor: '#FDECEA', borderRadius: 20, flexDirection: 'row', padding: 16 },
+  dangerIcon: { alignItems: 'center', backgroundColor: '#FBD5D1', borderRadius: 18, height: 36, justifyContent: 'center', width: 36 },
+  dangerTitle: { color: '#B3261E', fontSize: 16, fontWeight: '700' },
+  dangerSubtext: { color: '#B3261E', fontSize: 13, marginTop: 4 },
+  dangerButton: { alignItems: 'center', borderColor: '#B3261E', borderRadius: 16, borderWidth: 1, flexDirection: 'row', gap: 8, minHeight: 52, padding: 12, justifyContent: 'center', marginTop: 12 },
+  dangerButtonText: { color: '#B3261E', fontSize: 16, fontWeight: '700', flexShrink: 1 },
 
   // Change password modal
   cpBackdrop: { backgroundColor: 'rgba(10, 28, 19, 0.45)', flex: 1, justifyContent: 'flex-end' },

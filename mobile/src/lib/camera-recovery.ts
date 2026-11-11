@@ -51,7 +51,8 @@ export async function savePendingCameraContext(context: PendingCameraContext): P
   try {
     await SecureStore.setItemAsync(PENDING_CAMERA_KEY, JSON.stringify(context));
   } catch {
-    // If SecureStore fails, non-blocking fallback
+    // Do not launch a camera activity without a recoverable form snapshot.
+    throw new Error('Unable to save your form before opening the camera. Please try again.');
   }
 }
 

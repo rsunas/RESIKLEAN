@@ -1,5 +1,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import illustration from '../assets/swmo-login-1600.webp';
+import illustrationSmall from '../assets/swmo-login-800.webp';
+import logo from '../assets/resiklean-logo.png';
+import './Login.css';
 
 const API_URL = import.meta.env.VITE_API_URL;
 
@@ -61,32 +65,44 @@ export default function Login() {
   }
 
   return (
-    <main className="auth-page">
-      <form className="auth-card" onSubmit={handleSubmit}>
-        <div className="auth-brand">
-          <img alt="ResiKlean logo" className="auth-brand-logo" src="/swmo-resiklean-logo.svg" />
-        </div>
-        <div className="auth-heading">
-          <p className="eyebrow">ADMIN PORTAL</p>
-          <h1>Welcome back</h1>
+    <main className="login-page">
+      <section className="login-sheet" aria-labelledby="login-title">
+        <img alt="ResiKlean logo" className="login-logo" src={logo} width="1125" height="340" />
+        <form className="login-form" onSubmit={handleSubmit} aria-busy={isSubmitting}>
+        <div className="login-heading">
+          <p className="login-eyebrow">ADMIN PORTAL</p>
+          <h1 id="login-title">Welcome back</h1>
           <p>Sign in to manage collection operations and landfill activity.</p>
         </div>
 
-        <div className="auth-fields">
-          <div className="auth-field">
+        <div className="login-fields">
+          <div className="login-field">
             <label htmlFor="email">Email address</label>
-            <div className="auth-input-wrap"><FieldIcon type="mail" /><input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" placeholder="you@example.com" required /></div>
+            <div className={`login-input-wrap${error ? ' has-error' : ''}`}><FieldIcon type="mail" /><input id="email" name="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" aria-describedby={error ? 'login-error' : undefined} placeholder="you@example.com" required /></div>
           </div>
-          <div className="auth-field">
+          <div className="login-field">
             <label htmlFor="password">Password</label>
-            <div className="auth-input-wrap"><FieldIcon type="lock" /><input id="password" type={isPasswordVisible ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" placeholder="Enter your password" required /><button aria-label={isPasswordVisible ? 'Hide password' : 'Show password'} className="password-toggle" onClick={() => setIsPasswordVisible((visible) => !visible)} type="button"><EyeIcon hidden={isPasswordVisible} /></button></div>
+            <div className={`login-input-wrap login-password-wrap${error ? ' has-error' : ''}`}><FieldIcon type="lock" /><input id="password" name="password" type={isPasswordVisible ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" aria-describedby={error ? 'login-error' : undefined} placeholder="Enter your password" required /><button aria-label={isPasswordVisible ? 'Hide password' : 'Show password'} className="login-password-toggle" onClick={() => setIsPasswordVisible((visible) => !visible)} type="button"><EyeIcon hidden={isPasswordVisible} /></button></div>
           </div>
         </div>
 
-        {error ? <p className="error" role="alert">{error}</p> : null}
-        <button className="auth-submit" type="submit" disabled={isSubmitting}>{isSubmitting ? 'Signing in…' : <span>Sign in <span aria-hidden="true">→</span></span>}</button>
-        <p className="auth-note"><span aria-hidden="true">✦</span> Secure access for authorized SWMO administrators</p>
-      </form>
+        {error ? <p className="login-error" id="login-error" role="alert">{error}</p> : null}
+        <button className="login-submit" type="submit" disabled={isSubmitting}>{isSubmitting ? 'Signing in…' : <><span>Sign in</span><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></>}</button>
+        <p className="login-note"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" /><path d="m8 12 3 3 5-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg><span>Secure access for authorized SWMO administrators</span></p>
+        </form>
+        <footer className="login-footer">Naga City Solid Waste Management</footer>
+      </section>
+      <aside className="login-art" aria-hidden="true">
+        <picture>
+        <source media="(min-width: 1024px)" srcSet={illustration} />
+        <img className="login-illustration" src={illustration} srcSet={`${illustrationSmall} 800w, ${illustration} 1600w`} sizes="(max-width: 1023px) 100vw, calc(100vw - 656px)" width="1600" height="900" alt="" fetchPriority="high" />
+        </picture>
+        <div className="login-art-overlay" />
+        <div className="login-art-caption">
+          <span className="login-art-chip">SWMO · Naga City</span>
+          <h2>Collection operations and landfill activity, in one place.</h2>
+        </div>
+      </aside>
     </main>
   );
 }

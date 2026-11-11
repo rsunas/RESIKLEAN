@@ -13,7 +13,10 @@
     "android": {
       "package": "com.resiklean.mobile",
       "predictiveBackGestureEnabled": false,
-      "largeHeap": true
+      "largeHeap": true,
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "output": "static",

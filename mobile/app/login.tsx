@@ -1,20 +1,24 @@
-import { Feather, MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-icons';
-import { useState } from 'react';
+import { Feather } from 'expo/node_modules/@expo/vector-icons';
+import { Image } from 'expo-image';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
+  Animated,
+  Easing,
+  Keyboard,
   ScrollView,
   StatusBar,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
+import { MotionPressable as Pressable } from '@/components/app-motion';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { AuthField, AuthFooterLink, authStyles } from '@/components/auth-ui';
 import { BrandMark } from '@/components/brand-mark';
+import { AuthColors as C } from '@/constants/theme';
 import { saveSession, type AccountUser } from '@/lib/session';
 
 type Role = 'resident' | 'collector' | 'staff';
@@ -31,11 +35,37 @@ type LoginResponse = {
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
 export default function LoginScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const formOffset = useRef(new Animated.Value(0)).current;
+
+  // Keep the current field in view on compact Android screens without making
+  // the screen manually scrollable. It returns to the original layout on hide.
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', (event) => {
+      const keyboardHeight = event.endCoordinates.height || 250;
+      const lift = Math.min(190, Math.max(128, keyboardHeight * 0.6));
+      Animated.timing(formOffset, {
+        toValue: -lift,
+        duration: 180,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    });
+    const hide = Keyboard.addListener('keyboardDidHide', () => {
+      Animated.timing(formOffset, {
+        toValue: 0,
+        duration: 160,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    });
+    return () => { show.remove(); hide.remove(); };
+  }, [formOffset]);
 
   const handleLogin = async () => {
     if (!API_URL) {
@@ -78,142 +108,68 @@ export default function LoginScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar backgroundColor="#eaf6f3" barStyle="dark-content" />
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.keyboardView}>
-        <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-          <View style={styles.phoneFrame}>
-            <View style={styles.innerCanvas}>
-              <View style={styles.brandArea}>
-                <View style={styles.logoRow}>
-                  <BrandMark height={104} width={190} />
-                </View>
-              </View>
-
-              <View style={styles.formCard}>
-                <Text style={styles.headline}>Welcome back</Text>
-                <Text style={styles.subtext}>Sign in to your ResiKlean account</Text>
-
-                <View style={styles.fieldGroup}>
-                  <Text style={styles.label}>Email Address</Text>
-                  <View style={styles.inputRow}>
-                    <Feather color="#83938a" name="mail" size={19} />
-                    <TextInput
-                      accessibilityLabel="Email Address"
-                      autoCapitalize="none"
-                      autoComplete="email"
-                      keyboardType="email-address"
-                      onChangeText={setEmail}
-                      placeholder="you@example.com"
-                      placeholderTextColor="#8c9b93"
-                      style={styles.input}
-                      value={email}
-                    />
-                  </View>
-                </View>
-
-                <View style={styles.fieldGroup}>
-                  <Text style={styles.label}>Password</Text>
-                  <View style={styles.inputRow}>
-                    <Feather color="#83938a" name="lock" size={19} />
-                    <TextInput
-                      accessibilityLabel="Password"
-                      autoComplete="current-password"
-                      onChangeText={setPassword}
-                      placeholder="Enter your password"
-                      placeholderTextColor="#8c9b93"
-                      secureTextEntry={!isPasswordVisible}
-                      style={styles.input}
-                      value={password}
-                    />
-                    <Pressable
-                      accessibilityLabel={isPasswordVisible ? 'Hide password' : 'Show password'}
-                      accessibilityRole="button"
-                      hitSlop={10}
-                      onPress={() => setIsPasswordVisible((visible) => !visible)}>
-                      <Feather color="#8ca197" name={isPasswordVisible ? 'eye-off' : 'eye'} size={19} />
-                    </Pressable>
-                  </View>
-                </View>
-
-                <Text style={styles.forgotPassword}>Forgot password?</Text>
-                {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
-
-                <Pressable
-                  accessibilityRole="button"
-                  disabled={isSubmitting}
-                  onPress={handleLogin}
-                  style={[styles.button, isSubmitting && styles.buttonDisabled]}>
-                  {isSubmitting ? (
-                    <ActivityIndicator color="#ffffff" />
-                  ) : (
-                    <View style={styles.buttonContent}>
-                      <Text style={styles.buttonText}>Sign In</Text>
-                      <Feather color="#ffffff" name="arrow-right" size={20} />
-                    </View>
-                  )}
-                </Pressable>
-              </View>
-
-              <View style={styles.footer}>
-                <Text style={styles.footerText}>Don't have an account? </Text>
-                <Pressable accessibilityRole="link" onPress={() => router.push('/signup')}>
-                  <Text style={styles.footerLink}>Sign Up</Text>
-                </Pressable>
-              </View>
+    <SafeAreaView edges={['left', 'right']} style={authStyles.page}>
+      <StatusBar backgroundColor="transparent" barStyle="dark-content" />
+      <ScrollView testID="login-scroll" style={authStyles.scroll} scrollEnabled={false}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" automaticallyAdjustContentInsets={false}>
+        <Animated.View style={[styles.keyboardLift, { transform: [{ translateY: formOffset }] }]}>
+          <View testID="login-illustration" style={styles.banner}>
+            <Image source={require('@/assets/images/swmo-login-800.webp')} contentFit="cover"
+              contentPosition={{ left: '14%', top: '50%' }} accessible={false}
+              accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={StyleSheet.absoluteFill} />
+            <LinearGradient colors={['transparent', 'transparent', 'rgba(13,46,39,0.55)']}
+              locations={[0, 0.55, 1]} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }}
+              pointerEvents="none" style={StyleSheet.absoluteFill} />
+            <View style={[styles.chip, { top: insets.top + 20 }]}>
+              <Text style={styles.chipText}>SWMO · Naga City</Text>
             </View>
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
+          <View style={styles.sheet}>
+            <BrandMark height={40} width={132} />
+            <Text accessibilityRole="header" style={styles.title}>Welcome back</Text>
+            <Text style={styles.subtitle}>Sign in to your ResiKlean account</Text>
+            <View style={styles.fields}>
+              <AuthField compact invalid={!!error} label="Email address" icon="mail" accessibilityLabel="Email Address"
+                autoCapitalize="none" autoComplete="email" keyboardType="email-address"
+                onChangeText={setEmail} placeholder="you@example.com" value={email} />
+              <AuthField compact invalid={!!error} label="Password" icon="lock" accessibilityLabel="Password"
+                autoComplete="current-password" onChangeText={setPassword} placeholder="Enter your password"
+                secureTextEntry={!isPasswordVisible} value={password}
+                trailing={<Pressable accessibilityLabel={isPasswordVisible ? 'Hide password' : 'Show password'} accessibilityRole="button"
+                  onPress={() => setIsPasswordVisible((visible) => !visible)} style={authStyles.eye}>
+                  <Feather color={C.muted} name={isPasswordVisible ? 'eye-off' : 'eye'} size={20} />
+                </Pressable>} />
+            </View>
+            {error ? <Text accessibilityRole="alert" style={authStyles.error}>{error}</Text> : null}
+            {/* Existing screen has no reset-password handler or route. Preserve that behavior. */}
+            <Text style={styles.forgotPassword}>Forgot password?</Text>
+            <View testID="login-footer" style={[authStyles.footer, styles.footer, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
+              <Pressable accessibilityRole="button" disabled={isSubmitting} onPress={handleLogin}
+                style={[authStyles.primaryButton, isSubmitting && authStyles.disabled]}>
+                {isSubmitting ? <ActivityIndicator color="#ffffff" /> : <View style={authStyles.buttonContent}>
+                  <Text style={authStyles.buttonText}>Sign In</Text><Feather color="#ffffff" name="arrow-right" size={20} />
+                </View>}
+              </Pressable>
+              <AuthFooterLink text="Don't have an account?" label="Sign Up" onPress={() => router.push('/signup')} />
+            </View>
+          </View>
+        </Animated.View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: '#f4f8f5' },
-  keyboardView: { flex: 1 },
-  scrollContent: { flexGrow: 1, paddingVertical: 16 },
-  phoneFrame: {
-    alignSelf: 'center',
-    maxWidth: 420,
-    width: '100%',
-  },
-  innerCanvas: { minHeight: 640 },
-  brandArea: { paddingHorizontal: 24, paddingTop: 28 },
-  logoRow: { alignItems: 'flex-start', flexDirection: 'row' },
-  formCard: {
-    backgroundColor: '#ffffff',
-    borderRadius: 24,
-    marginHorizontal: 12,
-    marginTop: 22,
-    padding: 24,
-    shadowColor: '#173322',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.09,
-    shadowRadius: 18,
-  },
-  headline: { color: '#11271a', fontSize: 25, fontWeight: '800', letterSpacing: -0.5 },
-  subtext: { color: '#5c7566', fontSize: 14, lineHeight: 20, marginTop: 6 },
-  fieldGroup: { marginTop: 20 },
-  label: { color: '#203c2a', fontSize: 13, fontWeight: '700', marginBottom: 8 },
-  inputRow: {
-    alignItems: 'center',
-    backgroundColor: '#ffffff',
-    borderColor: '#cfddd3',
-    borderRadius: 14,
-    borderWidth: 1,
-    flexDirection: 'row',
-    height: 53,
-    paddingHorizontal: 14,
-  },
-  input: { color: '#173322', flex: 1, fontSize: 15, height: '100%', marginLeft: 11, paddingVertical: 0 },
-  forgotPassword: { alignSelf: 'flex-end', color: '#176b3a', fontSize: 12, fontWeight: '700', marginTop: 14 },
-  error: { color: '#b42318', fontSize: 13, lineHeight: 18, marginTop: 12 },
-  button: { alignItems: 'center', backgroundColor: '#2F8F46', borderRadius: 14, height: 52, justifyContent: 'center', marginTop: 18 },
-  buttonDisabled: { opacity: 0.65 },
-  buttonContent: { alignItems: 'center', flexDirection: 'row', gap: 9 },
-  buttonText: { color: '#ffffff', fontSize: 16, fontWeight: '800' },
-  footer: { alignItems: 'center', flexDirection: 'row', justifyContent: 'center', marginBottom: 27, marginTop: 26 },
-  footerText: { color: '#597062', fontSize: 13 },
-  footerLink: { color: '#176b3a', fontSize: 13, fontWeight: '800' },
+  scrollContent: { flexGrow: 1 },
+  keyboardLift: { flexGrow: 1 },
+  banner: { height: 260, overflow: 'hidden', backgroundColor: '#CFE8DC' },
+  chip: { position: 'absolute', left: 24, maxWidth: '85%', borderRadius: 999, borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)', backgroundColor: 'rgba(255,255,255,0.2)', paddingHorizontal: 14, paddingVertical: 8 },
+  chipText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600', textAlign: 'center' },
+  sheet: { marginTop: -28, borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingTop: 22, paddingHorizontal: 24, backgroundColor: '#FFFFFF', flexGrow: 1 },
+  title: { color: C.ink, fontSize: 28, fontWeight: '700', letterSpacing: -0.56, marginTop: 16 },
+  subtitle: { color: C.muted, fontSize: 15, marginTop: 4 },
+  fields: { marginTop: 18, gap: 12 },
+  footer: { paddingHorizontal: 0, paddingTop: 4 },
+  forgotPassword: { alignSelf: 'flex-end', color: C.darkGreen, fontSize: 14, fontWeight: '600', minHeight: 44, paddingVertical: 10, marginTop: 2, textAlign: 'right' },
 });

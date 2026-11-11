@@ -4,10 +4,11 @@ import * as SQLite from 'expo-sqlite';
 import * as TaskManager from 'expo-task-manager';
 import { AppState, Platform } from 'react-native';
 import { finishDriverTrailSession, recordDriverTrailLocation, startDriverTrailSession } from '@/lib/driver-trail-queue';
+import { getSession } from '@/lib/session';
 
 export const DRIVER_ROUTE_PROXIMITY_TASK = 'resiklean-driver-route-proximity';
-export const ROUTE_ENTER_TOLERANCE_METERS = 45;
-export const ROUTE_EXIT_TOLERANCE_METERS = 65;
+export { ROUTE_ENTER_TOLERANCE_METERS, ROUTE_EXIT_TOLERANCE_METERS } from './route-presence-filter';
+import { emptyPresenceFilter, evaluateRoutePresence, monitoringDay, ROUTE_MAX_FIX_AGE_MS, type PresenceFilter, type PresenceSignal } from './route-presence-filter';
 
 const DATABASE_NAME = 'resiklean-driver-route-tracking.db';
 const EARTH_RADIUS_METERS = 6_371_008.8;
@@ -33,6 +34,8 @@ export type RoutePresenceStatus = {
   accuracyMeters?: number;
   lastCheckedAt?: string;
   lastChangedAt?: string;
+  signal?: PresenceSignal;
+  hasEntered?: boolean;
 };
 
 export type RoutePresenceEvent = {
@@ -113,6 +116,17 @@ const getDatabase = () => {
         );
         CREATE INDEX IF NOT EXISTS driver_route_presence_events_route_idx
           ON driver_route_presence_events (route_id, occurred_at DESC);
+        CREATE TABLE IF NOT EXISTS driver_route_detection (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          filter_json TEXT NOT NULL,
+          signal TEXT NOT NULL,
+          armed_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS driver_route_monitoring_preferences (
+          collector_id TEXT PRIMARY KEY NOT NULL,
+          consent INTEGER,
+          paused_day TEXT
+        );
         CREATE TABLE IF NOT EXISTS driver_assigned_route_cache (
           collector_id TEXT PRIMARY KEY NOT NULL,
           route_json TEXT NOT NULL,
@@ -243,113 +257,118 @@ const emitStatus = (status: RoutePresenceStatus) => {
   statusListeners.forEach((listener) => listener(status));
 };
 
-let presenceProcessingChain: Promise<void> = Promise.resolve();
+// Serialize native batches, foreground samples, setup and teardown. An obsolete
+// batch cannot write into a new route/session after a stop or account change.
+let trackingOperations: Promise<unknown> = Promise.resolve();
+let trackingGeneration = 0;
+let trackingSuppressed = false;
+const serializeTracking = <T,>(work: () => Promise<T>): Promise<T> => {
+  const next = trackingOperations.then(work, work);
+  trackingOperations = next.catch(() => undefined);
+  return next;
+};
 
-const processPresence = async (location: Location.LocationObject) => {
-  const config = await getConfig();
-  if (!config) return;
-
-  const { latitude, longitude, accuracy } = location.coords;
-  const distanceMeters = getDistanceToRouteMeters(latitude, longitude, config.routePath);
-  if (distanceMeters === null) return;
-
-  const current = await getStoredStatus();
-  const wasOnRoute = current.routeId === config.routeId && current.state === 'on_route';
-  const nextState: RoutePresenceState = wasOnRoute
-    ? (distanceMeters > ROUTE_EXIT_TOLERANCE_METERS ? 'off_route' : 'on_route')
-    : (distanceMeters <= ROUTE_ENTER_TOLERANCE_METERS ? 'on_route' : 'off_route');
-  const checkedAt = new Date(location.timestamp || Date.now()).toISOString();
-  const stateChanged = current.routeId === config.routeId && current.state !== 'unknown' && current.state !== nextState;
-  const firstEntry = current.routeId !== config.routeId || current.state === 'unknown';
-  const changedAt = stateChanged || (firstEntry && nextState === 'on_route') ? checkedAt : current.lastChangedAt || null;
+type DetectionRow = { filter_json: string; signal: PresenceSignal; armed_at: number };
+async function readDetection() {
   const database = await getDatabase();
+  const row = await database.getFirstAsync<DetectionRow>('SELECT filter_json, signal, armed_at FROM driver_route_detection WHERE id = 1');
+  let filter = emptyPresenceFilter();
+  try { if (row) filter = JSON.parse(row.filter_json) as PresenceFilter; } catch { /* Reconfirm after damaged local state. */ }
+  return { filter, signal: row?.signal ?? 'confirming' as PresenceSignal, armedAt: row?.armed_at ?? Date.now() };
+}
 
-  await database.runAsync(
-    `INSERT INTO driver_route_presence_state
-       (id, route_id, route_name, state, distance_meters, accuracy_meters, last_checked_at, last_changed_at)
-     VALUES (1, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
-       route_id = excluded.route_id,
-       route_name = excluded.route_name,
-       state = excluded.state,
-       distance_meters = excluded.distance_meters,
-       accuracy_meters = excluded.accuracy_meters,
-       last_checked_at = excluded.last_checked_at,
-       last_changed_at = excluded.last_changed_at`,
-    config.routeId,
-    config.routeName,
-    nextState,
-    distanceMeters,
-    accuracy,
-    checkedAt,
-    changedAt,
-  );
-
-  const targetEventType = nextState === 'on_route' ? 'entered' : 'left';
-  const lastEvent = await database.getFirstAsync<{ event_type: string; occurred_at: string }>(
-    `SELECT event_type, occurred_at FROM driver_route_presence_events
-     WHERE route_id = ?
-     ORDER BY occurred_at DESC, created_at DESC LIMIT 1`,
-    config.routeId,
-  );
-
-  // Strictly prevent duplicate events:
-  // 1. Never insert 'entered' if the last event was already 'entered'.
-  // 2. Never insert 'left' if the last event was already 'left' or if no 'entered' ever occurred.
-  // 3. Debounce rapid bouncing within 15 seconds.
-  const isDuplicate = lastEvent?.event_type === targetEventType;
-  const isLeavingWithoutEntering = targetEventType === 'left' && !lastEvent;
-  const elapsedSinceLastSec = lastEvent?.occurred_at
-    ? (new Date(checkedAt).getTime() - new Date(lastEvent.occurred_at).getTime()) / 1000
-    : Number.POSITIVE_INFINITY;
-  const isRapidBounce = elapsedSinceLastSec < 15;
-
-  const shouldRecordEvent = !isDuplicate
-    && !isLeavingWithoutEntering
-    && !isRapidBounce
-    && (((stateChanged || firstEntry) && nextState === 'on_route') || (stateChanged && nextState === 'off_route'));
-
-  if (shouldRecordEvent) {
-    await database.runAsync(
-      `INSERT INTO driver_route_presence_events
-         (id, route_id, event_type, occurred_at, latitude, longitude, distance_meters, accuracy_meters, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      Crypto.randomUUID(),
-      config.routeId,
-      targetEventType,
-      checkedAt,
-      latitude,
-      longitude,
-      distanceMeters,
-      accuracy,
-      new Date().toISOString(),
+const processPresence = async (location: Location.LocationObject, expected?: { collectorId?: string; routeId: string }) => {
+  const config = await getConfig();
+  if (!config || (expected && (config.collectorId !== expected.collectorId || config.routeId !== expected.routeId))) return;
+  if (trackingSuppressed || !await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK)) return;
+  const session = await getSession();
+  if (!session?.token || session.user.role !== 'collector' || (session.user._id || session.user.id) !== config.collectorId) return;
+  const detection = await readDetection();
+  if (location.timestamp < detection.armedAt) return;
+  const distance = getDistanceToRouteMeters(location.coords.latitude, location.coords.longitude, config.routePath);
+  const result = evaluateRoutePresence(detection.filter, location, distance ?? NaN, Date.now());
+  const database = await getDatabase();
+  const current = await getStoredStatus();
+  const checkedAt = result.accepted ? new Date(location.timestamp).toISOString() : current.lastCheckedAt;
+  const changedAt = result.changed ? checkedAt : current.lastChangedAt;
+  const event = result.changed && result.filter.state === 'on_route' ? 'entered'
+    : result.changed && result.filter.state === 'off_route' && detection.filter.hasEntered ? 'left' : null;
+  await database.withExclusiveTransactionAsync(async (transaction) => {
+    await transaction.runAsync(
+      'INSERT OR REPLACE INTO driver_route_detection (id, filter_json, signal, armed_at) VALUES (1, ?, ?, ?)',
+      JSON.stringify(result.filter), result.signal, detection.armedAt,
     );
+    await transaction.runAsync(
+      `INSERT OR REPLACE INTO driver_route_presence_state
+        (id, route_id, route_name, state, distance_meters, accuracy_meters, last_checked_at, last_changed_at)
+       VALUES (1, ?, ?, ?, ?, ?, ?, ?)`,
+      config.routeId, config.routeName, result.filter.state,
+      result.accepted ? distance : current.distanceMeters ?? null,
+      result.accepted ? location.coords.accuracy : current.accuracyMeters ?? null,
+      checkedAt ?? null, changedAt ?? null,
+    );
+    if (event) {
+      await transaction.runAsync(
+        `INSERT INTO driver_route_presence_events
+          (id, route_id, event_type, occurred_at, latitude, longitude, distance_meters, accuracy_meters, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        Crypto.randomUUID(), config.routeId, event, checkedAt!,
+        location.coords.latitude, location.coords.longitude, distance!, location.coords.accuracy, new Date().toISOString(),
+      );
+    }
+  });
+  // Waiting samples stay local to the detector. Only start the saved trip after
+  // confirmed entry; afterwards keep the valid trail through exits until Stop/Finish.
+  if (result.accepted && result.filter.hasEntered && config.collectorId) {
+    await startDriverTrailSession({ collectorId: config.collectorId, routeId: config.routeId, routeName: config.routeName });
+    await recordDriverTrailLocation(location, config.collectorId);
   }
-
-  const status = await getStoredStatus();
-  emitStatus({ ...status, enabled: true });
+  emitStatus({ ...(await getStoredStatus()), enabled: true, signal: result.signal, hasEntered: result.filter.hasEntered });
 };
 
-const savePresence = (location: Location.LocationObject): Promise<void> => {
-  presenceProcessingChain = presenceProcessingChain
-    .then(() => processPresence(location))
-    .catch((err) => {
-      console.warn('Error in processPresence:', err);
-    });
-  return presenceProcessingChain;
-};
+export function processDriverRouteLocation(location: Location.LocationObject, expected?: { collectorId?: string; routeId: string }, generation = trackingGeneration) {
+  return serializeTracking(async () => {
+    if (generation !== trackingGeneration) return;
+    await processPresence(location, expected);
+  }).catch((error) => { console.warn('Unable to process route location:', error); });
+}
 
 if (Platform.OS !== 'web' && !TaskManager.isTaskDefined(DRIVER_ROUTE_PROXIMITY_TASK)) {
   TaskManager.defineTask(DRIVER_ROUTE_PROXIMITY_TASK, async ({ data, error }) => {
     if (error || !data) return;
-    const locations = (data as { locations?: Location.LocationObject[] }).locations || [];
+    const generation = trackingGeneration;
     const config = await getConfig();
-    for (const location of locations) {
-      await recordDriverTrailLocation(location, config?.collectorId);
+    if (!config) return;
+    const locations = (data as { locations?: Location.LocationObject[] }).locations || [];
+    for (const location of [...locations].sort((left, right) => left.timestamp - right.timestamp)) {
+      await processDriverRouteLocation(location, config, generation);
     }
-    const latestLocation = locations[locations.length - 1];
-    if (latestLocation) await savePresence(latestLocation);
   });
+}
+
+export type RouteMonitoringPreference = { consent: boolean | null; pausedDay: string | null };
+export async function getRouteMonitoringPreference(collectorId: string): Promise<RouteMonitoringPreference> {
+  const database = await getDatabase();
+  const row = await database.getFirstAsync<{ consent: number | null; paused_day: string | null }>(
+    'SELECT consent, paused_day FROM driver_route_monitoring_preferences WHERE collector_id = ?', collectorId,
+  );
+  return { consent: row?.consent == null ? null : Boolean(row.consent), pausedDay: row?.paused_day ?? null };
+}
+export async function setRouteMonitoringConsent(collectorId: string, consent: boolean) {
+  const database = await getDatabase();
+  await database.runAsync(
+    `INSERT INTO driver_route_monitoring_preferences (collector_id, consent, paused_day) VALUES (?, ?, NULL)
+     ON CONFLICT(collector_id) DO UPDATE SET consent = excluded.consent, paused_day = NULL`,
+    collectorId, consent ? 1 : 0,
+  );
+}
+export async function pauseRouteMonitoringToday(collectorId: string) {
+  const database = await getDatabase();
+  await database.runAsync(
+    `INSERT INTO driver_route_monitoring_preferences (collector_id, consent, paused_day) VALUES (?, NULL, ?)
+     ON CONFLICT(collector_id) DO UPDATE SET paused_day = excluded.paused_day`,
+    collectorId, monitoringDay(),
+  );
 }
 
 export async function cacheAssignedRoute(collectorId: string, route: unknown) {
@@ -388,16 +407,13 @@ export async function clearCachedAssignedRoute(collectorId?: string) {
 export async function getRouteProximityStatus(): Promise<RoutePresenceStatus> {
   const status = await getStoredStatus();
   if (Platform.OS === 'web' || !await TaskManager.isAvailableAsync()) return status;
-
   const config = await getConfig();
-  const shouldBeEnabled = config !== null;
-  const isActuallyEnabled = await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK);
-
-  if (shouldBeEnabled && !isActuallyEnabled && AppState.currentState === 'active') {
-    enableRouteProximityTracking(config).catch(() => {});
-  }
-
-  return { ...status, enabled: shouldBeEnabled };
+  const enabled = !trackingSuppressed && Boolean(config) && await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK);
+  const detection = await readDetection();
+  const signal = !status.lastCheckedAt || Date.now() - Date.parse(status.lastCheckedAt) > ROUTE_MAX_FIX_AGE_MS ? 'stale' : detection.signal;
+  // Status reads never restart tracking. Foreground auto-arm checks consent,
+  // today's pause, permissions and the current assignment before doing that.
+  return { ...status, enabled, signal, hasEntered: detection.filter.hasEntered };
 }
 
 export async function getRouteProximityEvents(routeId: string, limit = 6): Promise<RoutePresenceEvent[]> {
@@ -459,79 +475,110 @@ async function persistRouteTrackingConfig({ collectorId, routeId, routeName, rou
   );
 }
 
-export async function enableRouteProximityTracking({ collectorId, routeId, routeName, routePath }: RouteTrackingConfig): Promise<RouteTrackingSetupResult> {
-  if (Platform.OS === 'web') return { enabled: false, message: 'Route monitoring is available only in the Android or iOS app.' };
-  if (!await TaskManager.isAvailableAsync()) return { enabled: false, message: 'Use a rebuilt development app to run route monitoring in the background.' };
-  if (!getRouteLines(routePath).length) return { enabled: false, message: 'This assigned route does not include a valid traced road line yet.' };
+export function enableRouteProximityTracking(config: RouteTrackingConfig, { requestPermissions = true }: { requestPermissions?: boolean } = {}): Promise<RouteTrackingSetupResult> {
+  const generation = trackingGeneration;
+  return serializeTracking(async () => {
+    const cancelled = () => generation !== trackingGeneration;
+    const unavailable = (message: string) => ({ enabled: false, message });
+    const permissionDenied = async (message: string) => {
+      trackingSuppressed = true;
+      const database = await getDatabase();
+      await database.execAsync('DELETE FROM driver_route_tracking_config; DELETE FROM driver_route_detection; DELETE FROM driver_route_presence_state;');
+      await finishDriverTrailSession();
+      if (await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK)) await Location.stopLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK);
+      return unavailable(message);
+    };
+    if (cancelled()) return unavailable('Monitoring was stopped.');
+    if (Platform.OS === 'web') return unavailable('Route monitoring is available only in the Android or iOS app.');
+    if (!await TaskManager.isAvailableAsync()) return unavailable('Use a rebuilt development app to run route monitoring in the background.');
+    if (!config.collectorId || !getRouteLines(config.routePath).length) return unavailable('This assignment needs a valid traced road route before monitoring can start.');
+    if (AppState.currentState !== 'active') return unavailable('Open the app before enabling route monitoring.');
 
-  const alreadyRunning = await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK);
-  await persistRouteTrackingConfig({ collectorId, routeId, routeName, routePath });
-  if (alreadyRunning) {
-    if (collectorId) {
-      await startDriverTrailSession({ collectorId, routeId, routeName });
+    let foreground = await Location.getForegroundPermissionsAsync();
+    if (foreground.status !== 'granted' && requestPermissions) foreground = await Location.requestForegroundPermissionsAsync();
+    if (cancelled()) return unavailable('Monitoring was stopped.');
+    if (foreground.status !== 'granted') return permissionDenied('Location permission is required to monitor your assigned route.');
+    let background = await Location.getBackgroundPermissionsAsync();
+    if (background.status !== 'granted' && requestPermissions) background = await Location.requestBackgroundPermissionsAsync();
+    if (cancelled()) return unavailable('Monitoring was stopped.');
+    if (background.status !== 'granted') return permissionDenied('Allow location all the time in Settings, then enable automatic route monitoring.');
+    if (AppState.currentState !== 'active') return unavailable('Return to the app to start automatic route monitoring.');
+
+    const database = await getDatabase();
+    const previous = await getConfig();
+    const running = await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK);
+    const sameRoute = previous?.collectorId === config.collectorId && previous?.routeId === config.routeId
+      && JSON.stringify(previous?.routePath) === JSON.stringify(config.routePath);
+    try {
+      const existingDetector = await database.getFirstAsync<{ id: number }>('SELECT id FROM driver_route_detection WHERE id = 1');
+      if (!running || !sameRoute || !existingDetector) {
+        await finishDriverTrailSession();
+        await database.execAsync('DELETE FROM driver_route_presence_state; DELETE FROM driver_route_detection;');
+        await database.runAsync(
+          'INSERT INTO driver_route_detection (id, filter_json, signal, armed_at) VALUES (1, ?, ?, ?)',
+          JSON.stringify(emptyPresenceFilter()), 'confirming', Date.now(),
+        );
+      }
+      if (cancelled()) return unavailable('Monitoring was stopped.');
+      trackingSuppressed = false;
+      await persistRouteTrackingConfig(config);
+      if (!running) {
+        await Location.startLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK, {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 5_000,
+          distanceInterval: 0,
+          deferredUpdatesDistance: 0,
+          deferredUpdatesInterval: 5_000,
+          foregroundService: {
+            notificationBody: 'Detecting route entry; your trip is saved after entry, including while minimized or offline.',
+            notificationTitle: 'ResiKlean automatic route monitoring',
+            killServiceOnDestroy: false,
+          },
+          pausesUpdatesAutomatically: false,
+          showsBackgroundLocationIndicator: true,
+        });
+      }
+      if (cancelled()) return unavailable('Monitoring was stopped.');
+      // Do not await a processing operation while holding its serialization slot.
+      void Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High })
+        .then(location => processDriverRouteLocation(location, config, generation)).catch(() => {});
+      emitStatus({ ...(await getStoredStatus()), routeId: config.routeId, routeName: config.routeName, enabled: true, signal: (await readDetection()).signal });
+      return { enabled: true, message: 'Automatic detection is on. Waiting for confirmed route entry.' };
+    } catch {
+      await database.execAsync('DELETE FROM driver_route_tracking_config; DELETE FROM driver_route_detection; DELETE FROM driver_route_presence_state;');
+      await finishDriverTrailSession();
+      if (await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK)) {
+        await Location.stopLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK);
+      }
+      return unavailable('Android could not start route monitoring. Open the app and try Enable again.');
     }
-    Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }).then(savePresence).catch(() => {});
-    return { enabled: true, message: `Monitoring the assigned road route within ${ROUTE_ENTER_TOLERANCE_METERS} m.` };
-  }
-
-  // Android cannot start its foreground location service while the app is in
-  // the background. The task will continue running if it was already started;
-  // a new start must wait until the user brings the app back to the foreground.
-  if (AppState.currentState !== 'active') {
-    return { enabled: false, message: 'Open the app before enabling route monitoring.' };
-  }
-
-  const foreground = await Location.requestForegroundPermissionsAsync();
-  if (foreground.status !== 'granted') return { enabled: false, message: 'Location permission is required to monitor your assigned route.' };
-
-  const background = await Location.requestBackgroundPermissionsAsync();
-  if (background.status !== 'granted') return { enabled: false, message: 'Allow location all the time in Settings to monitor your route in the background.' };
-
-  try {
-    await Location.startLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK, {
-      accuracy: Location.Accuracy.High,
-      deferredUpdatesDistance: 20,
-      deferredUpdatesInterval: 15_000,
-      distanceInterval: 20,
-      foregroundService: {
-        notificationBody: 'Monitoring your distance from the assigned collection route.',
-        notificationTitle: 'ResiKlean route monitoring',
-      },
-      pausesUpdatesAutomatically: false,
-    });
-  } catch {
-    return { enabled: false, message: 'Android could not start route monitoring. Open the app and try Enable again.' };
-  }
-
-  if (collectorId) {
-    await startDriverTrailSession({ collectorId, routeId, routeName });
-  }
-
-  Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }).then(savePresence).catch(() => {});
-
-  return { enabled: true, message: `Monitoring the assigned road route within ${ROUTE_ENTER_TOLERANCE_METERS} m.` };
+  });
 }
 
 export async function updateRouteProximityTracking(config: RouteTrackingConfig) {
+  const generation = trackingGeneration;
   const status = await getRouteProximityStatus();
-  if (!status.enabled) return false;
-  const result = await enableRouteProximityTracking(config);
+  if (!status.enabled || generation !== trackingGeneration || trackingSuppressed) return false;
+  const result = await enableRouteProximityTracking(config, { requestPermissions: false });
   return result.enabled;
 }
 
-export async function stopRouteProximityTracking({ forgetConfiguration = false }: { forgetConfiguration?: boolean } = {}) {
-  await finishDriverTrailSession();
-  if (Platform.OS !== 'web' && await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK)) {
-    await Location.stopLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK);
-  }
-
-  if (forgetConfiguration) {
+export function stopRouteProximityTracking({ forgetConfiguration = false }: { forgetConfiguration?: boolean } = {}) {
+  // Invalidate pending permission/setup work and already-delivered location batches.
+  trackingGeneration += 1;
+  trackingSuppressed = true;
+  return serializeTracking(async () => {
     const database = await getDatabase();
-    await database.execAsync(`
-      DELETE FROM driver_route_tracking_config;
-      DELETE FROM driver_route_presence_state;
-    `);
-  }
+    // Delete the live configuration even if native teardown fails: no more points
+    // can be recorded, and a status poll cannot silently restart the service.
+    await database.execAsync('DELETE FROM driver_route_tracking_config; DELETE FROM driver_route_detection;');
+    if (forgetConfiguration) await database.execAsync('DELETE FROM driver_route_presence_state;');
+    await finishDriverTrailSession();
+    if (Platform.OS !== 'web' && await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK)) {
+      await Location.stopLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK);
+    }
+    emitStatus({ enabled: false, state: 'unknown' });
+  });
 }
 
 export async function clearRouteProximityEvents(routeId?: string) {

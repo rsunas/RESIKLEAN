@@ -5,6 +5,8 @@ import { AppText as Text } from '@/components/app-text';
 import type { CollectionLocationOption } from '@/types/resident-schedule';
 
 type BarangayPickerProps = {
+  appearance?: 'default' | 'auth';
+  invalid?: boolean;
   value: string;
   onChange: (barangay: string) => void;
 };
@@ -17,7 +19,7 @@ type LocationsResponse = {
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 
-export function BarangayPicker({ value, onChange }: BarangayPickerProps) {
+export function BarangayPicker({ value, onChange, appearance = 'default', invalid = false }: BarangayPickerProps) {
   const [locations, setLocations] = useState<CollectionLocationOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -53,6 +55,9 @@ export function BarangayPicker({ value, onChange }: BarangayPickerProps) {
   return (
     <View>
       <AppSelect
+        appearance={appearance}
+        invalid={invalid}
+        leadingIcon={appearance === 'auth' ? 'map-pin' : undefined}
         disabled={isLoading || Boolean(error) || locations.length === 0}
         onChange={onChange}
         options={locations.map((location) => ({ description: `${location.area} · ${location.type}`, label: location.name, value: location.name }))}
