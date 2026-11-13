@@ -109,11 +109,13 @@ const fixtures = [];
 for (const reduced of [false, true]) {
   const calls = [];
   const Skeleton = props => { calls.push(props); return props.isLoading === false ? props.children : React.createElement(RN.View, { style: props.style }); };
-  const SkeletonGroup = props => { calls.push(props); return React.createElement(RN.View, null, props.children); };
-  SkeletonGroup.Item = props => React.createElement(RN.View, { style: props.style, dataSet: { block: true } });
-  const context = { React, View: RN.View, styles, Skeleton, SkeletonGroup, animation: {}, useSkeletonMotion: () => reduced, useRef: () => ({ current: false }), useEffect: () => {} };
+  const requiredGroup = React.createContext(false);
+  const SkeletonGroup = props => { calls.push(props); return React.createElement(requiredGroup.Provider, {value:true}, React.createElement(RN.View, null, props.children)); };
+  SkeletonGroup.Item = props => { if (!React.useContext(requiredGroup)) throw new Error('SkeletonGroup.Item requires a group'); return React.createElement(RN.View, { style: props.style, dataSet: { block: true } }); };
+  const context = { InSkeletonGroup: React.createContext(false), useContext: React.useContext, React, View: RN.View, styles, Skeleton, SkeletonGroup, animation: {}, useSkeletonMotion: () => reduced, useRef: () => ({ current: false }), useEffect: () => {} };
   for (const name of ['SkeletonBlock', 'SkeletonRow', 'SkeletonRows', 'SkeletonRegion']) context[name] = evaluate(declarations.get(name), context);
   contexts.push(context);
+  test('standalone chat loading blocks do not require a group', () => { renderToStaticMarkup(React.createElement(context.SkeletonBlock, {height:26})); renderToStaticMarkup(React.createElement(context.SkeletonRows, {kind:'chat',count:3})); });
   test(`accessibility and ${reduced ? 'reduced' : 'normal'} motion`, () => {
     const tree = context.SkeletonRegion({ state: { pending: true, visible: true }, placeholder: React.createElement(context.SkeletonBlock, { height: 100 }) });
     assert.equal(tree.props.accessibilityLabel, 'Loading'); assert.equal(tree.props.accessibilityState.busy, true);

@@ -1,10 +1,13 @@
-import { Button, Card, Chip, Input } from '@heroui/react';
+import { Button, Card, Chip } from '@heroui/react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { io } from 'socket.io-client';
 import { createPortal } from 'react-dom';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import PageHeader from '../components/PageHeader.jsx';
+import ComplaintQueueView from '../components/ComplaintQueueView.jsx';
+import AccountModal from '../components/AccountModal.jsx';
+import { NotificationNav, SidebarAccount } from '../components/SidebarUtilities.jsx';
 import AppSelect from '../components/AppSelect.jsx';
 import TruckManagementPanel from '../components/TruckManagementPanel.jsx';
 import RouteManagementPanel from '../components/RouteManagementPanel.jsx';
@@ -325,7 +328,7 @@ function ComplaintDetailsModal({ complaint, onClose }) {
   );
 }
 
-function ComplaintInbox({ complaints, selectedComplaint, onSelect, onStatusChange, realtimeMessagesByReport, token }) {
+function ComplaintInbox({ complaints, selectedComplaint, onSelect, onStatusChange, realtimeMessagesByReport, token, loading, connected }) {
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [messages, setMessages] = useState([]);
@@ -409,37 +412,7 @@ function ComplaintInbox({ complaints, selectedComplaint, onSelect, onStatusChang
     }
   };
 
-  return <Card className="complaint-inbox-card">
-    <aside className="complaint-inbox-list">
-      <div className="complaint-inbox-search"><Icon name="search" size={17} /><Input aria-label="Search complaints" onChange={(event) => setQuery(event.target.value)} placeholder="Search complaints..." value={query} /><AppSelect aria-label="Filter complaints by status" onChange={setStatusFilter} options={[{ label: 'All statuses', value: 'all' }, { label: 'Pending', value: 'pending' }, { label: 'Verified', value: 'verified' }, { label: 'Resolved', value: 'resolved' }, { label: 'Rejected', value: 'rejected' }]} value={statusFilter} /></div>
-      <div className="complaint-inbox-items">
-        {filteredComplaints.length ? filteredComplaints.map((complaint) => {
-          const itemReport = complaint.report || complaint;
-          const itemReporter = itemReport.residentId?.name || complaint.reporter || 'Resident';
-          const itemPhoto = itemReport.photoUrl || complaint.photoUrl;
-          return <button className={`complaint-inbox-item ${activeComplaint?.id === complaint.id ? 'is-selected' : ''}`} key={complaint.id} onClick={() => onSelect(complaint)} type="button">
-            {itemPhoto ? <img alt="" className="complaint-inbox-avatar complaint-inbox-photo" src={itemPhoto} /> : <span className="complaint-inbox-avatar">{initials(itemReporter)}</span>}
-            <span className="complaint-inbox-copy"><strong>{itemReporter}</strong><b>{complaint.street}</b><small>{itemReport.description || `${complaint.bags} detected · ${complaint.time}`}</small></span>
-            <span className="complaint-inbox-meta"><time>{complaint.time}</time><span className={`complaint-unread-dot status-${complaint.status}`} /></span>
-          </button>;
-        }) : <p className="complaint-inbox-empty">No complaints found.</p>}
-      </div>
-    </aside>
-    <section className="complaint-conversation">
-      {activeComplaint ? <>
-        <header className="complaint-conversation-header"><div className="complaint-conversation-person"><span className="complaint-inbox-avatar">{initials(reporter)}</span><div><strong>{reporter}</strong><span>{activeComplaint.street}</span></div></div><StatusChip status={status} /></header>
-        <div className="complaint-conversation-body">
-          <p className="complaint-conversation-date">{formatReportDate(report.createdAt || activeComplaint.date)}</p>
-          <div className="complaint-message-row"><span className="complaint-inbox-avatar">{initials(reporter)}</span><div className="complaint-message-bubble"><p>{report.description || `Missed collection reported at ${activeComplaint.street}.`}</p><span>{activeComplaint.time} · {activeComplaint.bags} detected</span></div></div>
-          {photoUrl ? <img alt={`Submitted complaint from ${reporter}`} className="complaint-conversation-photo" src={photoUrl} /> : <div className="complaint-conversation-no-photo"><Icon name="image" size={19} /><span>No submitted photo available</span></div>}
-          <div className="complaint-conversation-details"><div><span>Location</span><strong>{report.barangay || 'Location not recorded'}</strong></div><div><span>Email</span><strong>{report.residentId?.email || 'Not available'}</strong></div><div><span>AI verification</span><strong>{report.aiVerified ? 'Verified' : 'Not verified'}</strong></div></div>
-          {report.photoMetadata ? <div className="complaint-photo-metadata"><span>Photo metadata</span><strong>{report.photoMetadata.capturedAt ? `Captured ${formatReportDate(report.photoMetadata.capturedAt)}` : 'Capture time unavailable'}{report.photoMetadata.latitude != null && report.photoMetadata.longitude != null ? ` · GPS ${Number(report.photoMetadata.latitude).toFixed(5)}, ${Number(report.photoMetadata.longitude).toFixed(5)}` : ''}{report.photoMetadata.width && report.photoMetadata.height ? ` · ${report.photoMetadata.width} × ${report.photoMetadata.height}px` : ''}</strong></div> : null}
-          <div className="complaint-chat-thread"><div className="complaint-chat-heading"><strong>Conversation</strong><span>{isLoadingMessages ? 'Loading…' : 'Live updates'}</span></div><div className="complaint-chat-messages"><div className="complaint-chat-message complaint-chat-message-resident"><strong>{reporter}</strong><p>{report.description || `Missed collection reported at ${activeComplaint.street}.`}</p><time>{formatReportDate(report.createdAt || activeComplaint.date)}</time></div>{messages.map((message) => <div className={`complaint-chat-message ${message.senderRole === 'resident' ? 'complaint-chat-message-resident' : 'complaint-chat-message-admin'}`} key={message._id}><strong>{message.senderId?.name || (message.senderRole === 'resident' ? reporter : message.senderRole === 'collector' ? 'Driver' : 'SWMO Support')}</strong><p>{message.body}</p>{message.photoUrl ? <img alt="Driver resolution proof" className="complaint-chat-photo" src={message.photoUrl} /> : null}<time>{formatReportDate(message.createdAt)}</time></div>)}</div>{messageError ? <p className="feedback error-feedback">{messageError}</p> : null}<form className="complaint-chat-form" onSubmit={sendMessage}><input aria-label="Message resident" maxLength={1000} onChange={(event) => setMessageDraft(event.target.value)} placeholder="Write a reply…" value={messageDraft} /><button disabled={isSendingMessage || !messageDraft.trim()} type="submit">{isSendingMessage ? 'Sending…' : 'Send'}</button></form></div>
-        </div>
-        <footer className="complaint-conversation-footer"><label>Update complaint status<AppSelect aria-label={`Update ${activeComplaint.street} status`} className={`complaint-status status-${status}`} onChange={(nextStatus) => onStatusChange(activeComplaint.id, nextStatus)} options={[{ label: 'Pending', value: 'pending' }, { label: 'Verified', value: 'verified' }, { label: 'Resolved', value: 'resolved' }, { label: 'Rejected', value: 'rejected' }]} value={status} /></label></footer>
-      </> : <div className="complaint-conversation-empty"><span><Icon name="inbox" size={24} /></span><h3>Nothing open</h3><p>Pick a complaint from the inbox to read it here.</p></div>}
-    </section>
-  </Card>;
+  return <ComplaintQueueView {...{ filteredComplaints, activeComplaint, report, reporter, status, photoUrl, query, setQuery, statusFilter, setStatusFilter, onSelect, onStatusChange, messages, messageDraft, setMessageDraft, isLoadingMessages, isSendingMessage, messageError, sendMessage, loading, connected }} formatDate={formatReportDate} />;
 }
 
 function LogoutConfirmation({ onCancel, onConfirm }) {
@@ -532,6 +505,7 @@ export default function Dashboard() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const socketRef = useRef(null);
+  const [complaintsConnected, setComplaintsConnected] = useState(false);
   const [realtimeMessagesByReport, setRealtimeMessagesByReport] = useState({});
   const [apiData, setApiData] = useState({ users: null, routes: null, reports: null, loads: null, tonnage: null, compliance: null, usingPlaceholder: true });
 
@@ -569,10 +543,31 @@ export default function Dashboard() {
   useEffect(() => { void refreshDashboard(); }, [refreshDashboard]);
 
   useEffect(() => {
+    if (!token || !API_URL) return undefined;
+    let active = true;
+    const refreshAccounts = async () => {
+      if (document.visibilityState === 'hidden') return;
+      try {
+        const response = await fetch(`${API_URL.replace(/\/$/, '')}/admin/users`, { headers: { Authorization: `Bearer ${token}` } });
+        const result = await response.json();
+        if (active && response.ok && result.success) setApiData(current => ({ ...current, users: result.data?.users || [] }));
+      } catch { /* Retain the last account list while offline. */ }
+    };
+    window.addEventListener('focus', refreshAccounts);
+    const timer = window.setInterval(refreshAccounts, 30000);
+    return () => { active = false; window.clearInterval(timer); window.removeEventListener('focus', refreshAccounts); };
+  }, [token]);
+
+
+  useEffect(() => {
     if (!token || !SOCKET_URL) return undefined;
 
     const socket = io(SOCKET_URL, { auth: { token } });
     socketRef.current = socket;
+    const markConnected = () => setComplaintsConnected(true);
+    const markDisconnected = () => setComplaintsConnected(false);
+    socket.on('connect', markConnected);
+    socket.on('disconnect', markDisconnected);
 
     const handleComplaintEvent = (payload) => {
       const reportId = normalizeId(payload?.report?._id || payload?.reportId);
@@ -601,6 +596,9 @@ export default function Dashboard() {
     socket.on('complaint:message-created', handleMessageEvent);
 
     return () => {
+      socket.off('connect', markConnected);
+      socket.off('disconnect', markDisconnected);
+      setComplaintsConnected(false);
       socket.off('complaint:created', handleComplaintEvent);
       socket.off('complaint:status-updated', handleComplaintEvent);
       socket.off('complaint:message-created', handleMessageEvent);
@@ -733,8 +731,8 @@ export default function Dashboard() {
 
   const accountRows = useMemo(() => {
     if (!apiData.users?.length) return [...createdAccounts, ...PLACEHOLDER_ACCOUNTS];
-    return [...createdAccounts, ...apiData.users.filter((user) => ['collector', 'staff'].includes(user.role)).map((user) => ({ id: user._id, name: user.name, role: user.role, area: user.barangay || 'Not assigned', contact: user.contact || '—', email: user.email, profilePhotoUrl: user.profilePhotoUrl || '' }))];
-  }, [apiData.users, createdAccounts]);
+    return [...createdAccounts.filter(account => !apiData.users.some(user => user._id === account.id)), ...apiData.users.filter((user) => ['collector', 'staff'].includes(user.role)).map((user) => ({ id: user._id, name: user.name, role: user.role, area: (apiData.routes || []).filter((route) => normalizeId(route.collectorId) === user._id).map(routeAreaCode).join(', ') || 'Not assigned', contact: user.phone ?? user.contact ?? '—', email: user.email, profilePhotoUrl: user.profilePhotoUrl || '' }))];
+  }, [apiData.users, apiData.routes, createdAccounts]);
 
   const filteredAccountRows = useMemo(() => {
     const query = accountQuery.trim().toLowerCase();
@@ -930,38 +928,6 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    if (!showAccountForm) return undefined;
-
-    const body = document.querySelector('.account-modal form .modal-body');
-    if (!body || body.querySelector('[data-account-photo-field]')) return undefined;
-
-    const field = document.createElement('label');
-    field.dataset.accountPhotoField = 'true';
-    field.textContent = 'Profile picture';
-
-    const picker = document.createElement('div');
-    picker.className = 'account-photo-picker';
-    const input = document.createElement('input');
-    input.accept = 'image/jpeg,image/png,image/webp';
-    input.className = 'account-photo-input';
-    input.type = 'file';
-    input.addEventListener('change', () => {
-      const file = input.files?.[0] || null;
-      if (file && file.size > 5 * 1024 * 1024) {
-        setSubmissionState({ loading: false, error: 'Profile picture must be 5 MB or smaller.', message: '' });
-        input.value = '';
-        return;
-      }
-      setNewAccount((current) => ({ ...current, avatarFile: file, avatarPreview: file ? URL.createObjectURL(file) : '' }));
-    });
-    picker.appendChild(input);
-    field.appendChild(picker);
-    body.insertBefore(field, body.querySelector('.field-note'));
-
-    return () => field.remove();
-  }, [showAccountForm]);
-
-  useEffect(() => {
     if (!selectedActivity?.backPhotoUrl || typeof document === 'undefined') return undefined;
     const body = document.querySelector('.activity-detail-modal .activity-detail-body');
     const original = body?.querySelector('.activity-detail-photo');
@@ -1014,7 +980,7 @@ export default function Dashboard() {
     mobileBackdrop.setAttribute('aria-label', 'Close navigation');
 
     const setNavigationLabels = () => {
-      sidebar.querySelectorAll('.nav-link, .signout-button').forEach((button) => {
+      sidebar.querySelectorAll('[data-page-link]').forEach((button) => {
         const label = button.textContent?.trim();
         if (label) {
           button.setAttribute('aria-label', label);
@@ -1029,7 +995,7 @@ export default function Dashboard() {
     control.addEventListener('click', toggleSidebar);
     mobileControl.addEventListener('click', toggleMobileSidebar);
     mobileBackdrop.addEventListener('click', closeMobileSidebar);
-    sidebar.querySelectorAll('.nav-link, .signout-button').forEach((button) => button.addEventListener('click', closeMobileSidebar));
+    sidebar.querySelectorAll('[data-page-link]').forEach((button) => button.addEventListener('click', closeMobileSidebar));
     document.body.append(control, mobileControl, mobileBackdrop);
     setNavigationLabels();
 
@@ -1037,7 +1003,7 @@ export default function Dashboard() {
       control.removeEventListener('click', toggleSidebar);
       mobileControl.removeEventListener('click', toggleMobileSidebar);
       mobileBackdrop.removeEventListener('click', closeMobileSidebar);
-      sidebar.querySelectorAll('.nav-link, .signout-button').forEach((button) => button.removeEventListener('click', closeMobileSidebar));
+      sidebar.querySelectorAll('[data-page-link]').forEach((button) => button.removeEventListener('click', closeMobileSidebar));
       control.remove();
       mobileControl.remove();
       mobileBackdrop.remove();
@@ -1193,11 +1159,12 @@ export default function Dashboard() {
 
   const complaints = <><PageHeader title="Complaint queue" />{complaintUpdateError ? <p className="feedback error-feedback">{complaintUpdateError}</p> : null}<div className="complaint-list">{complaintRows.map((complaint) => <Card className="complaint-card" key={complaint.id}><div className="complaint-art">{complaint.report?.photoUrl || complaint.photoUrl ? <img alt={`Submitted complaint for ${complaint.street}`} src={complaint.report?.photoUrl || complaint.photoUrl} /> : <Icon name="alert" size={24} />}</div><div className="complaint-main"><h3>{complaint.street}</h3><p>{complaint.bags} detected · {complaint.time}</p><button className="complaint-details-button" onClick={() => setSelectedComplaint(complaint)} type="button">View details <Icon name="arrow" size={14} /></button></div><div className="complaint-meta"><span>Date</span><strong>{complaint.date}</strong></div><div className="complaint-meta"><span>Reported by</span><strong>{complaint.reporter}</strong></div><AppSelect aria-label={`Update ${complaint.street} status`} className={`complaint-status status-${complaint.status}`} onChange={(nextStatus) => updateComplaintStatus(complaint.id, nextStatus)} options={[{ label: 'Pending', value: 'pending' }, { label: 'Verified', value: 'verified' }, { label: 'Resolved', value: 'resolved' }, { label: 'Rejected', value: 'rejected' }]} value={complaint.status} /></Card>)}</div>{selectedComplaint ? <ComplaintDetailsModal complaint={selectedComplaint} onClose={() => setSelectedComplaint(null)} /> : null}</>;
 
-  const complaintInbox = <><PageHeader title="Complaint queue" />{complaintUpdateError ? <p className="feedback error-feedback">{complaintUpdateError}</p> : null}<ComplaintInbox complaints={complaintRows} onSelect={setSelectedComplaint} onStatusChange={updateComplaintStatus} realtimeMessagesByReport={realtimeMessagesByReport} selectedComplaint={selectedComplaint} token={token} /></>;
+  const complaintInbox = <><PageHeader title="Complaint queue" />{complaintUpdateError ? <p className="feedback error-feedback">{complaintUpdateError}</p> : null}<ComplaintInbox loading={isRefreshing && apiData.reports === null} connected={complaintsConnected} complaints={complaintRows} onSelect={setSelectedComplaint} onStatusChange={updateComplaintStatus} realtimeMessagesByReport={realtimeMessagesByReport} selectedComplaint={selectedComplaint} token={token} /></>;
 
   const activityDateRangeInvalid = Boolean(activityDateFrom && activityDateTo && activityDateFrom > activityDateTo);
-  const activity = <><ActivityToolbar area={activityArea} areas={activityAreas} from={activityDateFrom} invalidRange={activityDateRangeInvalid} onAreaChange={setActivityArea} onClear={() => { setActivityQuery(''); setActivityArea('all'); setActivityDateFrom(''); setActivityDateTo(''); }} onFromChange={setActivityDateFrom} onQueryChange={setActivityQuery} onToChange={setActivityDateTo} query={activityQuery} to={activityDateTo} />
+  const activity = <>
     <PageHeader action={<Button className="outline-button" isDisabled={isRefreshing} onPress={refreshDashboard} variant="secondary">{isRefreshing ? 'Refreshing…' : 'Refresh data'}</Button>} description={apiData.usingPlaceholder ? 'Sample activity while the admin API is unavailable' : `${totalLoads} recorded truckload${totalLoads === 1 ? '' : 's'} · click a submission to view its audit photo`} title="Staff activity log" />
+    <ActivityToolbar area={activityArea} areas={activityAreas} from={activityDateFrom} invalidRange={activityDateRangeInvalid} onAreaChange={setActivityArea} onClear={() => { setActivityQuery(''); setActivityArea('all'); setActivityDateFrom(''); setActivityDateTo(''); }} onFromChange={setActivityDateFrom} onQueryChange={setActivityQuery} onToChange={setActivityDateTo} query={activityQuery} to={activityDateTo} />
     <Card className="table-card staff-activity-card"><div className="table-scroll"><table className="standard-data-table admin-data-table"><thead><tr><th>Staff submitted</th><th>Date submitted</th><th>Area</th><th>L (m)</th><th>W (m)</th><th>H (m)</th><th>Slope</th><th>Tonnage</th></tr></thead><tbody>{activityDateRangeInvalid ? <tr><td className="empty-cell" colSpan={8}>Choose a valid date range.</td></tr> : filteredActivityRows.length ? filteredActivityRows.map((row) => <tr aria-label={`View truckload from ${row.area}`} className="activity-row" key={row.id} onClick={() => row.photoUrl || row.notes ? setSelectedActivity(row) : null} onKeyDown={(event) => { if ((event.key === 'Enter' || event.key === ' ') && (row.photoUrl || row.notes)) { event.preventDefault(); setSelectedActivity(row); } }} tabIndex={row.photoUrl || row.notes ? 0 : undefined}><td><strong>{row.driver}</strong></td><td>{row.date}</td><td>{row.area}</td><td>{row.length}</td><td>{row.width}</td><td>{row.height}</td><td>{row.slope}</td><td className="tonnage-cell">{row.tonnage}</td></tr>) : <tr><td className="empty-cell" colSpan={8}>No submitted truckloads match the current filters.</td></tr>}</tbody></table></div></Card>
   </>;
 
@@ -1210,8 +1177,8 @@ export default function Dashboard() {
 
   const routeHistorySearch = <RouteHistorySearchPortal><label className="route-history-search-wrapper"><Icon name="search" size={17} /><input aria-label="Search route history" onChange={(event) => setRhQuery(event.target.value)} placeholder="Search area, street, collector, or truck" type="search" value={rhQuery} /></label></RouteHistorySearchPortal>;
   const accountsToolbar = <AccountsToolbarPortal><div className="accounts-toolbar"><NavigationTools page="accounts" /><Button className="primary-button accounts-action-button" onPress={() => { setSubmissionState({ loading: false, error: '', message: '' }); setShowAccountForm(true); }}><Icon name="plus" size={16} />Add account</Button></div></AccountsToolbarPortal>;
-  const pageContent = { overview, routes: <>{routeHistorySearch}{routeHistory}</>, complaints: complaintInbox, activity, 'manage-routes': manageRoutes, assignments, accounts: <>{accountsToolbar}{accountPage}</>, trucks }[activePage];
-  return <main className="admin-shell"><aside className="admin-sidebar"><div className="brand"><img alt="ResiKlean logo" className="brand-logo" src="/swmo-resiklean-logo.svg" /></div><nav>{NAV_ITEMS.map((item) => <button aria-current={activePage === item.id ? 'page' : undefined} className={activePage === item.id ? 'nav-link active' : 'nav-link'} key={item.id} onClick={() => selectPage(item.id)}><Icon name={item.icon} />{item.label}</button>)}</nav><button className="signout-button" onClick={() => setShowLogoutConfirm(true)}><Icon name="logout" />Sign out</button></aside><section className="admin-workspace"><header className="topbar"><div className="topbar-actions"><button aria-label="Notifications" className="notification-button"><Icon name="bell" size={19} /><i /></button><div className="topbar-avatar">{initials(storedUser.name || 'Admin')}</div><strong className="admin-name">{storedUser.name || 'Admin'}</strong></div></header><section className="dashboard-content">{apiData.usingPlaceholder ? <p className="data-note">Live dashboard data is unavailable. Sample records are shown for the tables; the tonnage chart intentionally stays empty.</p> : null}{pageContent}</section></section>{showAccountForm ? <div className="modal-layer" role="presentation"><div aria-modal="true" className="account-modal" role="dialog"><form onSubmit={createAccount}><div className="modal-header"><div><p className="eyebrow">Account management</p><h2>Add new account</h2></div><button aria-label="Close account form" onClick={() => setShowAccountForm(false)} type="button">×</button></div><div className="modal-body"><label>Full name<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, name: event.target.value }))} placeholder="e.g. Juan dela Cruz" required value={newAccount.name} /></label><label>Contact number<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, contact: event.target.value }))} placeholder="09XXXXXXXXX" value={newAccount.contact} /></label><label>Email address<Input fullWidth onChange={(event) => setNewAccount((current) => ({ ...current, email: event.target.value }))} placeholder="user@nagacity.gov.ph" value={newAccount.email} /></label><label>Temporary password<Input fullWidth minLength="6" onChange={(event) => setNewAccount((current) => ({ ...current, password: event.target.value }))} placeholder="At least 6 characters" required type="password" value={newAccount.password} /></label><label>Role<select onChange={(event) => setNewAccount((current) => ({ ...current, role: event.target.value }))} value={newAccount.role}><option value="collector">Collector</option><option value="staff">Staff</option></select></label><p className="field-note">Contact number is dashboard-only until the backend stores it.</p>{submissionState.error ? <p className="feedback error-feedback">{submissionState.error}</p> : null}</div><div className="modal-footer"><Button className="outline-button" onPress={() => setShowAccountForm(false)} type="button" variant="secondary">Cancel</Button><Button className="primary-button" isDisabled={submissionState.loading} type="submit">{submissionState.loading ? 'Creating…' : 'Create account'}</Button></div></form></div></div> : null}{selectedActivity ? <div className="modal-layer" onClick={() => setSelectedActivity(null)} role="presentation"><div aria-modal="true" className="activity-detail-modal" onClick={(event) => event.stopPropagation()} role="dialog"><div className="modal-header"><div><p className="eyebrow">Landfill operations</p><h2>Truckload submission</h2></div><button aria-label="Close truckload details" onClick={() => setSelectedActivity(null)} type="button">×</button></div><div className="activity-detail-body">{selectedActivity.photoUrl ? <img alt={`Audit photo for ${selectedActivity.area}`} className="activity-detail-photo" src={selectedActivity.photoUrl} /> : <div className="activity-photo-empty"><Icon name="image" size={28} /><p>No audit photo available</p></div>}<div className="activity-detail-grid"><div><span>Area</span><strong>{selectedActivity.area}</strong></div><div><span>Staff</span><strong>{selectedActivity.driver}</strong></div><div><span>Truck</span><strong>{selectedActivity.truckPlate}</strong></div><div><span>Submitted</span><strong>{selectedActivity.date} · {selectedActivity.time}</strong></div><div><span>Measurements</span><strong>{selectedActivity.length} m × {selectedActivity.width} m × {selectedActivity.height} m</strong></div><div><span>Slope</span><strong>{selectedActivity.slope}</strong></div><div><span>Estimated tonnage</span><strong className="tonnage-cell">{selectedActivity.tonnage}</strong></div></div>{selectedActivity.notes ? <div className="activity-detail-notes"><span>Notes</span><p>{selectedActivity.notes}</p></div> : null}</div><div className="modal-footer"><Button className="outline-button" onPress={() => setSelectedActivity(null)} type="button" variant="secondary">Close</Button></div></div></div> : null}{isRouteHistoryDetailVisible ? (() => {
+  const pageContent = { overview, routes: <>{routeHistorySearch}{routeHistory}</>, complaints: complaintInbox, activity, 'manage-routes': manageRoutes, assignments, accounts: <><PageHeader title="Manage accounts" />{accountsToolbar}{accountPage}</>, trucks }[activePage];
+  return <main className="admin-shell"><aside className="admin-sidebar"><div className="brand"><img alt="ResiKlean logo" className="brand-logo" src="/swmo-resiklean-logo.svg" /></div><nav>{NAV_ITEMS.map((item) => <button data-page-link aria-label={item.label} aria-current={activePage === item.id ? 'page' : undefined} className={activePage === item.id ? 'nav-link active' : 'nav-link'} key={item.id} onClick={() => selectPage(item.id)}><Icon name={item.icon} /><span className="sidebar-label">{item.label}</span></button>)}<NotificationNav reports={apiData.reports} loading={isRefreshing} unavailable={apiData.usingPlaceholder} onRefresh={refreshDashboard} Icon={Icon} onReview={(report) => { selectPage('complaints'); setIsMobileSidebarOpen(false); if (report) setSelectedComplaint(complaintRows.find(row => row.id === report._id) || null); }} /></nav><SidebarAccount user={storedUser} Icon={Icon} onSignOut={() => { setIsMobileSidebarOpen(false); setShowLogoutConfirm(true); }} /></aside><section className="admin-workspace"><section className="dashboard-content">{apiData.usingPlaceholder ? <p className="data-note">Live dashboard data is unavailable. Sample records are shown for the tables; the tonnage chart intentionally stays empty.</p> : null}{pageContent}</section></section><AccountModal isOpen={showAccountForm} onClose={() => setShowAccountForm(false)} account={newAccount} setAccount={setNewAccount} submission={submissionState} setSubmission={setSubmissionState} onSubmit={createAccount} />{selectedActivity ? <div className="modal-layer" onClick={() => setSelectedActivity(null)} role="presentation"><div aria-modal="true" className="activity-detail-modal" onClick={(event) => event.stopPropagation()} role="dialog"><div className="modal-header"><div><p className="eyebrow">Landfill operations</p><h2>Truckload submission</h2></div><button aria-label="Close truckload details" onClick={() => setSelectedActivity(null)} type="button">×</button></div><div className="activity-detail-body">{selectedActivity.photoUrl ? <img alt={`Audit photo for ${selectedActivity.area}`} className="activity-detail-photo" src={selectedActivity.photoUrl} /> : <div className="activity-photo-empty"><Icon name="image" size={28} /><p>No audit photo available</p></div>}<div className="activity-detail-grid"><div><span>Area</span><strong>{selectedActivity.area}</strong></div><div><span>Staff</span><strong>{selectedActivity.driver}</strong></div><div><span>Truck</span><strong>{selectedActivity.truckPlate}</strong></div><div><span>Submitted</span><strong>{selectedActivity.date} · {selectedActivity.time}</strong></div><div><span>Measurements</span><strong>{selectedActivity.length} m × {selectedActivity.width} m × {selectedActivity.height} m</strong></div><div><span>Slope</span><strong>{selectedActivity.slope}</strong></div><div><span>Estimated tonnage</span><strong className="tonnage-cell">{selectedActivity.tonnage}</strong></div></div>{selectedActivity.notes ? <div className="activity-detail-notes"><span>Notes</span><p>{selectedActivity.notes}</p></div> : null}</div><div className="modal-footer"><Button className="outline-button" onPress={() => setSelectedActivity(null)} type="button" variant="secondary">Close</Button></div></div></div> : null}{isRouteHistoryDetailVisible ? (() => {
     const d = selectedRouteHistory;
     const placeholderData = !d ? {
       id: 'sample-id',

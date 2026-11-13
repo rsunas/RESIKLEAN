@@ -1,3 +1,6 @@
+import { WorkProfileEditor } from '@/components/work-profile-editor';
+import { ResidentAvatar } from '@/components/resident-avatar';
+import { StaffSearchSelect, StaffSlopeInput, StaffHistoryFilters, filterStaffHistory, historyText, validSlope } from '@/components/staff-controls';
 import { ProfileSettingsRow } from '@/components/profile-settings-row';
 import { MotionPressable as Pressable, TabTransition, useSlidingTabPill, useClosingValue, RevealRow, useFirstLoadReveal, ToastMotion } from '@/components/app-motion';
 import { SkeletonBlock, SkeletonRegion, SkeletonRows, useSkeletonVisible } from '@/components/loading-skeleton';
@@ -23,7 +26,7 @@ import {
   View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { AppSelect, type AppSelectOption } from '@/components/app-select';
+import { type AppSelectOption } from '@/components/app-select';
 import { AppText as Text } from '@/components/app-text';
 import { BrandMark } from '@/components/brand-mark';
 import { SignOutConfirmModal } from '@/components/sign-out-confirm-modal';
@@ -92,13 +95,15 @@ type StaffProfile = {
   profilePhotoUrl?: string;
   employeeId?: string;
   contact?: string;
+  phone?: string;
+  location?: string;
   shift?: string;
 };
 
 type TruckLoadResponse = {
   _id?: string;
   truckPlate?: string;
-  routeId?: { barangay?: string; name?: string } | null;
+  routeId?: { barangay?: string | string[]; name?: string } | null;
   length?: number;
   width?: number;
   height?: number;
@@ -152,7 +157,7 @@ type TonnagePreview = {
   tonnes: number;
 };
 
-const SLOPES = ['0.5 - Moderate Slope', '0.0 - Level Surface', '1.0 - Steep Slope'];
+
 
 const formatTonnage = (tonnes: number) => `${tonnes.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} t`;
 const formatHistoryNumber = (value: number) => value.toLocaleString('en-PH', {
@@ -189,7 +194,7 @@ const calculateTonnage = (length: number, width: number, height: number, slope: 
     ? (volumeCubicM + slopeCubicM) * densityFactor
     : 0;
 };
-const formatSlope = (value?: number) => `${Number(value || 0).toFixed(1)} m³`;
+const formatSlope = (value?: number) => `${Number(value || 0).toLocaleString('en-PH', { maximumFractionDigits: 6 })} m³`;
 const formatSubmissionDate = (value?: string) => {
   if (!value) return 'Date unavailable';
   const date = new Date(value);
@@ -198,7 +203,6 @@ const formatSubmissionDate = (value?: string) => {
     : date.toLocaleString('en-PH', { hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric' });
 };
 const formatRole = (value?: string) => value ? `${value.charAt(0).toUpperCase()}${value.slice(1)}` : 'Staff';
-const initials = (name?: string) => name?.split(' ').filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'S';
 
 function mapTruckLoad(load: TruckLoadResponse, staffName = 'You', fallbackArea = ''): Submission {
   const length = Number(load.length || 0);
@@ -214,7 +218,7 @@ function mapTruckLoad(load: TruckLoadResponse, staffName = 'You', fallbackArea =
   const calculatedTonnage = calculateTonnage(length, width, height, slope, effectiveDensity);
   return {
     id: load._id || `${load.truckPlate || 'load'}-${load.arrivedAt || Date.now()}`,
-    barangay: load.routeId?.barangay || fallbackArea.split(' · ')[0] || 'No area assigned',
+    barangay: historyText(load.routeId?.barangay) || fallbackArea.split(' · ')[0] || 'No area assigned',
     truckPlate: load.truckPlate || 'Unknown truck',
     driver: staffName,
     submittedAt: formatSubmissionDate(load.arrivedAt),
@@ -333,7 +337,7 @@ function AuditPhotoField({ disabled, label, loading, onPress, photo }: { disable
 
 function SelectField({ disabled = false, loading = false, error, icon, label, onChange, options, placeholder, value }: { disabled?: boolean; loading?: boolean; error?: string; icon: 'truck' | 'map-pin' | 'user' | 'trending-up'; label: string; onChange: (value: string) => void; options: AppSelectOption[]; placeholder: string; value: string }) {
   const skeleton = useSkeletonVisible(loading, options.length > 0, error);
-  return <SkeletonRegion state={skeleton} placeholder={<View style={styles.selectSkeleton}><Text style={styles.measurementLabel}>{label}</Text><SkeletonBlock height={56} radius={16} /></View>}><AppSelect appearance="staff" disabled={disabled} leadingIcon={icon} label={label} onChange={onChange} options={options} placeholder={placeholder} value={value} /></SkeletonRegion>;
+  return <SkeletonRegion state={skeleton} placeholder={<View style={styles.selectSkeleton}><Text style={styles.measurementLabel}>{label}</Text><SkeletonBlock height={56} radius={16} /></View>}><StaffSearchSelect disabled={disabled} leadingIcon={icon} label={label} onChange={onChange} options={options} placeholder={placeholder} value={value} /></SkeletonRegion>;
 }
 
 function MeasurementField({ label, value }: { label: string; value: string }) {
@@ -403,7 +407,7 @@ export default function StaffScreen() {
   const [isLoadingDrivers, setIsLoadingDrivers] = useState(false);
   const [driverLoadError, setDriverLoadError] = useState('');
   const [driver, setDriver] = useState(DEFAULT_FALLBACK_DRIVERS[0] || '');
-  const [slope, setSlope] = useState(SLOPES[0]);
+  const [slope, setSlope] = useState('0.5');
   const [length, setLength] = useState(DEFAULT_FALLBACK_TRUCKS[0]?.length || '');
   const [width, setWidth] = useState(DEFAULT_FALLBACK_TRUCKS[0]?.width || '');
   const [height, setHeight] = useState(DEFAULT_FALLBACK_TRUCKS[0]?.height || '');
@@ -420,6 +424,7 @@ export default function StaffScreen() {
   const closingSubmission = useClosingValue(selectedSubmission);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
+  const [editingProfile, setEditingProfile] = useState(false);
   const [profile, setProfile] = useState<StaffProfile | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState('');
@@ -886,7 +891,7 @@ export default function StaffScreen() {
           if (savedContext.area) setArea(savedContext.area);
           if (savedContext.routeId) setRouteId(savedContext.routeId);
           if (savedContext.driver) setDriver(savedContext.driver);
-          if (savedContext.slope) setSlope(savedContext.slope);
+          if (savedContext.slope) setSlope(String(Number.parseFloat(savedContext.slope)));
           if (savedContext.length) setLength(savedContext.length);
           if (savedContext.width) setWidth(savedContext.width);
           if (savedContext.height) setHeight(savedContext.height);
@@ -939,10 +944,12 @@ export default function StaffScreen() {
     return () => { cancelled = true; };
   }, []);
 
-  const totalTonnage = useMemo(() => history.reduce((total, submission) => total + submission.tonnes, 0), [history]);
+  const [historyFilters, setHistoryFilters] = useState(['', '', '', '', '']);
+  const visibleHistory = useMemo(() => filterStaffHistory(history, historyFilters[0], historyFilters[1], historyFilters[2], historyFilters[3], historyFilters[4]), [history, historyFilters]);
   const selectedTruck = trucks.find((truck) => truck.plate === truckPlate);
 
   const previewTonnage = () => {
+    if (!validSlope(slope)) { setMessage('Enter a valid slope of 0 cubic metres or more.'); setTonnagePreview(null); return; }
     const numericLength = Number(length);
     const numericWidth = Number(width);
     const numericHeight = Number(height);
@@ -1025,6 +1032,7 @@ export default function StaffScreen() {
   };
 
   const submitMeasurement = async () => {
+    if (!validSlope(slope)) { setMessage('Enter a valid slope of 0 cubic metres or more.'); setTonnagePreview(null); return; }
     const numericLength = Number(length);
     const numericWidth = Number(width);
     const numericHeight = Number(height);
@@ -1230,7 +1238,7 @@ export default function StaffScreen() {
             setArea(option);
             setRouteId(selectedArea?._id || '');
           }}
-          options={areas.map((item) => ({ label: areaLabel(item), value: areaLabel(item) }))}
+          options={areas.map((item) => ({ label: areaLabel(item), description: item.barangay, value: areaLabel(item) }))}
           placeholder={isLoadingAreas ? 'Loading areas…' : areas.length ? 'Select area' : 'No areas available'}
           value={area}
         />
@@ -1248,6 +1256,7 @@ export default function StaffScreen() {
         />
         {driverLoadError && drivers.length === 0 ? <Text style={styles.truckLoadError}>{driverLoadError}</Text> : null}
 
+        <StaffSlopeInput value={slope} onChange={value => { setSlope(value); setTonnagePreview(null); }} />
         <Text style={[styles.formSectionTitle, styles.sectionSpacing]}>Measurements</Text>
         <View style={styles.measurementRow}>
           <MeasurementField label="Length (m)" value={length} />
@@ -1256,7 +1265,7 @@ export default function StaffScreen() {
         </View>
         <Text style={styles.helperText}>{selectedTruck ? `Dimensions are locked to the admin registration for ${truckPlate}.` : 'Register a truck in the dashboard, then reopen this screen to select it.'}</Text>
 
-        <SelectField icon="trending-up" label="Slope (m³)" onChange={(option) => { setSlope(option); setTonnagePreview(null); }} options={SLOPES.map((option) => ({ label: option, value: option }))} placeholder="Select slope" value={slope} />
+
 
         <Pressable
           accessibilityLabel="Calculate estimated tonnage"
@@ -1280,7 +1289,7 @@ export default function StaffScreen() {
               <Text style={styles.tonnagePreviewLabel}>ESTIMATED TONNAGE</Text>
               <Text style={styles.tonnagePreviewValue}>{formatTonnage(tonnagePreview.tonnes).replace(/ t$/, '')}<Text style={styles.tonnageUnit}> t</Text></Text>
               <Text style={styles.tonnagePreviewFormula}>
-                ({tonnagePreview.volumeCubicM.toFixed(2)} m³ + {tonnagePreview.slopeCubicM.toFixed(1)} m³ slope) × 294 kg/m³
+                ({tonnagePreview.volumeCubicM.toFixed(2)} m³ + {tonnagePreview.slopeCubicM} m³ slope) × 294 kg/m³
               </Text>
             </View>
           </View>
@@ -1331,7 +1340,7 @@ export default function StaffScreen() {
   );
 
   const renderHistory = () => (
-    <ScrollView contentContainerStyle={styles.historyScrollContent} showsVerticalScrollIndicator={false}>
+    <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.historyScrollContent} showsVerticalScrollIndicator={false}>
       <View style={styles.historyTitleRow}>
         <Text style={styles.historyPageTitle}>Submission history</Text>
         <Text style={styles.recordCount}>{historyLoading ? 'Loading…' : `${history.length} ${history.length === 1 ? 'record' : 'records'}`}</Text>
@@ -1368,26 +1377,8 @@ export default function StaffScreen() {
         </View>
       )}
 
-      <SkeletonRegion state={historySkeleton} placeholder={<View style={styles.summarySkeleton}><SkeletonBlock height={100} radius={24} /></View>}>
-      <View style={styles.totalCard}>
-        <LinearGradient pointerEvents="none" colors={['#24846E', '#0D2E27']} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={styles.cardGradient} />
-        <View pointerEvents="none" style={styles.cardGradientShade} />
-        <View style={styles.totalStat}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.historyNumberScroll}>
-            <NativeText accessibilityLabel={`${formatTonnage(totalTonnage)} total tonnage`} numberOfLines={1} style={styles.totalValue}>{formatHistoryNumber(totalTonnage)}<NativeText style={styles.historyStatUnit}> t</NativeText></NativeText>
-          </ScrollView>
-          <NativeText style={styles.totalLabel}>Total tonnage</NativeText>
-        </View>
-        <View style={styles.historyStatDivider} />
-        <View style={styles.totalStat}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.historyNumberScroll}>
-            <NativeText accessibilityLabel={`${history.length} entries`} numberOfLines={1} style={styles.totalValue}>{formatHistoryNumber(history.length)}</NativeText>
-          </ScrollView>
-          <NativeText style={styles.totalLabel}>Entries</NativeText>
-        </View>
-      </View>
-
-      </SkeletonRegion>
+      <StaffHistoryFilters value={historyFilters} rows={history} onChange={(...values) => setHistoryFilters(values)} />
+      <Text style={styles.helperText}>{visibleHistory.length} of {history.length} records</Text>
       <SkeletonRegion state={historySkeleton} placeholder={<SkeletonRows kind="staff" count={4} />}>
       {historyError ? <Text accessibilityRole="alert" style={styles.dataError}>{historyError}</Text> : null}
       {!historyError && history.length === 0 ? (
@@ -1397,7 +1388,8 @@ export default function StaffScreen() {
           <Text style={styles.emptyHistoryText}>Your completed truckload submissions will appear here after you submit one.</Text>
         </Card>
       ) : null}
-      {history.map((submission, index) => (
+      {history.length > 0 && !visibleHistory.length ? <Text style={styles.emptyHistoryText}>No submissions match your search or filters.</Text> : null}
+      {visibleHistory.map((submission, index) => (
         <RevealRow key={submission.id} animate={revealHistory} index={index}>
         <Pressable
           accessibilityHint="Opens the submission details and audit photo"
@@ -1419,10 +1411,10 @@ export default function StaffScreen() {
             </View>
             <View style={styles.historyMeasurements}>
               {[
+                ['Slope', submission.slope],
                 ['Length', `${submission.length} m`],
                 ['Width', `${submission.width} m`],
                 ['Height', `${submission.height} m`],
-                ['Slope', submission.slope],
               ].map(([label, value]) => (
                 <View key={label} style={styles.historyMeasurementColumn}>
                   <NativeText numberOfLines={1} style={styles.historyMeasurementLabel}>{label}</NativeText>
@@ -1452,7 +1444,7 @@ export default function StaffScreen() {
           <LinearGradient pointerEvents="none" colors={['#24846E', '#0D2E27']} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={styles.cardGradient} />
           <View pointerEvents="none" style={styles.cardGradientShade} />
           <View style={styles.profileHeroRow}>
-          <View style={styles.avatar}>{profile?.profilePhotoUrl ? <ExpoImage accessibilityLabel="Profile picture" source={{ uri: profile.profilePhotoUrl }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{initials(profile?.name)}</Text>}</View>
+          <ResidentAvatar uri={profile?.profilePhotoUrl} name={profile?.name} size={72}/>
           <View style={styles.profileHeroCopy}>
           <Text style={styles.profileName}>{profileName}</Text>
           <Text style={styles.profileRole}>{profile ? `${formatRole(profile.role)} · Volumetric Auditor` : 'Loading profile…'}</Text>
@@ -1479,14 +1471,16 @@ export default function StaffScreen() {
           {profileError ? <Text accessibilityRole="alert" style={styles.dataError}>{profileError}</Text> : null}
           {profile || !profileError ? <>
             <ProfileAccountRow icon="id-card" label="Employee ID" value={profile?.employeeId || 'Not provided'} />
-            <ProfileAccountRow icon="phone" label="Contact" value={profile?.contact || 'Not provided'} />
+            <ProfileAccountRow icon="phone" label="Contact" value={profile?.phone || profile?.contact || 'Not provided'} />
             <ProfileAccountRow icon="mail" label="Email" value={profile?.email || 'Not provided'} />
+            <ProfileAccountRow icon="map-pin" label="Location" value={profile?.location || 'Not provided'} />
             <ProfileAccountRow icon="map-pin" label="Assigned area" value={profile?.barangay || 'Not assigned'} />
             <ProfileAccountRow icon="clock" label="Shift" value={profileShift} last />
           </> : null}
           </SkeletonRegion>
         </View>
 
+        <Pressable accessibilityRole="button" onPress={() => setEditingProfile(true)} style={{ minHeight: 56, borderRadius: 16, backgroundColor: '#E3F4EB', flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, marginTop: 20 }}><Feather name="edit-2" size={20} color="#086B42"/><Text style={{ color: '#086B42', fontSize: 16, fontWeight: '600' }}>Edit profile</Text></Pressable>
         <ProfileSettingsRow onSignOut={completeSignOut} />
         <Pressable accessibilityRole="button" onPress={signOut} style={styles.signOutButton}>
           <Feather color="#B3261E" name="log-out" size={20} />
@@ -1504,6 +1498,8 @@ export default function StaffScreen() {
       onClose={() => setSelectedSubmission(null)}
     />
   ) : null;
+
+  if (editingProfile) return <WorkProfileEditor onClose={() => setEditingProfile(false)} onSaved={updated => { setProfile(updated.user); const id=updated.user._id || updated.user.id; if(id) void saveStaffCache(`profile:${id}`,updated.user); }}/>;
 
   return (
     <SafeAreaView edges={['left', 'right']} style={styles.safeArea}>

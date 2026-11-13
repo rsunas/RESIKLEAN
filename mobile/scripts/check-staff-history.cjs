@@ -90,7 +90,7 @@ function renderCase(count, fontScale) {
     SkeletonRegion: ({ children }) => children, SkeletonBlock: () => null, SkeletonRows: () => null, historySkeleton: {},
     LinearGradient: ({ style }) => React.createElement(RN.View, { style }),
     MaterialCommunityIcons: Icon, Feather: Icon, ActivityIndicator: RN.ActivityIndicator,
-    styles, history, historyLoading: false, historyError: '', pendingSync: 0,
+    styles, history, visibleHistory: history, historyFilters: ['', '', '', '', ''], setHistoryFilters() {}, StaffHistoryFilters: () => null, historyLoading: false, historyError: '', pendingSync: 0,
     isSyncing: false, handleManualSync() {}, setSelectedSubmission() {},
     fontScale, totalTonnage: history.reduce((total, row) => total + row.tonnes, 0),
     formatTonnage, formatHistoryTonnage, formatHistoryNumber,
@@ -98,7 +98,7 @@ function renderCase(count, fontScale) {
   const html = renderToStaticMarkup(renderHistory());
   assert.equal((html.match(/data-qa="card"/g) || []).length, count);
   assert.equal((html.match(/data-qa="measurement"/g) || []).length, count * 4);
-  assert.equal((html.match(/data-qa="summary-value"/g) || []).length, 2);
+  assert.equal((html.match(/data-qa="summary-value"/g) || []).length, 0);
   if (count === 0) assert.ok(html.includes('No submissions yet'));
   if (count >= 4) assert.ok(html.includes('No area assigned'));
   return `<section data-count="${count}" data-scale="${fontScale}" style="width:360px">${html}</section>`;
@@ -110,13 +110,6 @@ const browserChecks = function () {
   for (const section of document.querySelectorAll('section')) {
     const cards = [...section.querySelectorAll('[data-qa="card"]')];
     const cardHeights = [];
-    const summary = section.querySelector('[data-qa="summary"]');
-    const statWidths = [...summary.querySelectorAll('[data-qa="stat"]')].map(stat => stat.getBoundingClientRect().width);
-    if (Math.max(...statWidths) - Math.min(...statWidths) > 0.5) failures.push('Unequal summary columns');
-    for (const value of summary.querySelectorAll('[data-qa="summary-value"]')) {
-      if (parseFloat(getComputedStyle(value).fontSize) !== 30 * Number(section.dataset.scale)) failures.push('Summary font shrank');
-    }
-    if (summary.scrollWidth > summary.clientWidth + 1) failures.push('Summary overflow');
     for (const [index, card] of cards.entries()) {
       const bounds = card.getBoundingClientRect();
       cardHeights.push(bounds.height);

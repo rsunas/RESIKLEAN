@@ -1,5 +1,5 @@
 import { Skeleton, SkeletonGroup } from 'heroui-native';
-import { useEffect, useRef, useState, type PropsWithChildren, type ReactNode } from 'react';
+import { useEffect, useRef, useState, createContext, useContext, type PropsWithChildren, type ReactNode } from 'react';
 import { StyleSheet, View, type DimensionValue } from 'react-native';
 import { Easing, FadeIn, FadeOut } from 'react-native-reanimated';
 import { useAppReducedMotion } from '@/hooks/use-app-reduced-motion';
@@ -51,6 +51,7 @@ export function useSkeletonMotion() {
 }
 
 const animation = { shimmer: { duration: 1500, highlightColor: '#F6F9F7' }, entering: { value: FadeIn.duration(250).easing(Easing.out(Easing.cubic)) }, exiting: { value: FadeOut.duration(250).easing(Easing.in(Easing.cubic)) } };
+const InSkeletonGroup = createContext(false);
 export type SkeletonState = ReturnType<typeof useSkeletonVisible>;
 
 /** One accessible loading announcement, not dozens of focusable rectangles. */
@@ -61,13 +62,16 @@ export function SkeletonRegion({ state, placeholder, children }: PropsWithChildr
   if (!state.pending) return <Skeleton isLoading={false} variant={reduced ? 'none' : 'shimmer'} animation={reduced || !wasVisible.current ? 'disable-all' : animation}>{children}</Skeleton>;
   return <View accessible accessibilityLabel="Loading" accessibilityState={{ busy: true }}>
     <View pointerEvents="none" accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={!state.visible ? styles.invisible : undefined}>
-      <SkeletonGroup isLoading variant={reduced || !state.visible ? 'none' : 'shimmer'} animation={reduced || !state.visible ? undefined : animation}>{placeholder}</SkeletonGroup>
+      <SkeletonGroup isLoading variant={reduced || !state.visible ? 'none' : 'shimmer'} animation={reduced || !state.visible ? undefined : animation}><InSkeletonGroup.Provider value={true}>{placeholder}</InSkeletonGroup.Provider></SkeletonGroup>
     </View>
   </View>;
 }
 
 export function SkeletonBlock({ width = '100%', height, radius = 8 }: { width?: DimensionValue; height: number; radius?: number }) {
-  return <SkeletonGroup.Item accessible={false} focusable={false} style={{ width, height, maxWidth: '100%', borderRadius: radius, backgroundColor: '#E8EDEA', overflow: 'hidden' }} />;
+  const grouped = useContext(InSkeletonGroup);
+  const reduced = useSkeletonMotion();
+  const Block = grouped ? SkeletonGroup.Item : Skeleton;
+  return <Block {...(!grouped ? {isLoading:true, variant: reduced ? 'none' as const : 'shimmer' as const} : {})} accessible={false} focusable={false} style={{ width, height, maxWidth: '100%', borderRadius: radius, backgroundColor: '#E8EDEA', overflow: 'hidden' }} />;
 }
 
 type RowKind = 'weekly' | 'report' | 'complaint' | 'account' | 'stop' | 'history' | 'staff' | 'chat' | 'faq';

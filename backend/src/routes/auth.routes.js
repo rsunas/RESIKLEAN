@@ -14,6 +14,7 @@ const {
   getPublicAreas,
 } = require('../controllers/auth.controller');
 const { protect } = require('../middlewares/auth');
+const upload = require('../middlewares/upload');
 const { registerRules, loginRules, googleLoginRules, validate } = require('../validators/auth.validator');
 
 // GET /api/auth/areas (public)
@@ -35,7 +36,7 @@ router.post('/google', googleLoginRules, validate, googleLogin);
 router.get('/me', protect, getMe);
 
 // PATCH /api/auth/me  (protected — update own profile & optional settings)
-router.patch('/me', protect, updateMe);
+router.patch('/me', protect, upload.single('avatar'), updateMe);
 
 // DELETE /api/auth/me  (protected — delete account)
 router.delete('/me', protect, deleteAccount);

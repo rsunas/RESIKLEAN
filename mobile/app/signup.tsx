@@ -1,6 +1,6 @@
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
 import { GoogleSignin, isSuccessResponse } from '@react-native-google-signin/google-signin';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -49,6 +49,16 @@ function GoogleLogo() {
 }
 
 export default function SignupScreen() {
+  const formScroll = useRef<ScrollView>(null);
+  const formBodyY = useRef(0);
+  const locationY = useRef(0);
+  const stepY = useRef(0);
+  const focusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (focusTimer.current) clearTimeout(focusTimer.current); }, []);
+  const revealLocations = () => {
+    if (focusTimer.current) clearTimeout(focusTimer.current);
+    focusTimer.current = setTimeout(() => formScroll.current?.scrollTo({ y: Math.max(0, formBodyY.current + stepY.current + locationY.current - 12), animated: true }), 250);
+  };
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [step, setStep] = useState<SignupStep>(1);
@@ -192,14 +202,14 @@ export default function SignupScreen() {
   const generalError = !nameError && !passwordError && !locationError ? error : '';
 
   return (
-    <SafeAreaView edges={['left', 'right']} style={authStyles.page}>
+    <SafeAreaView edges={['top', 'left', 'right']} style={authStyles.page}>
       <StatusBar backgroundColor={C.tint} barStyle="dark-content" />
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={authStyles.keyboard}>
-        <ScrollView style={authStyles.scroll} contentContainerStyle={authStyles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-          <AuthHeader title="Create your account" subtitle="Join ResiKlean and track your collection schedule" />
-          <View style={authStyles.body}>
+        <ScrollView ref={formScroll} testID="signup-scroll" style={authStyles.scroll} contentContainerStyle={authStyles.scrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <AuthHeader includeTopInset={false} title="Create your account" subtitle="Join ResiKlean and track your collection schedule" />
+          <View onLayout={event => { formBodyY.current = event.nativeEvent.layout.y; }} style={authStyles.body}>
             <SignupProgress step={step} />
-            <SignupStepTransition step={step}>
+            <View onLayout={event => { stepY.current = event.nativeEvent.layout.y; }}><SignupStepTransition step={step}>
             {step === 1 ? (
               <View>
                 <View style={styles.stepIntro}>
@@ -238,18 +248,17 @@ export default function SignupScreen() {
                     onPress={() => setShowPassword((v) => !v)} style={authStyles.eye}>
                     <Feather color={C.muted} name={showPassword ? 'eye-off' : 'eye'} size={20} />
                   </Pressable>} />
-                <View style={authStyles.fieldGroup}>
+                <View onLayout={event => { locationY.current = event.nativeEvent.layout.y; }} style={authStyles.fieldGroup}>
                   <Text style={authStyles.label}>Collection location</Text>
-                  <BarangayPicker appearance="auth" invalid={!!locationError} onChange={setLocation} value={location} />
+                  <BarangayPicker onSearchFocus={revealLocations} appearance="auth" invalid={!!locationError} onChange={setLocation} value={location} />
                   {locationError ? <Text accessibilityRole="alert" style={authStyles.error}>{locationError}</Text> : null}
                 </View>
               </View>
             )}
-            </SignupStepTransition>
+            </SignupStepTransition></View>
             {generalError ? <Text accessibilityRole="alert" style={authStyles.error}>{generalError}</Text> : null}
           </View>
-        </ScrollView>
-        <View style={[authStyles.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+        <View testID="signup-footer" style={[authStyles.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
           {step === 2 ? <Pressable accessibilityRole="button" disabled={isSubmitting} onPress={handleSignup}
             style={[authStyles.primaryButton, isSubmitting && authStyles.disabled]}>
             {isSubmitting ? <ActivityIndicator color="#ffffff" /> : <View style={authStyles.buttonContent}>
@@ -258,6 +267,7 @@ export default function SignupScreen() {
           </Pressable> : null}
           <AuthFooterLink text="Already have an account?" label="Sign In" onPress={() => router.replace('/login')} />
         </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );

@@ -59,17 +59,17 @@ export function RouteMonitoringConsentModal({ visible, onCancel, onEnable }: {
           <View accessibilityViewIsModal style={styles.card}>
             <View style={styles.heading}>
               <View accessible={false} style={styles.iconBadge}><Feather name="map-pin" size={24} color="#0A7F4F" /></View>
-              <Text accessibilityRole="header" style={styles.title}>Auto route monitoring</Text>
+              <Text accessibilityRole="header" style={styles.title}>Start trip?</Text>
             </View>
             <Text style={styles.message}>Allow ResiKlean to use your location for your assigned route, even while minimized or offline.</Text>
             <View style={styles.details}>
               <View style={styles.detailRow}>
                 <Feather accessible={false} name="check-circle" size={18} color="#0A7F4F" />
-                <Text style={styles.detailText}>Trips save after confirmed entry.</Text>
+                <Text style={styles.detailText}>Recording begins with your first accurate GPS reading, even before you reach the assigned route.</Text>
               </View>
               <View style={styles.detailRow}>
                 <Feather accessible={false} name="bell" size={18} color="#0A7F4F" />
-                <Text style={styles.detailText}>Location notification stays on. Stop anytime with the monitoring switch.</Text>
+                <Text style={styles.detailText}>Location notification stays on. Tap End trip when you finish. Offline records sync when you reconnect.</Text>
               </View>
             </View>
             <Text style={styles.permissionHint}>Android may ask for “Allow all the time” access.</Text>
@@ -78,7 +78,7 @@ export function RouteMonitoringConsentModal({ visible, onCancel, onEnable }: {
                 <Text style={styles.cancelText}>Not now</Text>
               </Pressable>
               <Pressable accessibilityRole="button" testID="route-monitoring-consent-enable" onPress={onEnable} style={styles.enableButton}>
-                <Text style={styles.enableText}>Enable</Text>
+                <Text style={styles.enableText}>Start trip</Text>
               </Pressable>
             </View>
           </View>

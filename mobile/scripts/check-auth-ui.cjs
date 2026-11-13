@@ -190,15 +190,15 @@ async function main() {
           if (el.matches('[role="button"],[role="link"]') && (r.height < 44 || r.width < 44)) failures.push(`${section.dataset.case}: small target`);
         }
         const link = [...section.querySelectorAll('[role="link"]')].at(-1);
-        const loginScroll = section.querySelector('[data-testid="login-scroll"]');
+        const loginScroll = section.querySelector('[data-testid="login-scroll"], [data-testid="signup-scroll"]');
         if (loginScroll) {
-          const footer = section.querySelector('[data-testid="login-footer"]');
+          const footer = section.querySelector('[data-testid="login-footer"], [data-testid="signup-footer"]');
           const password = section.querySelector('input[aria-label="Password"]');
           if (!loginScroll.contains(footer)) failures.push('Sign In footer must stay in the form flow');
           const footerTop = footer.getBoundingClientRect().top;
           loginScroll.scrollTop = loginScroll.scrollHeight;
           if (Math.abs(footer.getBoundingClientRect().top - footerTop) < 1 && loginScroll.scrollHeight > loginScroll.clientHeight) failures.push('Sign In footer did not scroll with the form');
-          if (password.getBoundingClientRect().bottom > footer.getBoundingClientRect().top && loginScroll.scrollHeight <= loginScroll.clientHeight) failures.push('Sign In footer overlaps password');
+          if (password && password.getBoundingClientRect().bottom > footer.getBoundingClientRect().top && loginScroll.scrollHeight <= loginScroll.clientHeight) failures.push('Sign In footer overlaps password');
         }
         if (!link || link.getBoundingClientRect().bottom > bounds.bottom + 1) failures.push(`${section.dataset.case}: footer not visible`);
       }

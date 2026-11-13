@@ -25,7 +25,7 @@ export type PresenceFilter = {
 
 export const emptyPresenceFilter = (): PresenceFilter => ({ state: 'unknown', hasEntered: false });
 
-export function evaluateRoutePresence(previous: PresenceFilter, fix: PresenceFix, distance: number, now: number) {
+export function evaluateRoutePresence(previous: PresenceFilter, fix: PresenceFix, distance: number | null, now: number) {
   const reject = (signal: PresenceSignal, preserveCandidate = false) => ({
     filter: preserveCandidate ? previous : { ...previous, candidate: undefined },
     accepted: false, changed: false, signal,
@@ -36,7 +36,7 @@ export function evaluateRoutePresence(previous: PresenceFilter, fix: PresenceFix
   const { latitude, longitude, accuracy } = fix.coords;
   if (fix.mocked || !Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180
     || accuracy === null || !Number.isFinite(accuracy) || accuracy < 0 || accuracy > ROUTE_MAX_ACCURACY_METERS
-    || !Number.isFinite(distance) || distance < 0) return reject('poor');
+    || (distance !== null && (!Number.isFinite(distance) || distance < 0))) return reject('poor');
 
   if (previous.lastFix) {
     const elapsed = fix.timestamp - previous.lastFix.timestamp;
@@ -53,6 +53,9 @@ export function evaluateRoutePresence(previous: PresenceFilter, fix: PresenceFix
   }
 
   const filter: PresenceFilter = { ...previous, lastFix: fix };
+  // Missing route geometry must not block valid GPS trail recording.
+  // Keep presence unknown: no fabricated route entry/exit or stop completion.
+  if (distance === null) return { filter: { ...filter, state: 'unknown' as PresenceState, hasEntered: false, candidate: undefined }, accepted: true, changed: false, signal: 'good' as PresenceSignal };
   // Require the reported accuracy circle to be fully inside/outside the band.
   const target = distance + accuracy <= ROUTE_ENTER_TOLERANCE_METERS ? 'on_route'
     : distance - accuracy > ROUTE_EXIT_TOLERANCE_METERS ? 'off_route' : null;

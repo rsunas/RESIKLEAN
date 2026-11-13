@@ -505,6 +505,7 @@ const getRouteHistory = async (req, res) => {
       }
       const group = groupsMap.get(key);
       if (!group.sessionId) group.sessionId = session.clientSessionId;
+      group.sessionIds = [...new Set([...(group.sessionIds || []), session.clientSessionId])];
       if (!group.sessionStartedAt || new Date(session.startedAt) < new Date(group.sessionStartedAt)) group.sessionStartedAt = session.startedAt;
       if (!group.sessionEndedAt || (session.endedAt && new Date(session.endedAt) > new Date(group.sessionEndedAt))) group.sessionEndedAt = session.endedAt;
     });
@@ -518,12 +519,12 @@ const getRouteHistory = async (req, res) => {
       let elevationLossFt = 0;
       let trailPoints = [];
       if (sessionId) {
-        trailPoints = await RouteTrailPoint.find({ clientSessionId: sessionId, collectorId: req.user._id })
+        trailPoints = await RouteTrailPoint.find({ clientSessionId: { $in: group.sessionIds || [sessionId] }, collectorId: req.user._id })
           .sort({ recordedAt: 1 })
-          .select('latitude longitude altitudeMeters recordedAt')
-          .limit(2000)
+          .select('clientSessionId latitude longitude altitudeMeters recordedAt')
           .lean();
         for (let i = 1; i < trailPoints.length; i += 1) {
+          if (trailPoints[i - 1].clientSessionId !== trailPoints[i].clientSessionId) continue;
           distanceMi += haversineMi(trailPoints[i - 1], trailPoints[i]);
           const prevAltFt = (trailPoints[i - 1].altitudeMeters || 0) * 3.28084;
           const currAltFt = (trailPoints[i].altitudeMeters || 0) * 3.28084;
@@ -532,9 +533,15 @@ const getRouteHistory = async (req, res) => {
           else elevationLossFt += -diff;
         }
       }
-      const trailPath = trailPoints.length >= 2
-        ? { type: 'LineString', coordinates: trailPoints.map((point) => [point.longitude, point.latitude]) }
-        : null;
+      const segments = new Map();
+      trailPoints.forEach(point => {
+        const key = point.clientSessionId;
+        if (!segments.has(key)) segments.set(key, []);
+        segments.get(key).push([point.longitude, point.latitude]);
+      });
+      const lines = [...segments.values()].filter(line => line.length >= 2);
+      const trailPath = lines.length > 1 ? { type: 'MultiLineString', coordinates: lines }
+        : lines.length === 1 ? { type: 'LineString', coordinates: lines[0] } : null;
 
       return {
         id: group.id,

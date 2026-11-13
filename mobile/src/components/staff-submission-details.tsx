@@ -135,12 +135,12 @@ export function StaffSubmissionDetails({ submission, onClose, visible = true }: 
             </View>
             <View style={styles.card}>
               <Text accessibilityRole="header" style={styles.heading}>Measurements</Text>
+              <ReceiptRow label="Slope" value={slopeDisplay} />
               <ReceiptRow label="Length" value={`${formatMeasurement(submission.length)} m`} />
               <ReceiptRow label="Width" value={`${formatMeasurement(submission.width)} m`} />
               <ReceiptRow label="Height" value={`${formatMeasurement(submission.height)} m`} />
               <View style={styles.receiptDivider} />
               <ReceiptRow label="Volume" value={`${formatMeasurement(volume)} m³`} />
-              <ReceiptRow label="Slope" value={slopeDisplay} />
             </View>
             {submission.notes ? (
               <View style={styles.card}>

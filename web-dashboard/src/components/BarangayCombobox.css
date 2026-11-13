@@ -1,0 +1,33 @@
+.barangay-combobox { display: grid; gap: 7px; min-width: 0; position: relative; }
+.barangay-combobox > label { color: #3e5b4f; font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.barangay-combobox > p { color: #84938b; font-size: 9px; font-weight: 600; margin: 0; }
+.barangay-combobox-control { position: relative; }
+.route-editor-form .barangay-combobox-control input { padding-right: 46px; }
+.barangay-combobox-toggle { align-items: center; background: transparent; border: 0; border-radius: 8px; color: #086b42; cursor: pointer; display: flex; height: 100%; justify-content: center; position: absolute; right: 0; top: 0; width: 44px; }
+.barangay-combobox-toggle:focus-visible, .barangay-combobox-feedback button:focus-visible { outline: 2px solid #0a7f4f; outline-offset: -3px; }
+.barangay-combobox-popup { background: white; border: 1px solid #dbe6e0; border-radius: 10px; box-shadow: 0 6px 20px #0d2e271a; left: 0; overflow: hidden; position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; }
+.barangay-combobox-popup ul { list-style: none; margin: 0; max-height: 220px; overflow-y: auto; overscroll-behavior: contain; padding: 0; position: relative; }
+.barangay-combobox-popup li { align-items: center; color: #183b2d; cursor: pointer; display: flex; font-size: 13px; font-weight: 500; min-height: 40px; padding: 9px 12px; overflow-wrap: anywhere; }
+.barangay-combobox-popup li:hover, .barangay-combobox-popup li[aria-selected="true"] { background: #e3f4eb; color: #086b42; }
+.barangay-combobox-popup p { color: #5a6761; font-size: 12px; line-height: 1.5; margin: 0; padding: 12px; }
+.barangay-combobox-feedback button { background: #e3f4eb; border: 0; border-radius: 8px; color: #086b42; cursor: pointer; font: inherit; font-size: 12px; font-weight: 600; margin: 0 12px 12px; min-height: 36px; padding: 6px 14px; }
+
+/* Match HeroUI Select: 150ms fade/scale/slide in, 100ms fade/scale out. */
+.barangay-combobox-popup { transform-origin: center top; }
+.barangay-combobox-popup[data-state="open"] { animation: barangay-popup-enter 150ms var(--ease-smooth, ease) both; }
+.barangay-combobox-popup[data-state="closing"] { animation: barangay-popup-exit 100ms var(--ease-smooth, ease) both; pointer-events: none; }
+.barangay-combobox-toggle svg { transition: rotate 150ms var(--default-transition-timing-function, ease); }
+.barangay-combobox-toggle[aria-expanded="true"] svg { rotate: 180deg; }
+@keyframes barangay-popup-enter {
+  from { opacity: 0; transform: translateY(-4px) scale(.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes barangay-popup-exit {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(.95); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .barangay-combobox-popup[data-state] { animation: none; }
+  .barangay-combobox-popup[data-state="closing"] { visibility: hidden; }
+  .barangay-combobox-toggle svg { transition: none; }
+}

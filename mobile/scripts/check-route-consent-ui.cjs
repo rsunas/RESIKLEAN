@@ -84,7 +84,7 @@ async function main() {
     elements(tree).find(item => item.props?.testID === 'route-monitoring-consent-enable').props.onPress();
     assert.deepEqual(actions, ['cancel', 'cancel', 'enable']);
     const html = renderToStaticMarkup(tree);
-    for (const disclosure of ['minimized or offline', 'confirmed entry', 'notification stays on', 'Stop anytime', 'Allow all the time']) assert.ok(html.includes(disclosure));
+    for (const disclosure of ['minimized or offline', 'first accurate GPS reading', 'notification stays on', 'End trip', 'Allow all the time']) assert.ok(html.includes(disclosure));
     fixtures.push(`<section data-scale="${scale}" style="width:${width}px">${html}</section>`);
   }
   console.log('PASS: accept/decline, one pending prompt, duplicate taps, changed assignment, unmount cleanup, Back dismissal and permission disclosures.');

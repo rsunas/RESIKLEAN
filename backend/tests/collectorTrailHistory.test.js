@@ -1,0 +1,25 @@
+const Route = require('../src/models/Route');
+const RouteLog = require('../src/models/RouteLog');
+const Session = require('../src/models/RouteTrailSession');
+const Point = require('../src/models/RouteTrailPoint');
+jest.mock('../src/services/cloudinary.service', () => ({ uploadPhoto: jest.fn() }));
+const { getRouteHistory } = require('../src/controllers/collector.controller');
+const chain = data => { const query = {}; for (const name of ['populate','sort','select','limit']) query[name] = jest.fn(() => query); query.lean = async () => data; return query; };
+afterEach(() => jest.restoreAllMocks());
+test('history includes every point across restarted trips without drawing a bridge between sessions', async () => {
+  const routeId = '507f1f77bcf86cd799439011';
+  jest.spyOn(RouteLog,'find').mockReturnValue(chain([]));
+  jest.spyOn(Session,'find').mockReturnValue(chain(['one','two'].map((id,i)=>({clientSessionId:id,routeId,startedAt:`2026-11-12T0${i}:00:00Z`,endedAt:`2026-11-12T0${i}:30:00Z`,status:'completed'}))));
+  jest.spyOn(Route,'find').mockReturnValue(chain([{_id:routeId,name:'Area 1',stops:[],barangay:[]} ]));
+  const points=Array.from({length:2100},(_,i)=>({clientSessionId:'one',longitude:123.18+i*.000001,latitude:13.62,recordedAt:new Date(1000*i)}));
+  points.push({clientSessionId:'two',longitude:124,latitude:14},{clientSessionId:'two',longitude:124.001,latitude:14});
+  const query=chain(points);jest.spyOn(Point,'find').mockReturnValue(query);
+  const res={status:jest.fn(),json:jest.fn()};res.status.mockReturnValue(res);
+  await getRouteHistory({query:{grouped:true},user:{_id:'driver'}},res);
+  const result=res.json.mock.calls[0][0];expect(result.success).toBe(true);
+  const group=result.data.groups[0];expect(group.trailPath.type).toBe('MultiLineString');
+  expect(group.trailPath.coordinates.map(line=>line.length)).toEqual([2100,2]);
+  expect(query.limit).not.toHaveBeenCalled();
+  expect(Point.find).toHaveBeenCalledWith({collectorId:'driver',clientSessionId:{$in:['one','two']}});
+  expect(group.firstEntry).toBeNull();expect(group.distanceMi).toBeLessThan(1);
+});

@@ -1,3 +1,5 @@
+import { WorkProfileEditor } from '@/components/work-profile-editor';
+import { ResidentAvatar } from '@/components/resident-avatar';
 import { ProfileSettingsRow } from '@/components/profile-settings-row';
 import { SkeletonBlock, SkeletonRegion, SkeletonRows, useSkeletonVisible } from '@/components/loading-skeleton';
 import { RouteMonitoringConsentModal, useRouteMonitoringConsent } from '@/components/route-monitoring-consent-modal';
@@ -23,7 +25,7 @@ import { getQueuedRouteLogStopIds, getRouteLogQueueStats, subscribeToRouteLogSyn
 import { isRouteCompletionQueued, queueRouteCompletion, subscribeToRouteCompletionSync } from '@/lib/driver-route-completion';
 import { getRouteHistoryCache, saveRouteHistoryCache } from '@/lib/driver-route-history-cache';
 import { subscribeToDriverTrailSync, syncDriverTrailQueue } from '@/lib/driver-trail-queue';
-import { getRouteMonitoringPreference, setRouteMonitoringConsent, pauseRouteMonitoringToday, processDriverRouteLocation, cacheAssignedRoute, clearCachedAssignedRoute, clearRouteProximityEvents, enableRouteProximityTracking, getCachedAssignedRoute, getRouteProximityEvents, getRouteProximityStatus, stopRouteProximityTracking, subscribeToRouteProximityStatus, type RoutePresenceEvent, type RoutePresenceStatus } from '@/lib/driver-route-proximity';
+import { claimTripStartPrompt, getRouteMonitoringPreference, setRouteMonitoringConsent, pauseRouteMonitoringToday, processDriverRouteLocation, cacheAssignedRoute, clearCachedAssignedRoute, clearRouteProximityEvents, enableRouteProximityTracking, getCachedAssignedRoute, getRouteProximityEvents, getRouteProximityStatus, stopRouteProximityTracking, subscribeToRouteProximityStatus, type RoutePresenceEvent, type RoutePresenceStatus } from '@/lib/driver-route-proximity';
 import { clearSession, getSession, type AccountUser, type AuthSession } from '@/lib/session';
 import { queueCapacityLog, syncCapacityQueue } from '@/lib/driver-capacity-queue';
 import NetInfo from '@react-native-community/netinfo';
@@ -364,19 +366,19 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: CollectorTab; on
   );
 }
 
-// Historical maps are static previews: initialize at their target, never fly in.
-function HistoryMapCamera({ center, zoom }: { center: [number, number] | null; zoom: number }) {
-  const centerCoordinate = center ?? MAP_CENTER;
-  const zoomLevel = center ? zoom : 12;
-  return (
-    <Mapbox.Camera
-      defaultSettings={{ centerCoordinate, zoomLevel, animationMode: 'none', animationDuration: 0 }}
-      centerCoordinate={centerCoordinate}
-      zoomLevel={zoomLevel}
-      animationMode="none"
-      animationDuration={0}
-    />
-  );
+// Fit all recorded and assigned coordinates instead of zooming into the last fix.
+function HistoryMapCamera({ center, zoom, group }: { center: [number, number] | null; zoom: number; group?: RouteHistoryGroup }) {
+  const points = [group?.trailPath, group?.routePath].flatMap(path => {
+    const feature = routeLineFeature(path);
+    if (!feature) return [];
+    return feature.geometry.type === 'LineString' ? feature.geometry.coordinates : feature.geometry.coordinates.flat();
+  });
+  const bounds = points.length ? {
+    ne: [Math.max(...points.map(p => p[0])) + .0001, Math.max(...points.map(p => p[1])) + .0001],
+    sw: [Math.min(...points.map(p => p[0])) - .0001, Math.min(...points.map(p => p[1])) - .0001],
+    paddingTop: 28, paddingBottom: 28, paddingLeft: 28, paddingRight: 28,
+  } : undefined;
+  return <Mapbox.Camera defaultSettings={bounds ? { bounds } : { centerCoordinate: center ?? MAP_CENTER, zoomLevel: center ? zoom : 12 }} bounds={bounds} animationMode="none" animationDuration={0} />;
 }
 
 function ProgressRing({ percent }: { percent: number }) {
@@ -431,6 +433,7 @@ export default function CollectorScreen() {
   const [activeTab, setActiveTab] = useState<CollectorTab>('history');
   const [expandedStopsRouteId, setExpandedStopsRouteId] = useState<string | null>(null);
   const [showAllPastCollections, setShowAllPastCollections] = useState(false);
+  const [editingProfile, setEditingProfile] = useState(false);
   const [session, setSession] = useState<AuthSession | null>(null);
   const [driver, setDriver] = useState<AccountUser | null>(null);
   const [assignedRoute, setAssignedRoute] = useState<DriverRoute | null>(null);
@@ -465,6 +468,7 @@ export default function CollectorScreen() {
   const [historyLoadError, setHistoryLoadError] = useState<string | null>(null);
   const [selectedHistoryGroup, setSelectedHistoryGroup] = useState<RouteHistoryGroup | null>(null);
   const [isHistoryDetailVisible, setIsHistoryDetailVisible] = useState(false);
+  const [isHistoryMapExpanded, setIsHistoryMapExpanded] = useState(false);
   const [isSubmittingRoute, setIsSubmittingRoute] = useState(false);
   const [isFinishRouteConfirmVisible, setIsFinishRouteConfirmVisible] = useState(false);
   const [routeActionMessage, setRouteActionMessage] = useState<{ kind: 'success' | 'error'; title: string; message: string } | null>(null);
@@ -512,9 +516,11 @@ export default function CollectorScreen() {
   const collectorId = session?.user._id || session?.user.id;
   const monitoringContextRef = useRef({ collectorId, routeId: assignedRoute?._id, eligible: false });
   const scheduledWeekday = new Date(Date.now() + 8 * 60 * 60 * 1000).getUTCDay();
-  const monitoringEligible = Boolean(session?.token && assignedRoute?.routePath
+  // A trip records travel; collection-day/completion flags only control auto prompts.
+  const monitoringEligible = Boolean(session?.token && assignedRoute?._id && !isSubmittingRoute);
+  const automaticTripPromptEligible = Boolean(monitoringEligible && assignedRoute
     && assignedRoute.isScheduledToday !== false && !assignedRoute.isCompletedToday
-    && assignedRoute.schedule.includes(scheduledWeekday) && !isSubmittingRoute);
+    && assignedRoute.schedule?.includes(scheduledWeekday));
   monitoringContextRef.current = { collectorId, routeId: assignedRoute?._id, eligible: monitoringEligible };
   const { visible: isMonitoringConsentVisible, requestConsent: requestMonitoringConsent, respond: respondToMonitoringConsent } = useRouteMonitoringConsent(`${collectorId ?? ''}:${assignedRoute?._id ?? ''}:${monitoringEligible}`);
   const refreshQueuedRouteStops = useCallback(async () => {
@@ -610,12 +616,16 @@ export default function CollectorScreen() {
     setLoadError(null);
 
     try {
+      const network = await NetInfo.fetch();
+      if (network.isConnected === false || network.isInternetReachable === false) throw new Error('Offline');
       const request = async (path: string) => {
-        const response = await fetch(`${API_URL}${path}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const payload = await response.json().catch(() => ({ success: false, error: 'The server returned an invalid response.' }));
-        return { payload, response };
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
+        try {
+          const response = await fetch(`${API_URL}${path}`, { signal: controller.signal, headers: { Authorization: `Bearer ${token}` } });
+          const payload = await response.json().catch(() => ({ success: false, error: 'The server returned an invalid response.' }));
+          return {payload, response};
+        } finally { clearTimeout(timeout); }
       };
 
       const [profileResult, routeResult, progressResult, capacityResult] = await Promise.all([
@@ -816,7 +826,7 @@ export default function CollectorScreen() {
         if (!isMounted || permission.status !== 'granted' || AppState.currentState !== 'active') return;
 
         // The location dot is independent of recording. The shared detector saves
-        // trail points only when monitoring is armed and entry is confirmed.
+        // valid trail points whenever the driver has explicitly started the trip.
         const current = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
         updateLocation(current);
 
@@ -863,7 +873,6 @@ export default function CollectorScreen() {
   const revealStops = useFirstLoadReveal(isLoading, Boolean(assignedRoute), routeSkeleton.pending, collectorId);
   const revealHistory = useFirstLoadReveal(historyLoading, historyGroups.length > 0, historySkeleton.pending, collectorId);
   const collectorName = profile?.name?.trim() || 'Driver';
-  const initial = collectorName.charAt(0).toUpperCase();
   const routeStops = assignedRoute?.stops || [];
   const mapStops = useMemo(() => routeStops
     .map((stop) => ({ ...stop, latitude: Number(stop.latitude), longitude: Number(stop.longitude) }))
@@ -1051,8 +1060,10 @@ export default function CollectorScreen() {
         ? { apiUrl: API_URL, token, collectorId: effectiveCollectorId }
         : null;
 
+      let trailPending = false;
       if (trailContext) {
-        await syncDriverTrailQueue(trailContext).catch(() => {});
+        const result = await syncDriverTrailQueue(trailContext).catch(() => null);
+        trailPending = !result || result.pendingSessions > 0;
       }
 
       if (!API_URL) throw new Error('API URL is not configured.');
@@ -1072,7 +1083,7 @@ export default function CollectorScreen() {
       setAssignedRoute(null);
       void clearCachedAssignedRoute(effectiveCollectorId);
       void clearRouteProximityEvents(routeId);
-      setRouteActionMessage({ kind: 'success', title: 'Route completed', message: 'Today\'s assigned route has been saved successfully.' });
+      setRouteActionMessage({ kind: 'success', title: 'Route completed', message: trailPending ? 'Route completed. GPS trail is saved on this phone and is waiting to sync; history will update after upload.' : 'Today\'s assigned route has been saved successfully.' });
       void loadRouteHistory(token);
     } catch (err) {
       const isNetworkErr = !API_URL || (err instanceof Error && (
@@ -1116,6 +1127,7 @@ export default function CollectorScreen() {
       }
       const groups = Array.isArray(payload.data?.groups) ? (payload.data.groups as RouteHistoryGroup[]) : [];
       setHistoryGroups(groups);
+      setSelectedHistoryGroup(current => current ? groups.find(group => group.id === current.id) || current : current);
       if (collectorId) void saveRouteHistoryCache(collectorId, groups);
       setHistoryLoadError(groups.length ? null : 'No past collections yet. After finishing your first collection, it will appear here.');
     } catch {
@@ -1232,16 +1244,16 @@ export default function CollectorScreen() {
     if (!API_URL || !session?.token || !collectorId) return undefined;
 
     const context = { apiUrl: API_URL, token: session.token, collectorId };
-    const unsubscribe = subscribeToDriverTrailSync(context);
+    const unsubscribe = subscribeToDriverTrailSync(context, result => { if (result.syncedSessions) void loadRouteHistory(session.token); });
     const syncInterval = setInterval(() => {
-      void syncDriverTrailQueue(context);
+      void syncDriverTrailQueue(context).then(result => { if (result.syncedSessions) void loadRouteHistory(session.token); }).catch(() => {});
     }, 30_000);
 
     return () => {
       unsubscribe();
       clearInterval(syncInterval);
     };
-  }, [collectorId, session?.token]);
+  }, [collectorId, loadRouteHistory, session?.token]);
 
   useEffect(() => {
     let isMounted = true;
@@ -1272,8 +1284,8 @@ export default function CollectorScreen() {
 
   const enableBackgroundGeofencing = useCallback(async ({ automatic = false }: { automatic?: boolean } = {}) => {
     if (isTogglingMonitoringRef.current || monitoringSuspendedRef.current) return;
-    if (!collectorId || !assignedRoute?.routePath || !mapRouteLine || !monitoringEligible) {
-      setGeofencingMessage('A scheduled, unfinished route with a valid road line is required.');
+    if (!collectorId || !assignedRoute?._id || !monitoringEligible) {
+      setGeofencingMessage('An assigned route is needed to start a trip. Refresh your assignment and try again.');
       return;
     }
     const requestId = ++monitoringRequestRef.current;
@@ -1287,32 +1299,34 @@ export default function CollectorScreen() {
     try {
       const preference = await getRouteMonitoringPreference(collectorId);
       if (!contextIsCurrent()) return;
-      if (automatic && (preference.consent === false || preference.pausedDay === monitoringDay())) {
-        await Promise.all([stopRouteProximityTracking({ forgetConfiguration: true }), stopDriverGeofencing({ forgetConfiguration: true })]);
-        setRoutePresence({ enabled: false, state: 'unknown' });
-        setGeofencingMessage(preference.pausedDay === monitoringDay() ? 'Auto-start is paused for today. Turn the switch on to resume.' : 'Automatic monitoring is off. Use the switch when you are ready.');
-        return;
-      }
       let newlyConsented = false;
-      if (preference.consent !== true) {
+      const currentTracking = await getRouteProximityStatus();
+      const sameActiveTrip = currentTracking.enabled && currentTracking.routeId === assignedRoute._id;
+      if (automatic && !sameActiveTrip) {
+        if (!automaticTripPromptEligible || activeTab !== 'map' || editingProfile || preference.pausedDay === monitoringDay()) return;
+        if (!await claimTripStartPrompt(collectorId, assignedRoute._id)) return;
+        if (!contextIsCurrent()) return;
+      }
+      if (!automatic || !sameActiveTrip) {
+        if (!automatic) await claimTripStartPrompt(collectorId, assignedRoute._id);
         const accepted = await requestMonitoringConsent();
         if (!contextIsCurrent()) return;
         await setRouteMonitoringConsent(collectorId, accepted);
         if (!accepted) {
           await Promise.all([stopRouteProximityTracking({ forgetConfiguration: true }), stopDriverGeofencing({ forgetConfiguration: true })]);
           setRoutePresence({ enabled: false, state: 'unknown' });
-          setGeofencingMessage('Automatic monitoring is off. Use the switch when you are ready.');
+          setGeofencingMessage('Trip has not started. Tap Start trip when you are ready.');
           return;
         }
         newlyConsented = true;
       }
       if (!contextIsCurrent() || AppState.currentState !== 'active') return;
-      // An explicit switch-on resumes today's paused detector. Automatic checks
+      // An explicit Start trip resumes today's paused detector. Automatic checks
       // never clear the driver's pause or keep asking for revoked permissions.
       if (!automatic) await setRouteMonitoringConsent(collectorId, true);
       if (!contextIsCurrent()) return;
       const routeResult = await enableRouteProximityTracking({
-        collectorId, routeId: assignedRoute._id, routeName: assignedRoute.name, routePath: assignedRoute.routePath,
+        collectorId, routeId: assignedRoute._id, routeName: assignedRoute.name, routePath: assignedRoute.routePath ?? null,
       }, { requestPermissions: !automatic || newlyConsented });
       if (!contextIsCurrent()) {
         await stopRouteProximityTracking({ forgetConfiguration: true });
@@ -1343,7 +1357,7 @@ export default function CollectorScreen() {
       setIsUpdatingGeofence(false);
       isTogglingMonitoringRef.current = false;
     }
-  }, [API_URL, applyQueueResult, assignedRoute, collectorId, geofenceStops, mapRouteLine, monitoringEligible, refreshRoutePresence, requestMonitoringConsent, session?.token]);
+  }, [API_URL, activeTab, automaticTripPromptEligible, editingProfile, applyQueueResult, assignedRoute, collectorId, geofenceStops, monitoringEligible, refreshRoutePresence, requestMonitoringConsent, session?.token]);
 
   const disableBackgroundGeofencing = useCallback(async () => {
     // Cancel pending startup even if a permission request is still open.
@@ -1355,14 +1369,15 @@ export default function CollectorScreen() {
       await Promise.all([stopRoute, collectorId ? pauseRouteMonitoringToday(collectorId) : Promise.resolve(), stopDriverGeofencing({ forgetConfiguration: true })]);
       setRoutePresence({ enabled: false, state: 'unknown' });
       setIsGeofencingEnabled(false);
-      setGeofencingMessage('Auto-start is paused for today. Existing logs will still sync. Turn the switch on to resume.');
+      setGeofencingMessage('Trip ended and saved on this device. Pending records sync when online. Tap Start trip for another trip.');
+      if (API_URL && session?.token && collectorId) void syncDriverTrailQueue({apiUrl: API_URL, token: session.token, collectorId}).catch(() => {});
     } catch {
       setGeofencingMessage('Unable to fully stop monitoring. Check the location notification and try again.');
       await refreshRoutePresence();
     } finally {
       setIsUpdatingGeofence(false);
     }
-  }, [collectorId, refreshRoutePresence, respondToMonitoringConsent]);
+  }, [collectorId, refreshRoutePresence, respondToMonitoringConsent, session?.token]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', state => {
@@ -1377,16 +1392,16 @@ export default function CollectorScreen() {
   useEffect(() => {
     if (Platform.OS === 'web' || isLoading || isUpdatingGeofence || !collectorId || monitoringSuspendedRef.current || AppState.currentState !== 'active') return;
     if (!monitoringEligible) {
-      // A completed/unassigned route must not keep a previous detector running.
+      // An unavailable assignment or route submission must not keep the detector running.
       if (!loadError) void Promise.all([stopRouteProximityTracking({ forgetConfiguration: true }), stopDriverGeofencing({ forgetConfiguration: true })]).catch(() => {});
       return;
     }
-    const attemptKey = `${collectorId}:${assignedRoute?._id}:${monitoringDay()}:${autoMonitoringRevision}`;
+    const attemptKey = `${collectorId}:${assignedRoute?._id}:${monitoringDay()}:${autoMonitoringRevision}:${activeTab}:${editingProfile}`;
     if (autoMonitoringAttemptsRef.current.has(attemptKey)) return;
     autoMonitoringAttemptsRef.current.clear();
     autoMonitoringAttemptsRef.current.add(attemptKey);
     void enableBackgroundGeofencing({ automatic: true });
-  }, [assignedRoute?._id, autoMonitoringRevision, collectorId, enableBackgroundGeofencing, isLoading, isUpdatingGeofence, loadError, monitoringEligible]);
+  }, [activeTab, editingProfile, assignedRoute?._id, autoMonitoringRevision, collectorId, enableBackgroundGeofencing, isLoading, isUpdatingGeofence, loadError, monitoringEligible]);
 
   const toggleOfflineMap = useCallback(async () => {
     if (!assignedRoute?.routePath) {
@@ -1541,14 +1556,14 @@ export default function CollectorScreen() {
 
   const awaitingEntry = routePresence.enabled && !routePresence.hasEntered && routePresence.state !== 'on_route';
   const weakRouteSignal = routePresence.signal === 'poor' || routePresence.signal === 'stale';
-  const monitoringTitle = !routePresence.enabled ? 'Route monitoring off'
+  const monitoringTitle = !routePresence.enabled ? 'Ready to start trip'
     : weakRouteSignal ? 'Waiting for accurate GPS'
-    : awaitingEntry ? 'Waiting for route entry'
-    : routePresence.state === 'on_route' ? 'On assigned route' : 'Off assigned route';
+    : 'Trip in progress';
   const monitoringCaption = geofencingMessage || (!routePresence.enabled
-    ? 'Enable automatic detection for your scheduled route, including while minimized.'
+    ? 'Start your trip to record travel, including outside the assigned route and while minimized.'
     : weakRouteSignal ? 'No entry or exit will be confirmed until fresh, accurate GPS readings return.'
-    : awaitingEntry ? 'Entry needs three accurate readings over at least 10 seconds. Your trip is not recorded yet.'
+    : !mapRouteLine ? 'Recording your GPS trail. Route entry detection is unavailable until the assigned route has a road line.'
+    : awaitingEntry ? 'Your trip is recording. Assigned-route entry is confirmed separately after accurate GPS readings.'
     : `${Math.round(routePresence.distanceMeters || 0)} m from the route · last checked ${formatTime(routePresence.lastCheckedAt)}`);
 
   const mapScreen = (
@@ -1655,14 +1670,14 @@ export default function CollectorScreen() {
                 </View>
               </View>
               <Pressable
-                accessibilityLabel={routePresence.enabled ? 'Turn off route monitoring' : 'Enable route monitoring'}
-                accessibilityRole="switch"
-                accessibilityState={{ checked: routePresence.enabled, disabled: isUpdatingGeofence }}
-                disabled={isUpdatingGeofence}
+                accessibilityLabel={routePresence.enabled ? 'End trip' : 'Start trip'}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: isUpdatingGeofence || (!routePresence.enabled && !monitoringEligible), busy: isUpdatingGeofence }}
+                disabled={isUpdatingGeofence || (!routePresence.enabled && !monitoringEligible)}
                 onPress={() => void (routePresence.enabled ? disableBackgroundGeofencing() : enableBackgroundGeofencing())}
-                style={[styles.monitoringSwitch, routePresence.enabled && styles.monitoringSwitchOn]}
+                style={[styles.tripButton, routePresence.enabled && styles.tripEndButton, (isUpdatingGeofence || (!routePresence.enabled && !monitoringEligible)) && {opacity:0.5}]}
               >
-                <View style={[styles.monitoringSwitchThumb, routePresence.enabled && styles.monitoringSwitchThumbOn]} />
+                <Text style={[styles.tripButtonText, routePresence.enabled && {color:'#086B42'}]}>{isUpdatingGeofence ? 'Please wait...' : routePresence.enabled ? 'End trip' : 'Start trip'}</Text>
               </Pressable>
             </View>
             {pendingRouteLogs > 0 && <Text style={styles.geofenceQueueText}>{pendingRouteLogs} route log{pendingRouteLogs === 1 ? '' : 's'} queued for sync{failedRouteLogs ? ` (${failedRouteLogs} need attention)` : ''}.</Text>}
@@ -1850,7 +1865,7 @@ export default function CollectorScreen() {
                 <View style={styles.historyCardMap}>
                   {MAPBOX_ACCESS_TOKEN ? (
                     <Mapbox.MapView key={group.id} scaleBarEnabled={false} styleURL={Mapbox.StyleURL.Light} style={styles.historyMapPreview} logoEnabled attributionEnabled logoPosition={{ bottom: 4, left: 4 }} attributionPosition={{ top: 4, right: 4 }} scrollEnabled={false} pitchEnabled={false} rotateEnabled={false} zoomEnabled={false}>
-                      <HistoryMapCamera center={historyGroupLastLocation(group)} zoom={15} />
+                      <HistoryMapCamera group={group} center={historyGroupLastLocation(group)} zoom={15} />
                       {group.routePath ? (
                         <Mapbox.ShapeSource id={`h-rp-${group.id}`} shape={routeLineFeature(group.routePath) ?? undefined}>
                           <Mapbox.LineLayer id={`h-rl-${group.id}`} style={{ lineCap: 'round', lineColor: '#9ca9a2', lineDasharray: [2, 2], lineJoin: 'round', lineOpacity: 0.7, lineWidth: 3 }} />
@@ -1927,7 +1942,7 @@ export default function CollectorScreen() {
         <View style={styles.collectorProfileCard}>
           <CollectorGradient />
           <View style={styles.profileIdentity}>
-            <View style={styles.avatar}>{profile?.profilePhotoUrl ? <Image accessibilityLabel="Profile picture" source={{ uri: profile.profilePhotoUrl }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{initial}</Text>}</View>
+            <ResidentAvatar uri={profile?.profilePhotoUrl} name={profile?.name} size={72}/>
             <View style={styles.flexText}>
               <Text style={styles.collectorName}>{collectorName}</Text>
               <Text style={styles.collectorRole}>Driver · {barangay}</Text>
@@ -1949,7 +1964,8 @@ export default function CollectorScreen() {
           <Text style={styles.accountHeading}>ACCOUNT DETAILS</Text>
           <SkeletonRegion state={profileSkeleton} placeholder={<SkeletonRows kind="account" count={6} />}>
           <AccountDetail label="Employee ID" value={profile?.employeeId || 'Not provided'} />
-          <AccountDetail label="Contact" value={profile?.contact || profile?.phone || 'Not provided'} />
+          <AccountDetail label="Contact" value={profile?.phone || profile?.contact || 'Not provided'} />
+          <AccountDetail label="Location" value={profile?.location || 'Not provided'} />
           <AccountDetail label="Email" value={profile?.email || 'Not provided'} />
           <AccountDetail label="Shift" value={displayShift(profile?.shift)} />
           <AccountDetail label="Assigned route" value={assignedRoute?.name || 'No route scheduled today'} />
@@ -1957,6 +1973,7 @@ export default function CollectorScreen() {
           </SkeletonRegion>
         </View>
 
+        <Pressable accessibilityRole="button" onPress={() => setEditingProfile(true)} style={{ minHeight: 56, borderRadius: 16, backgroundColor: '#E3F4EB', flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, marginTop: 20 }}><Feather name="edit-2" size={20} color="#086B42"/><Text style={{ color: '#086B42', fontSize: 16, fontWeight: '600' }}>Edit profile</Text></Pressable>
         <ProfileSettingsRow onSignOut={completeSignOut} />
         <Pressable accessibilityRole="button" onPress={signOut} style={styles.signOutButton}>
           <Feather color="#B3261E" name="log-out" size={20} />
@@ -1967,33 +1984,9 @@ export default function CollectorScreen() {
     </View>
   );
 
-  return (
-    <SafeAreaView edges={['left', 'right']} style={styles.safeArea}>
-      <StatusBar backgroundColor="#ffffff" style="dark" translucent={false} />
-      <View style={[styles.header, { paddingTop: insets.top }]}><View style={styles.brandHeader}><BrandMark height={48} width={150} /><View style={styles.headerCopy}><Text numberOfLines={1} adjustsFontSizeToFit style={styles.headerTitle}>{collectorName || 'Driver'}</Text><Text numberOfLines={1} adjustsFontSizeToFit style={styles.headerSubtitle}>Collector · Route Driver</Text></View></View></View>
-      <View style={styles.content}><TabTransition activeKey={activeTab}>{activeTab === 'map' ? mapScreen : activeTab === 'history' ? historyScreen : profileScreen}</TabTransition></View>
-      <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
-      <Modal animationType="slide" onRequestClose={() => setIsHistoryDetailVisible(false)} presentationStyle="fullScreen" visible={isHistoryDetailVisible}>
-        <SafeAreaView style={styles.historyDetailBackdrop}>
-          <View style={styles.historyDetailSheet}>
-            <ScrollView contentContainerStyle={styles.historyDetailScroll} showsVerticalScrollIndicator={false}>
-            <View style={styles.historyDetailHeader}>
-              <View style={styles.flexText}>
-                <Text style={styles.historyDetailEyebrow}>ROUTE HISTORY REPORT</Text>
-                <Text style={styles.historyDetailTitle}>{selectedHistoryGroup?.routeName || 'Collection details'}</Text>
-                <Text style={styles.historyDetailSubtitle}>Barangay {selectedHistoryGroup ? displayBarangay(selectedHistoryGroup.barangay) : ''} · {selectedHistoryGroup?.date || ''}</Text>
-              </View>
-              <Pressable accessibilityLabel="Close route history" onPress={() => setIsHistoryDetailVisible(false)} style={styles.historyDetailClose}>
-                <Feather color="#314238" name="x" size={20} />
-              </Pressable>
-            </View>
-              <View style={styles.historyDetailSegment}>
-                <Text style={styles.historySectionLabel}>SEGMENT TRAIL</Text>
-                <View style={styles.segmentTrailPanel}>
-                  <View style={styles.segmentTrailMapWrap}>
-                    {MAPBOX_ACCESS_TOKEN && selectedHistoryGroup ? (
-                      <Mapbox.MapView scaleBarEnabled={false} styleURL={Mapbox.StyleURL.Light} style={styles.segmentTrailMap} logoEnabled attributionEnabled scrollEnabled={false} pitchEnabled={false} rotateEnabled={false} zoomEnabled={false}>
-                        <HistoryMapCamera center={historyGroupLastLocation(selectedHistoryGroup)} zoom={16} />
+  const renderHistoryTrailMap = () => (MAPBOX_ACCESS_TOKEN && selectedHistoryGroup ? (
+                      <Mapbox.MapView scaleBarEnabled={false} styleURL={Mapbox.StyleURL.Light} style={styles.segmentTrailMap} logoEnabled attributionEnabled scrollEnabled={isHistoryMapExpanded} pitchEnabled={false} rotateEnabled={false} zoomEnabled={isHistoryMapExpanded}>
+                        <HistoryMapCamera group={selectedHistoryGroup} center={historyGroupLastLocation(selectedHistoryGroup)} zoom={16} />
                         {selectedHistoryGroup.routePath ? (
                           <Mapbox.ShapeSource id={`d-rp-${selectedHistoryGroup.id}`} shape={routeLineFeature(selectedHistoryGroup.routePath) ?? undefined}>
                             <Mapbox.LineLayer id={`d-expected-${selectedHistoryGroup.id}`} style={{ lineCap: 'round', lineColor: '#9ca9a2', lineDasharray: [2, 2], lineJoin: 'round', lineOpacity: 0.75, lineWidth: 4 }} />
@@ -2029,25 +2022,60 @@ export default function CollectorScreen() {
                         <Feather color="#8d9a93" name="map" size={28} />
                         <Text style={styles.segmentTrailCaption}>Route trail</Text>
                       </View>
-                    )}
+                    ));
+
+  if (editingProfile) return <WorkProfileEditor onClose={() => setEditingProfile(false)} onSaved={updated => { setSession(updated); setDriver(updated.user); }}/>;
+
+  return (
+    <SafeAreaView edges={['left', 'right']} style={styles.safeArea}>
+      <StatusBar backgroundColor="#ffffff" style="dark" translucent={false} />
+      <View style={[styles.header, { paddingTop: insets.top }]}><View style={styles.brandHeader}><BrandMark height={48} width={150} /><View style={styles.headerCopy}><Text numberOfLines={1} adjustsFontSizeToFit style={styles.headerTitle}>{collectorName || 'Driver'}</Text><Text numberOfLines={1} adjustsFontSizeToFit style={styles.headerSubtitle}>Collector · Route Driver</Text></View></View></View>
+      <View style={styles.content}><TabTransition activeKey={activeTab}>{activeTab === 'map' ? mapScreen : activeTab === 'history' ? historyScreen : profileScreen}</TabTransition></View>
+      <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
+      <Modal animationType="slide" onRequestClose={() => isHistoryMapExpanded ? setIsHistoryMapExpanded(false) : setIsHistoryDetailVisible(false)} presentationStyle="fullScreen" visible={isHistoryDetailVisible}>
+        <SafeAreaView style={styles.historyDetailBackdrop}>
+          <View style={styles.historyDetailSheet}>
+            {isHistoryMapExpanded ? <View style={{ flex: 1, padding: 16, gap: 12 }}>
+              <Pressable accessibilityRole="button" accessibilityLabel="Back to route history report" onPress={() => setIsHistoryMapExpanded(false)} style={styles.offlineMapButton}><Feather name="arrow-left" size={20} color="#0A7F4F" /><Text>Back to report</Text></Pressable>
+              <Text style={styles.historySectionLabel}>{selectedHistoryGroup?.routeName || 'Recorded trip'}</Text>
+              <View style={{ flex: 1, borderRadius: 20, overflow: 'hidden' }}>{renderHistoryTrailMap()}</View>
+              <Text style={styles.segmentTrailCaption}>Pinch to zoom and drag to explore. Red: recorded travel. Dashed: assigned route.</Text>
+            </View> : null}
+            <ScrollView style={isHistoryMapExpanded ? { display: 'none' } : undefined} scrollEnabled={!isHistoryMapExpanded} contentContainerStyle={[styles.historyDetailScroll, isHistoryMapExpanded && { flexGrow: 1 }]} showsVerticalScrollIndicator={false}>
+            <View style={styles.historyDetailHeader}>
+              <View style={styles.flexText}>
+                <Text style={styles.historyDetailEyebrow}>ROUTE HISTORY REPORT</Text>
+                <Text style={styles.historyDetailTitle}>{selectedHistoryGroup?.routeName || 'Collection details'}</Text>
+                <Text style={styles.historyDetailSubtitle}>Barangay {selectedHistoryGroup ? displayBarangay(selectedHistoryGroup.barangay) : ''} · {selectedHistoryGroup?.date || ''}</Text>
+              </View>
+              <Pressable accessibilityLabel="Close route history" onPress={() => { setIsHistoryMapExpanded(false); setIsHistoryDetailVisible(false); }} style={styles.historyDetailClose}>
+                <Feather color="#314238" name="x" size={20} />
+              </Pressable>
+            </View>
+              <View style={[styles.historyDetailSegment, isHistoryMapExpanded && { flex: 1 }]}><Pressable accessibilityRole="button" onPress={() => setIsHistoryMapExpanded(value => !value)} style={styles.offlineMapButton}><Feather name={isHistoryMapExpanded ? "minimize-2" : "maximize-2"} size={18} color="#0A7F4F" /><Text>{isHistoryMapExpanded ? "Back to report" : "View full map"}</Text></Pressable>
+                <Text style={styles.historySectionLabel}>SEGMENT TRAIL</Text>
+                <View style={styles.segmentTrailPanel}>
+                  <View style={[styles.segmentTrailMapWrap, isHistoryMapExpanded && { flex: 1 }]}>
+                    {!isHistoryMapExpanded ? renderHistoryTrailMap() : null}
                   </View>
+                  {!selectedHistoryGroup?.trailPath ? <Text style={styles.segmentTrailCaption}>No recorded GPS trail is available for this trip yet. The dashed line is the assigned route, not the truck?s travel. Check connectivity and refresh after syncing.</Text> : null}
                   <View style={styles.segmentTrailLegend}>
                     <Text style={styles.historySectionLabel}>LEGEND</Text>
                     <View style={styles.legendRow}>
                       <View style={[styles.legendSwatch, { backgroundColor: '#c53030' }]} />
-                      <Text style={styles.legendText}>Truck path — covered</Text>
+                      <Text style={styles.legendText}>Recorded GPS trail</Text>
                     </View>
                     <View style={styles.legendRow}>
                       <View style={[styles.legendSwatch, styles.legendSwatchDashed]} />
-                      <Text style={styles.legendText}>Expected path — not covered</Text>
+                      <Text style={styles.legendText}>Assigned route (reference)</Text>
                     </View>
                     <View style={styles.legendRow}>
                       <View style={styles.trailEntryDot} />
-                      <Text style={styles.legendText}>Entry time: {selectedHistoryGroup?.firstEntry ? formatTime(selectedHistoryGroup.firstEntry) : 'Not recorded'}</Text>
+                      <Text style={styles.legendText}>Stop entry: {selectedHistoryGroup?.firstEntry ? formatTime(selectedHistoryGroup.firstEntry) : 'Not recorded'}</Text>
                     </View>
                     <View style={styles.legendRow}>
                       <View style={styles.trailExitDot} />
-                      <Text style={[styles.legendText, !selectedHistoryGroup?.lastExit && styles.detailValueRed]}>Exit: {selectedHistoryGroup?.lastExit ? formatTime(selectedHistoryGroup.lastExit) : 'Not recorded'}</Text>
+                      <Text style={[styles.legendText, !selectedHistoryGroup?.lastExit && styles.detailValueRed]}>Stop exit: {selectedHistoryGroup?.lastExit ? formatTime(selectedHistoryGroup.lastExit) : 'Not recorded'}</Text>
                     </View>
                     {selectedHistoryGroup?.stopLogs.some((stopLog) => Number.isFinite(Number(stopLog.latitude)) && Number.isFinite(Number(stopLog.longitude))) ? (
                       <View style={styles.legendRow}>
@@ -2063,7 +2091,7 @@ export default function CollectorScreen() {
                     ) : null}
                   </View>
                 </View>
-                <Text style={styles.segmentFigCaption}>Fig. 1 — Segment traced via on-device geofencing. Red solid line: truck path. Dashed: uncovered portion.</Text>
+                <Text style={styles.segmentFigCaption}>Red: recorded travel, including outside the assigned route. Dashed: assigned route reference. Stop entry and exit are separate events.</Text>
               </View>
               <View style={styles.historyDetailTwoCol}>
                 <View style={styles.historyDetailColLeft}>
@@ -2268,8 +2296,8 @@ const styles = StyleSheet.create({
   offlineMapBadge: { alignItems: 'center', backgroundColor: '#ffffff', borderColor: '#eed3c4', borderRadius: 19, borderWidth: 1.5, elevation: 5, height: 38, justifyContent: 'center', left: 14, position: 'absolute', shadowColor: '#2b1408', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.16, shadowRadius: 4, width: 38, zIndex: 25 },
   mapPlaceholderText: { color: '#45685a', fontSize: 11, fontWeight: '700' },
   geofenceCard: { backgroundColor: 'rgba(255,255,255,0.96)', borderColor: '#cfe2d8', borderRadius: 13, borderWidth: 1, bottom: 12, left: 12, padding: 10, position: 'absolute', right: 12, shadowColor: '#234837', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.12, shadowRadius: 8 },
-  geofenceHeader: { alignItems: 'center', flexDirection: 'row', gap: 8, justifyContent: 'space-between' },
-  geofenceStatusRow: { alignItems: 'center', flex: 1, flexDirection: 'row', gap: 8 },
+  geofenceHeader: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'space-between' },
+  geofenceStatusRow: { alignItems: 'center', flex: 1, minWidth: 160, flexDirection: 'row', gap: 8 },
   geofenceTextWrap: { flex: 1 },
   geofenceTitle: { color: '#345345', fontSize: 11, fontWeight: '800' },
   geofenceCaption: { color: '#6d7d74', fontSize: 9, lineHeight: 13, marginTop: 2 },
@@ -2278,6 +2306,9 @@ const styles = StyleSheet.create({
   geofenceButtonDisabled: { opacity: 0.62 },
   geofenceButtonText: { color: '#ffffff', fontSize: 10, fontWeight: '800' },
   geofenceButtonTextEnabled: { color: '#286349' },
+  tripButton: { backgroundColor: '#0A7F4F', borderRadius: 14, minHeight: 48, paddingHorizontal: 16, paddingVertical: 12, justifyContent: 'center', alignItems: 'center' },
+  tripEndButton: { backgroundColor: '#E3F4EB' },
+  tripButtonText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
   monitoringSwitch: { backgroundColor: '#d7e1db', borderRadius: 14, height: 27, justifyContent: 'center', paddingHorizontal: 3, width: 48 },
   monitoringSwitchOn: { backgroundColor: '#14a87d' },
   monitoringSwitchThumb: { backgroundColor: '#ffffff', borderRadius: 11, height: 21, shadowColor: '#244738', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.16, shadowRadius: 2, width: 21 },

@@ -9,6 +9,7 @@ export default function AppSelect({
   onChange,
   options,
   placeholder = 'Select one',
+  popoverClassName,
   value,
 }) {
   const [internalValue, setInternalValue] = useState(value || defaultValue || '');
@@ -35,7 +36,7 @@ export default function AppSelect({
         <Select.Value placeholder={placeholder} />
         <Select.Indicator />
       </Select.Trigger>
-      <Select.Popover>
+      <Select.Popover className={popoverClassName}>
         <ListBox>
           {options.map((option) => (
             <ListBox.Item id={option.value} key={option.value} textValue={option.label}>

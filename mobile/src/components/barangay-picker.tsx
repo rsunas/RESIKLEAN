@@ -1,12 +1,14 @@
+import { SearchableSelect } from '@/components/searchable-select';
 import { useEffect, useState } from 'react';
 import { View } from 'react-native';
-import { AppSelect } from '@/components/app-select';
 import { AppText as Text } from '@/components/app-text';
 import type { CollectionLocationOption } from '@/types/resident-schedule';
 
 type BarangayPickerProps = {
-  appearance?: 'default' | 'auth';
+  appearance?: 'default' | 'auth' | 'profile';
   invalid?: boolean;
+  onSearchFocus?: () => void;
+  onSearchBlur?: () => void;
   value: string;
   onChange: (barangay: string) => void;
 };
@@ -19,7 +21,7 @@ type LocationsResponse = {
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 
-export function BarangayPicker({ value, onChange, appearance = 'default', invalid = false }: BarangayPickerProps) {
+export function BarangayPicker({ value, onChange, appearance = 'default', invalid = false, onSearchFocus, onSearchBlur }: BarangayPickerProps) {
   const [locations, setLocations] = useState<CollectionLocationOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -52,12 +54,17 @@ export function BarangayPicker({ value, onChange, appearance = 'default', invali
     return () => { cancelled = true; };
   }, []);
 
+
   return (
-    <View>
-      <AppSelect
+    <View style={{ alignSelf: 'stretch', width: '100%' }}>
+      <SearchableSelect
+        label="Collection location"
+        onSearchFocus={onSearchFocus}
+        onSearchBlur={onSearchBlur}
+        hideLabel
         appearance={appearance}
         invalid={invalid}
-        leadingIcon={appearance === 'auth' ? 'map-pin' : undefined}
+        leadingIcon="map-pin"
         disabled={isLoading || Boolean(error) || locations.length === 0}
         onChange={onChange}
         options={locations.map((location) => ({ description: `${location.area} · ${location.type}`, label: location.name, value: location.name }))}

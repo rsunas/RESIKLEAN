@@ -1,4 +1,4 @@
-import { Button, Card } from '@heroui/react';
+import { Button, Card, Modal } from '@heroui/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import AppSelect from './AppSelect.jsx';
 import { TRUCK_DIMENSION_LIMITS, validateTruckDimensions } from '../utils/truckDimensions';
@@ -124,11 +124,7 @@ export default function TruckManagementPanel({ token }) {
 
   const updateForm = (field, value) => setForm((current) => ({ ...current, [field]: value }));
 
-  const closeEditor = () => {
-    setEditingId(null);
-    setForm(EMPTY_TRUCK);
-    setIsEditorOpen(false);
-  };
+  const closeEditor = () => setIsEditorOpen(false);
 
   const openCreateEditor = () => {
     setEditingId(null);
@@ -257,8 +253,8 @@ export default function TruckManagementPanel({ token }) {
       <p className="truck-table-count">{isLoading ? 'Loading trucks…' : `${filteredTrucks.length} of ${trucks.length} active truck${trucks.length === 1 ? '' : 's'}`}</p>
     </Card>
 
-    {isEditorOpen ? <div className="modal-layer" onClick={closeEditor} role="presentation"><div aria-modal="true" className="truck-editor-modal" onClick={(event) => event.stopPropagation()} role="dialog"><form onSubmit={saveTruck}>
-      <div className="modal-header"><div><p className="eyebrow">Fleet registry</p><h2>{editingId ? 'Edit truck' : 'Add truck'}</h2></div><button aria-label="Close truck form" onClick={closeEditor} type="button"><FleetIcon name="close" size={20} /></button></div>
+    <Modal.Backdrop className="modal-layer truck-editor-backdrop" isOpen={isEditorOpen} isDismissable onOpenChange={open => { if (!open) closeEditor(); }}><Modal.Container className="truck-editor-container" placement="center"><Modal.Dialog className="truck-editor-modal" aria-labelledby="truck-editor-title"><form onSubmit={saveTruck}>
+      <div className="modal-header"><div><p className="eyebrow">Fleet registry</p><h2 id="truck-editor-title">{editingId ? 'Edit truck' : 'Add truck'}</h2></div><button aria-label="Close truck form" onClick={closeEditor} type="button"><FleetIcon name="close" size={20} /></button></div>
       <div className="truck-editor-body">
         <div className="truck-editor-grid"><label>Truck no.<input autoCapitalize="characters" onChange={(event) => updateForm('truckNumber', event.target.value)} placeholder="TR-101" required value={form.truckNumber} /></label><label>Plate no.<input autoCapitalize="characters" onChange={(event) => updateForm('plateNumber', event.target.value)} placeholder="ABC-1234" required value={form.plateNumber} /></label></div>
         <div className="truck-editor-grid"><label>Color<input onChange={(event) => updateForm('color', event.target.value)} placeholder="e.g. Blue or White" required value={form.color} /></label><label>Availability<AppSelect aria-label="Truck availability" className="truck-availability-select" onChange={(availability) => updateForm('availability', availability)} options={[{ label: 'Available', value: 'available' }, { label: 'Unavailable', value: 'unavailable' }]} value={form.availability} /></label></div>
@@ -268,7 +264,7 @@ export default function TruckManagementPanel({ token }) {
         <div className="capacity-preview"><span>Capacity (cu.m)</span><strong>{liveCapacity ? liveCapacity.toFixed(2) : '0.00'}</strong><p>Calculated automatically from length × width × height. This value cannot be edited.</p></div>
       </div>
       <div className="modal-footer"><Button className="outline-button" isDisabled={isSaving} onPress={closeEditor} type="button" variant="secondary">Cancel</Button><Button className="primary-button" isDisabled={isSaving} type="submit">{isSaving ? 'Saving…' : editingId ? 'Save changes' : 'Add truck'}</Button></div>
-    </form></div></div> : null}
+    </form></Modal.Dialog></Modal.Container></Modal.Backdrop>
 
     {selectedTruck ? <div className="modal-layer" onClick={() => setSelectedTruck(null)} role="presentation"><div aria-modal="true" className="truck-details-modal" onClick={(event) => event.stopPropagation()} role="dialog"><div className="modal-header"><div><p className="eyebrow">Fleet vehicle</p><h2>{selectedTruck.truckNumber}</h2></div><button aria-label="Close truck details" onClick={() => setSelectedTruck(null)} type="button"><FleetIcon name="close" size={20} /></button></div><div className="truck-details-grid"><div><span>Plate no.</span><strong>{selectedTruck.plateNumber}</strong></div><div><span>Color</span><strong className="truck-color"><i className="truck-color-dot" style={{ backgroundColor: getColorSwatch(selectedTruck.color) }} />{displayColor(selectedTruck.color)}</strong></div><div><span>Dimensions</span><strong>{formatDimensions(selectedTruck)} m</strong></div><div><span>Capacity</span><strong>{getCapacity(selectedTruck)?.toFixed(2) || '—'} cu.m</strong></div><div><span>Availability</span><strong><span className={`truck-availability availability-${selectedTruck.availability}`}>{selectedTruck.availability === 'unavailable' ? 'Unavailable' : 'Available'}</span></strong></div></div><div className="modal-footer"><Button className="outline-button" onPress={() => setSelectedTruck(null)} variant="secondary">Close</Button><Button className="primary-button" onPress={() => { setSelectedTruck(null); openEditEditor(selectedTruck); }}>Edit truck</Button></div></div></div> : null}
 

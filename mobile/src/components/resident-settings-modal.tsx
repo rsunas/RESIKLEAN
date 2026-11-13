@@ -1,3 +1,4 @@
+import { ResidentAvatar } from './resident-avatar';
 /**
  * ResidentSettingsModal
  *
@@ -18,7 +19,6 @@
 
 import { Feather, MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-icons';
 import { useCallback, useEffect, useState } from 'react';
-import { LinearGradient } from 'expo-linear-gradient';
 import { Tabs } from 'heroui-native';
 import {
   ActivityIndicator,
@@ -243,7 +243,7 @@ function FaqItem({ question, answer }: { question: string; answer: string }) {
 
 // ─── Change Password Modal ────────────────────────────────────────────────────
 
-function ChangePasswordModal({
+export function ChangePasswordModal({
   visible,
   apiUrl,
   token,
@@ -279,8 +279,10 @@ function ChangePasswordModal({
   };
 
   const handleClose = () => {
-    reset();
-    onClose();
+    if (loading) return;
+    const discard = () => { reset(); onClose(); };
+    if (currentPassword || newPassword || confirmPassword) Alert.alert('Discard password changes?', 'Your unsaved password will be cleared.', [{ text: 'Keep editing', style: 'cancel' }, { text: 'Discard', style: 'destructive', onPress: discard }]);
+    else discard();
   };
 
   const handleSubmit = async () => {
@@ -328,7 +330,7 @@ function ChangePasswordModal({
   };
 
   return (
-    <Modal animationType="slide" onRequestClose={handleClose} transparent visible={visible}>
+    <Modal animationType="fade" onRequestClose={handleClose} transparent visible={visible}>
       <View style={ss.cpBackdrop}>
         <Pressable onPress={handleClose} style={StyleSheet.absoluteFill} />
         <View style={[ss.cpSheet, { paddingBottom: insets.bottom + 20 }]}>
@@ -578,7 +580,6 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
   // ── Derived display values ─────────────────────────────────────────────────
 
   const displayName = session.user.name?.trim() || 'Resident';
-  const firstInitial = displayName.charAt(0).toUpperCase();
 
   const fallbackHotlines = appInfo?.hotlines ?? [{ label: 'SWMO Hotline', number: '(054) 881-2550' }];
   const fallbackAddress = appInfo?.address ?? 'Municipal Office, Naga City';
@@ -625,9 +626,7 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
 
             {/* ── Account card ────────────────────────────────── */}
             <View style={ss.accountCard}>
-              <LinearGradient colors={['#24846E', '#0D2E27']} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={ss.accountAvatar}>
-                <Text style={ss.accountAvatarText}>{firstInitial}</Text>
-              </LinearGradient>
+              <ResidentAvatar uri={session.user.profilePhotoUrl} name={displayName} size={56}/>
               <View style={{ flex: 1 }}>
                 <Text style={ss.accountName}>{displayName}</Text>
                 {session.user.email ? <Text style={ss.accountEmail}>{session.user.email}</Text> : null}

@@ -1,3 +1,6 @@
+import { ResidentProfileEditor } from '@/components/resident-profile-editor';
+import { ResidentAvatar } from '@/components/resident-avatar';
+import { ResidentComplaintConversation } from '@/components/resident-complaint-conversation';
 import { Feather, MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -10,6 +13,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Platform,
   ScrollView,
   StyleSheet,
   TextInput,
@@ -24,7 +28,6 @@ import { SkeletonBlock, SkeletonRegion, SkeletonRows, useSkeletonVisible } from 
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Card } from 'heroui-native';
 import { House, MessageCircleWarning, Newspaper, UserRound } from 'lucide-react-native';
-import { BarangayPicker } from '@/components/barangay-picker';
 import { BrandMark } from '@/components/brand-mark';
 import { cancelScheduledCollectionReminders, scheduleCollectionReminders } from '@/lib/notifications';
 import { clearSession, getSession, saveSession, type AuthSession } from '@/lib/session';
@@ -405,34 +408,6 @@ function RealtimeStatus({ status }: { status: SocketStatus }) {
   );
 }
 
-function ReportStatusTracker({ status }: { status: ApiReport['status'] }) {
-  const normalized = status.toLowerCase();
-  const currentStep = normalized === 'resolved' ? 2 : normalized === 'verified' || normalized === 'scheduled' ? 1 : 0;
-  const rejected = normalized === 'rejected';
-  const stages = ['Submitted', 'Acknowledged\nScheduled', 'Resolved'];
-
-  return (
-    <View style={styles.reportStatusTracker}>
-      <Text style={styles.trackerTitle}>STATUS TRACKER</Text>
-      {rejected ? (
-        <Text style={styles.rejectedTrackerText}>This report was rejected.</Text>
-      ) : (
-        <View style={styles.trackerStages}>
-          {stages.map((stage, index) => (
-            <View key={stage} style={styles.trackerStage}>
-              {index < stages.length - 1 ? <View style={[styles.trackerConnector, index < currentStep && styles.trackerConnectorActive]} /> : null}
-              <View style={[styles.trackerDot, index <= currentStep && styles.trackerDotActive]}>
-                {index < currentStep ? <Feather color="#ffffff" name="check" size={10} /> : null}
-              </View>
-              <Text style={[styles.trackerLabel, index <= currentStep && styles.trackerLabelActive]}>{stage}</Text>
-            </View>
-          ))}
-        </View>
-      )}
-    </View>
-  );
-}
-
 function BottomNavigation({ activeTab, onChange }: { activeTab: ResidentTab; onChange: (tab: ResidentTab) => void }) {
   const insets = useSafeAreaInsets();
   const pill = useSlidingTabPill(activeTab);
@@ -567,6 +542,8 @@ export default function ResidentScreen() {
   const [profileName, setProfileName] = useState('');
   const [profilePhone, setProfilePhone] = useState('');
   const [profileLocation, setProfileLocation] = useState('');
+  const [profilePhoto, setProfilePhoto] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [profilePhotoRemoved, setProfilePhotoRemoved] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileMessage, setProfileMessage] = useState('');
   const [isSettingsVisible, setIsSettingsVisible] = useState(false);
@@ -580,7 +557,6 @@ export default function ResidentScreen() {
   const [messageError, setMessageError] = useState('');
   const scheduleSkeleton = useSkeletonVisible(isLoadingSchedule, Boolean(schedule), scheduleError, session?.user.id);
   const reportsSkeleton = useSkeletonVisible(isLoadingReports, pastReports.length > 0, reportError, session?.user.id);
-  const messagesSkeleton = useSkeletonVisible(isLoadingMessages, reportMessages.length > 0, messageError, selectedReport?._id);
   const revealReports = useFirstLoadReveal(isLoadingReports, pastReports.length > 0, reportsSkeleton.pending, session?.user._id || session?.user.id);
   const revealSchedule = useFirstLoadReveal(isLoadingSchedule, Boolean(schedule), scheduleSkeleton.pending, session?.user._id || session?.user.id);
 
@@ -831,7 +807,6 @@ export default function ResidentScreen() {
   }, [session?.user.barangay, session?.user.location, session?.user.name, session?.user.phone]);
 
   const displayName = session?.user.name?.trim() || 'Resident';
-  const firstInitial = displayName.charAt(0).toUpperCase();
   const location = session?.user.location || session?.user.barangay || 'Location not set';
   const phone = session?.user.phone || 'Phone number not set';
 
@@ -866,113 +841,23 @@ export default function ResidentScreen() {
       <Modal animationType="slide" onRequestClose={() => setSelectedReport(null)} transparent visible={reportDetailsOpen}>
         <View style={styles.reportModalBackdrop}>
           <Pressable accessibilityLabel="Close report details" onPress={() => setSelectedReport(null)} style={styles.reportModalDismissArea} />
-          <View style={[styles.reportDetailsSheet, { paddingBottom: insets.bottom + 12 }]}>
-            <View style={styles.reportDetailsHeader}>
-              <Pressable accessibilityLabel="Back to complaints" accessibilityRole="button" onPress={() => setSelectedReport(null)} style={styles.reportDetailsBack}>
-                <Feather color="#07815f" name="chevron-left" size={23} />
-              </Pressable>
-              <View style={styles.reportDetailsHeaderText}>
-                <Text style={styles.reportDetailsEyebrow}>SWMO SUPPORT</Text>
-                <Text numberOfLines={1} style={styles.reportDetailsTitle}>{getReportSubject(selectedReport)}</Text>
-              </View>
-              <StatusPill status={selectedReport.status} />
-            </View>
-
-            <ScrollView contentContainerStyle={styles.reportDetailsContent} showsVerticalScrollIndicator={false}>
-              {selectedReport.photoUrl ? (
-                <ExpoImage accessibilityLabel="Submitted waste photo" contentFit="cover" source={{ uri: selectedReport.photoUrl }} style={styles.reportDetailsPhoto} transition={200} />
-              ) : (
-                <View style={styles.reportNoPhotoCard}>
-                  <MaterialCommunityIcons color="#07815f" name="image-off-outline" size={28} />
-                  <Text style={styles.reportNoPhotoText}>Submitted photo unavailable</Text>
-                </View>
-              )}
-
-              <View style={styles.reportDetailsStatusRow}>
-                <StatusPill status={selectedReport.status} />
-                <Text style={styles.reportDetailsDate}>{formatDate(selectedReport.createdAt, { month: 'short', day: 'numeric', year: 'numeric' })}</Text>
-              </View>
-
-              <ReportStatusTracker status={selectedReport.status} />
-
-              {/* AI Verification Banner */}
-              <View style={selectedReport.aiVerified ? styles.aiVerifiedBanner : styles.aiUnverifiedBanner}>
-                <View style={selectedReport.aiVerified ? styles.aiBadgeIconSuccess : styles.aiBadgeIconWarning}>
-                  <Feather color={selectedReport.aiVerified ? '#07815f' : '#8d5a1b'} name={selectedReport.aiVerified ? 'check-circle' : 'info'} size={15} />
-                </View>
-                <View style={styles.aiTextColumn}>
-                  <View style={styles.aiTitleRow}>
-                    <Text style={selectedReport.aiVerified ? styles.aiVerifiedTitle : styles.aiUnverifiedTitle}>
-                      {selectedReport.aiVerified
-                        ? 'AI Verified: Waste Confirmed'
-                        : 'AI Status: Manual Review'}
-                    </Text>
-                    {selectedReport.aiVerified && typeof selectedReport.aiConfidence === 'number' ? (
-                      <View style={styles.aiConfidenceBadge}>
-                        <Text style={styles.aiConfidenceText}>{Math.round(selectedReport.aiConfidence * 100)}% Match</Text>
-                      </View>
-                    ) : null}
-                  </View>
-                  <Text style={selectedReport.aiVerified ? styles.aiVerifiedSubtext : styles.aiUnverifiedSubtext}>
-                    {selectedReport.detectedBagCount
-                      ? `${selectedReport.detectedBagCount} waste bag(s) identified by Roboflow model`
-                      : selectedReport.aiVerified
-                      ? 'Waste detected in submitted photo'
-                      : 'Not automatically verified · Under SWMO staff inspection'}
-                  </Text>
-                </View>
-              </View>
-
-              <Text style={styles.reportDetailsSectionTitle}>REPORT INFORMATION</Text>
-              <View style={styles.reportDetailsInfoCard}>
-                <View style={styles.reportDetailIcon}><Feather color="#07815f" name="map-pin" size={16} /></View>
-                <View style={styles.reportDetailInfoText}>
-                  <Text style={styles.reportDetailLabel}>Location</Text>
-                  <Text style={styles.reportDetailValue}>{selectedReport.barangay || 'Location not recorded'}</Text>
-                </View>
-              </View>
-              <View style={styles.reportDetailsInfoCard}>
-                <View style={styles.reportDetailIcon}><MaterialCommunityIcons color="#07815f" name="sack-outline" size={17} /></View>
-                <View style={styles.reportDetailInfoText}>
-                  <Text style={styles.reportDetailLabel}>Detected bag count</Text>
-                  <Text style={styles.reportDetailValue}>{getDetectedBagCount(selectedReport)}</Text>
-                </View>
-              </View>
-
-              {selectedReport.description ? (
-                <View style={styles.reportDescriptionCard}>
-                  <Text style={styles.reportDetailLabel}>Your note</Text>
-                  <Text style={styles.reportDescriptionDetail}>{getReportBody(selectedReport)}</Text>
-                </View>
-              ) : null}
-
-              {selectedReport.photoMetadata ? (
-                <View style={styles.reportDescriptionCard}>
-                  <Text style={styles.reportDetailLabel}>Photo metadata</Text>
-                  <Text style={styles.reportDescriptionDetail}>
-                    {selectedReport.photoMetadata.capturedAt ? `Captured ${formatDate(selectedReport.photoMetadata.capturedAt, { dateStyle: 'medium', timeStyle: 'short' })}` : 'Capture time unavailable'}
-                    {selectedReport.photoMetadata.latitude != null && selectedReport.photoMetadata.longitude != null ? ` · GPS ${selectedReport.photoMetadata.latitude.toFixed(5)}, ${selectedReport.photoMetadata.longitude.toFixed(5)}` : ''}
-                    {selectedReport.photoMetadata.width && selectedReport.photoMetadata.height ? ` · ${selectedReport.photoMetadata.width} × ${selectedReport.photoMetadata.height}px` : ''}
-                    {selectedReport.photoMetadata.fileSize ? ` · ${formatFileSize(selectedReport.photoMetadata.fileSize)}` : ''}
-                  </Text>
-                </View>
-              ) : null}
-
-              <Text style={styles.reportDetailsSectionTitle}>CHAT WITH SWMO</Text>
-              <View style={styles.reportChatCard}>
-                <SkeletonRegion state={messagesSkeleton} placeholder={<SkeletonRows kind="chat" count={4} />}>
-                {!reportMessages.length ? <Text style={styles.reportChatEmpty}>No messages yet. Send a message to the collection team.</Text> : null}
-                {!reportMessages.some((message) => message.senderRole === 'resident') ? <View style={[styles.reportChatMessage, styles.reportChatMessageResident]}><Text style={styles.reportChatSender}>You</Text><Text style={styles.reportChatBody}>{getReportBody(selectedReport)}</Text><Text style={styles.reportChatTime}>{formatDate(selectedReport.createdAt, { dateStyle: 'medium', timeStyle: 'short' })}</Text></View> : null}
-                {reportMessages.map((message) => {
-                  const sender = typeof message.senderId === 'object' ? message.senderId.name || 'Collection team' : message.senderRole === 'resident' ? 'You' : 'Collection team';
-                  return <View key={message._id} style={[styles.reportChatMessage, message.senderRole === 'resident' ? styles.reportChatMessageResident : styles.reportChatMessageAdmin]}><Text style={styles.reportChatSender}>{sender}</Text><Text style={styles.reportChatBody}>{message.body}</Text><Text style={styles.reportChatTime}>{formatDate(message.createdAt, { dateStyle: 'medium', timeStyle: 'short' })}</Text></View>;
-                })}
-                </SkeletonRegion>
-                {messageError ? <Text style={styles.errorMessage}>{messageError}</Text> : null}
-                <View style={styles.reportChatComposer}><TextInput maxLength={1000} onChangeText={setMessageDraft} placeholder="Write a message..." placeholderTextColor="#9aa69f" style={styles.reportChatInput} value={messageDraft} /><Pressable disabled={isSendingMessage || !messageDraft.trim()} onPress={sendReportMessage} style={[styles.reportChatSend, (isSendingMessage || !messageDraft.trim()) && styles.disabledButton]}><Text style={styles.reportChatSendText}>{isSendingMessage ? '...' : 'Send'}</Text></Pressable></View>
-              </View>
-            </ScrollView>
-          </View>
+          <ResidentComplaintConversation
+            key={selectedReport._id}
+            residentName={displayName} residentPhoto={session?.user.profilePhotoUrl}
+            report={selectedReport}
+            subject={getReportSubject(selectedReport)}
+            body={getReportBody(selectedReport)}
+            bags={getDetectedBagCount(selectedReport)}
+            metadata={selectedReport.photoMetadata ? [
+              selectedReport.photoMetadata.capturedAt ? `Captured ${formatDate(selectedReport.photoMetadata.capturedAt, {dateStyle:'medium',timeStyle:'short'})}` : 'Capture time unavailable',
+              selectedReport.photoMetadata.latitude != null && selectedReport.photoMetadata.longitude != null ? `GPS ${Number(selectedReport.photoMetadata.latitude).toFixed(5)}, ${Number(selectedReport.photoMetadata.longitude).toFixed(5)}` : '',
+              selectedReport.photoMetadata.width && selectedReport.photoMetadata.height ? `${selectedReport.photoMetadata.width} x ${selectedReport.photoMetadata.height}px` : '',
+              selectedReport.photoMetadata.fileSize ? formatFileSize(selectedReport.photoMetadata.fileSize) : '',
+            ].filter(Boolean).join(' \u00b7 ') : ''}
+            messages={reportMessages} loading={isLoadingMessages} sending={isSendingMessage}
+            error={messageError} draft={messageDraft} setDraft={setMessageDraft}
+            send={sendReportMessage} onClose={() => setSelectedReport(null)} bottomInset={insets.bottom}
+          />
         </View>
       </Modal>
     );
@@ -1341,20 +1226,27 @@ export default function ResidentScreen() {
     setIsSavingProfile(true);
     setProfileMessage('');
     try {
-      const response = await fetch(`${API_URL}/auth/me`, {
-        method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${session.token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: profileName.trim(),
-          phone: profilePhone.trim(),
-          location: profileLocation.trim(),
-          // Keep the legacy field populated until all existing accounts migrate.
-          barangay: profileLocation.trim(),
-        }),
-      });
+      const fields = {
+        name: profileName.trim(), phone: profilePhone.trim(),
+        location: profileLocation.trim(), barangay: profileLocation.trim(),
+        ...(profilePhotoRemoved ? { profilePhotoUrl: '' } : {}),
+      };
+      let body: string | FormData = JSON.stringify(fields);
+      const headers: Record<string, string> = { Authorization: `Bearer ${session.token}` };
+      if (profilePhoto) {
+        const form = new FormData();
+        Object.entries(fields).forEach(([key, value]) => form.append(key, value));
+        if (Platform.OS === 'web') {
+          const file = profilePhoto.file || await (await fetch(profilePhoto.uri)).blob();
+          form.append('avatar', file, profilePhoto.fileName || 'profile.jpg');
+        } else {
+          form.append('avatar', { uri: profilePhoto.uri, name: profilePhoto.fileName || 'profile.jpg', type: profilePhoto.mimeType || 'image/jpeg' } as unknown as Blob);
+        }
+        body = form;
+      } else {
+        headers['Content-Type'] = 'application/json';
+      }
+      const response = await fetch(`${API_URL}/auth/me`, { method: 'PATCH', headers, body });
       const result = (await response.json()) as ApiResponse<AuthSession['user']>;
       if (!response.ok || !result.success || !result.data) {
         throw new Error(result.error || 'Unable to update your profile.');
@@ -1364,6 +1256,7 @@ export default function ResidentScreen() {
       await saveSession(updatedSession);
       setSession(updatedSession);
       setIsEditingProfile(false);
+      setProfilePhoto(null);
       setProfileMessage('Profile updated.');
     } catch (error) {
       setProfileMessage(error instanceof Error ? error.message : 'Unable to update your profile.');
@@ -1428,7 +1321,7 @@ export default function ResidentScreen() {
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
       <HomeSectionLabel first label="Next collection" />
       {isLoadingSchedule && schedule ? <ActivityIndicator accessibilityLabel="Loading" color="#0A7F4F" /> : null}
-      <SkeletonRegion state={scheduleSkeleton} placeholder={<View style={styles.nextCollectionSkeleton}><SkeletonBlock height={196} radius={24} /></View>}>
+      <SkeletonRegion state={scheduleSkeleton} placeholder={<View style={styles.nextCollectionSkeleton}><SkeletonBlock height={170} radius={24} /></View>}>
       <View style={styles.nextCollectionCard}>
         <LinearGradient pointerEvents="none" colors={toWasteLabel(schedule?.nextWasteType) === 'Non-Biodegradable' ? ['#286AC4', '#102D54'] : ['#24846E', '#0D2E27']} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={styles.collectionGradient} />
         <View pointerEvents="none" style={styles.gradientContrast} />
@@ -1552,24 +1445,11 @@ export default function ResidentScreen() {
   const profileScreen = (
     <ScrollView contentContainerStyle={styles.profileContent} showsVerticalScrollIndicator={false}>
       <Text accessibilityRole="header" style={styles.profileTitle}>Profile</Text>
-      {isEditingProfile ? <Card style={styles.profileCard}>
-          <Text style={styles.profileEditTitle}>Edit Profile</Text>
-          <Text style={styles.profileFieldLabel}>Full Name</Text>
-          <TextInput autoCapitalize="words" onChangeText={setProfileName} style={styles.profileInput} value={profileName} />
-          <Text style={styles.profileFieldLabel}>Phone Number</Text>
-          <TextInput keyboardType="phone-pad" onChangeText={setProfilePhone} style={styles.profileInput} value={profilePhone} />
-          <Text style={styles.profileFieldLabel}>Collection Location</Text>
-          <BarangayPicker onChange={setProfileLocation} value={profileLocation} />
-          {profileMessage ? <ToastMotion><Text accessibilityRole="alert" style={profileMessage === 'Profile updated.' ? styles.successMessage : styles.errorMessage}>{profileMessage}</Text></ToastMotion> : null}
-          <View style={styles.profileEditActions}>
-            <Pressable disabled={isSavingProfile} onPress={() => { setIsEditingProfile(false); setProfileMessage(''); }} style={styles.profileCancelButton}><Text style={styles.profileCancelText}>Cancel</Text></Pressable>
-            <Pressable disabled={isSavingProfile} onPress={saveProfile} style={[styles.profileSaveButton, isSavingProfile && styles.disabledButton]}>{isSavingProfile ? <ActivityIndicator color="#ffffff" /> : <Text style={styles.profileSaveText}>Save Changes</Text>}</Pressable>
-          </View>
-      </Card> : <View style={styles.profileHero}>
+      {<View style={styles.profileHero}>
           <LinearGradient pointerEvents="none" colors={['#24846E', '#0D2E27']} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={styles.collectionGradient} />
           <View pointerEvents="none" style={styles.gradientContrast} />
           <View style={styles.profileHeroRow}>
-            <View accessible={false} style={styles.avatar}><Text maxFontSizeMultiplier={1.5} style={styles.avatarText}>{firstInitial}</Text></View>
+            <ResidentAvatar uri={session?.user.profilePhotoUrl} name={displayName} size={72}/>
             <View style={styles.profileHeroCopy}>
               <Text style={styles.profileName}>{displayName}</Text>
               {session?.user.phone?.trim() ? <View style={styles.profileContactRow}>
@@ -1583,7 +1463,7 @@ export default function ResidentScreen() {
             </View>
           </View>
           <View style={styles.profileHeroDivider} />
-          <Pressable accessibilityRole="button" onPress={() => { setProfileMessage(''); setIsEditingProfile(true); }} style={styles.editProfileButton}><Feather color="#0B5D44" name="edit-2" size={20} /><Text style={styles.editProfileText}>Edit Profile</Text></Pressable>
+          <Pressable accessibilityRole="button" onPress={() => { setProfileMessage(''); setProfilePhoto(null); setProfilePhotoRemoved(false); setProfileName(session?.user.name || ''); setProfilePhone(session?.user.phone || ''); setProfileLocation(session?.user.location || session?.user.barangay || ''); setIsEditingProfile(true); }} style={styles.editProfileButton}><Feather color="#0B5D44" name="edit-2" size={20} /><Text style={styles.editProfileText}>Edit Profile</Text></Pressable>
           {profileMessage ? <ToastMotion><Text style={styles.profileHeroMessage}>{profileMessage}</Text></ToastMotion> : null}
       </View>}
 
@@ -1598,6 +1478,8 @@ export default function ResidentScreen() {
   );
 
   const tabScreen = useMemo(() => ({ home: homeScreen, schedule: scheduleScreen, report: reportScreen, profile: profileScreen })[activeTab], [activeTab, homeScreen, profileScreen, reportScreen, scheduleScreen]);
+
+  if (isEditingProfile && session) return <ResidentProfileEditor session={session} apiUrl={API_URL || ''} name={profileName} phone={profilePhone} location={profileLocation} photo={profilePhoto} removed={profilePhotoRemoved} busy={isSavingProfile} error={profileMessage} setName={setProfileName} setPhone={setProfilePhone} setLocation={setProfileLocation} setPhoto={setProfilePhoto} setRemoved={setProfilePhotoRemoved} save={saveProfile} close={() => { setIsEditingProfile(false); setProfilePhoto(null); setProfilePhotoRemoved(false); setProfileMessage(''); }}/>;
 
   return (
     <SafeAreaView edges={['left', 'right']} style={styles.safeArea}>
@@ -1700,14 +1582,14 @@ const styles = StyleSheet.create({
   selectedCalendarEventMeta: { alignItems: 'center', flexDirection: 'row', gap: 8, marginTop: 6 },
   selectedCalendarEventTime: { color: '#74847b', flex: 1, fontSize: 10 },
   selectedCalendarEmpty: { color: '#89978f', flex: 1, fontSize: 12, lineHeight: 18 },
-  nextCollectionCard: { backgroundColor: '#0D2E27', borderRadius: 24, overflow: 'hidden', padding: 20, marginTop: 12 },
+  nextCollectionCard: { backgroundColor: '#0D2E27', borderRadius: 24, overflow: 'hidden', padding: 16, marginTop: 10 },
   darkCardEyebrow: { color: '#b9e6d3', fontSize: 10, fontWeight: '800' },
-  nextDate: { color: '#FFFFFF', fontSize: 26, fontWeight: '700' },
+  nextDate: { color: '#FFFFFF', fontSize: 23, fontWeight: '700' },
   scheduleLoader: { marginTop: 12 },
-  nextInfoRow: { alignItems: 'flex-start', gap: 12, marginTop: 16 },
-  nextTime: { color: '#E3F4EB', fontSize: 15 },
-  darkDivider: { backgroundColor: 'rgba(255,255,255,0.2)', height: 1, marginVertical: 16 },
-  reminder: { color: '#E3F4EB', fontSize: 14 },
+  nextInfoRow: { alignItems: 'flex-start', gap: 8, marginTop: 12 },
+  nextTime: { color: '#E3F4EB', fontSize: 14 },
+  darkDivider: { backgroundColor: 'rgba(255,255,255,0.2)', height: 1, marginVertical: 12 },
+  reminder: { color: '#E3F4EB', fontSize: 13, lineHeight: 19 },
   cardHeading: { color: '#61746a', fontSize: 10, fontWeight: '800', letterSpacing: 0.3 },
   cardTopRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
   viewAll: { color: '#086B42', fontSize: 14, fontWeight: '600' },
@@ -1819,6 +1701,10 @@ const styles = StyleSheet.create({
   pastReportRow: { alignItems: 'center', borderBottomColor: '#eff2f0', borderBottomWidth: 1, flexDirection: 'row', justifyContent: 'space-between', minHeight: 62 },
   reportThumbnail: { alignItems: 'center', backgroundColor: '#D6E4DD', borderRadius: 14, height: 56, justifyContent: 'center', overflow: 'hidden', width: 56 },
   reportThumbnailImage: { height: '100%', width: '100%' },
+  profilePhotoEditor: { alignItems: 'center', gap: 10, marginBottom: 18 },
+  profilePhotoImage: { width: 72, height: 72, borderRadius: 36 },
+  profilePhotoButton: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#E3F4EB', borderRadius: 14, paddingHorizontal: 16, minHeight: 44 },
+  profilePhotoHint: { color: '#5A6761', fontSize: 12 },
   profileCard: { alignItems: 'center', backgroundColor: '#ffffff', borderColor: '#e0e8e3', borderRadius: 16, borderWidth: 1, padding: 18, shadowColor: '#173b2a', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.06, shadowRadius: 8 },
   profileContent: { paddingTop: 56, paddingHorizontal: 20, paddingBottom: 32 },
   profileTitle: { color: '#121A16', fontSize: 30, fontWeight: '700', letterSpacing: -0.6, marginBottom: 20 },

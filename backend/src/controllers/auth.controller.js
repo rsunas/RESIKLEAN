@@ -1,3 +1,4 @@
+const { uploadPhoto } = require('../services/cloudinary.service');
 const User = require('../models/User');
 const Route = require('../models/Route');
 const { signToken } = require('../utils/jwt');
@@ -134,6 +135,11 @@ const updateMe = async (req, res) => {
       }
     });
 
+    // Keep the legacy work contact field synchronized with self-service phone edits.
+    if (['collector', 'staff'].includes(user.role) && req.body.phone !== undefined) {
+      user.contact = req.body.phone;
+    }
+
     if (req.body.password !== undefined && req.body.password !== '') {
       if (typeof req.body.password !== 'string' || req.body.password.trim().length < 6) {
         return sendError(res, 'Password must be at least 6 characters', 400);
@@ -173,6 +179,12 @@ const updateMe = async (req, res) => {
           }
         }
       }
+      hasUpdates = true;
+    }
+
+    if (req.file) {
+      const photo = await uploadPhoto(req.file.buffer, 'resiklean/profiles');
+      user.profilePhotoUrl = photo.url;
       hasUpdates = true;
     }
 

@@ -77,7 +77,7 @@ function fixture(scale, count, category, expanded) {
   }
   const Icon = ({ size = 20 }) => React.createElement(View, { style: { width: size, height: size, flexShrink: 0 } });
   const LinearGradient = ({ colors, start: _start, end: _end, ...props }) => React.createElement(View, { ...props, style: [props.style, { backgroundImage: `linear-gradient(${colors.join(',')})` }] });
-  const ctx = { React, View, Text, Pressable, ScrollView: View, Card: View, Modal: View, TextInput, LinearGradient, Image: RN.Image, ExpoImage: RN.Image, ActivityIndicator: () => null,
+  const ctx = { ResidentAvatar: () => null, React, View, Text, Pressable, ScrollView: View, Card: View, Modal: View, TextInput, LinearGradient, Image: RN.Image, ExpoImage: RN.Image, ActivityIndicator: () => null,
     RevealRow: ({ children }) => children, ToastMotion: View, MotionChevron: View, AccordionBody: ({ expanded, children }) => expanded ? children : null,
     useSlidingTabPill: () => ({ indicator: null, itemLayout() {}, iconLayout() {} }), revealReports: false, revealSchedule: false,
     SkeletonRegion: ({ children }) => children, SkeletonBlock: () => null, SkeletonRows: () => null, useSkeletonVisible: () => ({ pending: false }), scheduleSkeleton: {}, reportsSkeleton: {}, messagesSkeleton: {},
@@ -171,7 +171,7 @@ function fixture(scale, count, category, expanded) {
       sections.push([`settings-${theme}-${language}`, tree]);
     }
   }
-  const profileContext = { ...ctx, CITY: 'Naga City', isEditingProfile: false, profileMessage: '', isSavingProfile: false,
+  const profileContext = { ...ctx, session: { user: {} }, profilePhoto: null, isPickingProfilePhoto: false, setProfilePhoto: action('profile-photo'), setProfilePhotoRemoved: action('photo-removed'), chooseProfilePhoto: action('choose-photo'), CITY: 'Naga City', isEditingProfile: false, profileMessage: '', isSavingProfile: false,
     displayName: count ? 'An exceptionally long resident name with several family names' : 'Richard', firstInitial: count ? 'A' : 'R',
     setProfileMessage: action('profile-message'), setIsEditingProfile: action('edit'), setIsSettingsVisible: action('settings'), signOut: action('signout'),
     profileName: 'Richard', profilePhone: '09661488173', profileLocation: 'Abella', setProfileName: action('profile-name'), setProfilePhone: action('profile-phone'), setProfileLocation: action('profile-location'), saveProfile: action('profile-save'), BarangayPicker: () => null,
@@ -197,14 +197,6 @@ function fixture(scale, count, category, expanded) {
     assert.equal(nodes.filter(item => item.props?.accessibilityLabel === 'Settings').length, 0, 'Duplicate gear button is removed');
     sections.push([`profile-${hasPhone}-${hasAddress}`, tree]);
   }
-  const editing = evaluate(resident.declarations.get('profileScreen'), { ...profileContext, isEditingProfile: true });
-  const editNodes = elements(editing);
-  editNodes.find(item => item.props?.style?.[0] === styles.profileSaveButton).props.onPress();
-  assert.equal(actions.at(-1).name, 'profile-save');
-  editNodes.find(item => item.props?.style === styles.profileCancelButton).props.onPress();
-  assert.ok(actions.some(item => item.name === 'edit' && item.args[0] === false));
-  assert.equal(editNodes.filter(item => item.type === TextInput).length, 2);
-  sections.push(['profile-edit', editing]);
   for (const [name, tree] of sections) fixtures.push(`<section data-screen="${name}" data-scale="${scale}" data-count="${count}" style="width:360px">${renderToStaticMarkup(tree)}</section>`);
 }
 for (const scale of [1, 2]) for (const count of [0, 1, 5]) for (const category of ['Biodegradable', 'Non-Biodegradable']) for (const expanded of [false, true]) fixture(scale, count, category, expanded);

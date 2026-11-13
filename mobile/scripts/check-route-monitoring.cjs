@@ -105,14 +105,17 @@ function evaluateScreen(name, context) {
 function screenFixture(consent = null, pausedDay = null, accept = true) {
   let preference = { consent, pausedDay };
   let prompts = 0;
+  let claimed = false;
   const calls = [];
   const consentPrompt = { request: async () => { prompts++; return accept; } };
   const context = {
+    activeTab: 'map', automaticTripPromptEligible: true, editingProfile: false, claimTripStartPrompt: async () => { if(claimed)return false; claimed=true;return true; },
     useCallback: fn => fn, isTogglingMonitoringRef: { current: false }, monitoringSuspendedRef: { current: false }, monitoringRequestRef: { current: 0 },
     monitoringContextRef: { current: { collectorId: config.collectorId, routeId: config.routeId, eligible: true } },
     collectorId: config.collectorId, assignedRoute: { _id: config.routeId, name: config.routeName, routePath: config.routePath }, mapRouteLine: {}, monitoringEligible: true,
     setIsUpdatingGeofence() {}, setGeofencingMessage() {}, setRoutePresence() {}, setIsGeofencingEnabled() {},
     getRouteMonitoringPreference: async () => preference,
+    getRouteProximityStatus: async () => ({ enabled: consent === true && !pausedDay, routeId: config.routeId }),
     setRouteMonitoringConsent: async (_, value) => { preference = { consent: value, pausedDay: null }; },
     pauseRouteMonitoringToday: async () => { preference.pausedDay = filter.monitoringDay(); },
     monitoringDay: filter.monitoringDay,
@@ -128,12 +131,27 @@ function screenFixture(consent = null, pausedDay = null, accept = true) {
   return { context, consentPrompt, calls, prompts: () => prompts, preference: () => preference, enable: evaluateScreen('enableBackgroundGeofencing', context), stop: evaluateScreen('disableBackgroundGeofencing', context), signOut: evaluateScreen('completeSignOut', context) };
 }
 
-test('first automatic setup explains background access, asks consent and then requests OS permission', async () => {
-  const screen = screenFixture(); await screen.enable({ automatic: true });
+test('explicit trip start explains background access, asks consent and then requests OS permission', async () => {
+  const screen = screenFixture(); await screen.enable();
   assert.equal(screen.prompts(), 1);
   assert.equal(screen.preference().consent, true);
   assert.deepEqual(screen.calls.find(call => call[0] === 'enable'), ['enable', { requestPermissions: true }]);
 });
+test('map auto-prompts once and Not now never starts recording', async () => {
+  const screen = screenFixture(null, null, false); await screen.enable({ automatic: true });
+  await screen.enable({ automatic: true });
+  assert.equal(screen.prompts(), 1);
+  assert.equal(screen.calls.some(call => call[0] === 'enable'), false);
+});
+test('automatic prompt starts only after approval and stays off other tabs', async () => {
+  const screen=screenFixture();await screen.enable({automatic:true});
+  assert.equal(screen.prompts(),1);
+  assert.deepEqual(screen.calls.find(call=>call[0]==='enable'),['enable',{requestPermissions:true}]);
+  const other=screenFixture();other.context.activeTab='history';
+  await evaluateScreen('enableBackgroundGeofencing',other.context)({automatic:true});
+  assert.equal(other.prompts(),0);
+});
+
 test('approved automatic setup never prompts again or clears a manual pause', async () => {
   const screen = screenFixture(true); await screen.enable({ automatic: true });
   assert.equal(screen.prompts(), 0);
@@ -142,8 +160,22 @@ test('approved automatic setup never prompts again or clears a manual pause', as
   assert.equal(paused.calls.some(call => call[0] === 'enable'), false);
   assert.equal(paused.preference().pausedDay, filter.monitoringDay());
 });
+test('automatic refresh preserves an active off-schedule trip without prompting or starting an idle one', async () => {
+  const active = screenFixture(true);
+  active.context.automaticTripPromptEligible = false;
+  await evaluateScreen('enableBackgroundGeofencing', active.context)({ automatic: true });
+  assert.equal(active.prompts(), 0);
+  assert.deepEqual(active.calls.find(call => call[0] === 'enable'), ['enable', { requestPermissions: false }]);
+  assert.equal(active.calls.some(call => call[0] === 'stop'), false);
+  const idle = screenFixture();
+  idle.context.automaticTripPromptEligible = false;
+  await evaluateScreen('enableBackgroundGeofencing', idle.context)({ automatic: true });
+  assert.equal(idle.prompts(), 0);
+  assert.equal(idle.calls.some(call => call[0] === 'enable'), false);
+});
+
 test('declining automatic setup stops old monitoring and does not request OS permissions', async () => {
-  const screen = screenFixture(null, null, false); await screen.enable({ automatic: true });
+  const screen = screenFixture(null, null, false); await screen.enable();
   assert.equal(screen.preference().consent, false);
   assert.equal(screen.calls.some(call => call[0] === 'enable'), false);
   assert.ok(screen.calls.some(call => call[0] === 'stop'));
@@ -158,20 +190,27 @@ test('manual switch-on resumes a paused day; switch-off saves the pause', async 
 test('sign-out while the opt-in prompt is open cannot start tracking afterwards', async () => {
   const screen = screenFixture(); let approve;
   screen.consentPrompt.request = () => new Promise(resolve => { approve = () => resolve(true); });
-  const enabling = screen.enable({ automatic: true });
+  const enabling = screen.enable();
   await new Promise(resolve => setImmediate(resolve));
   await screen.signOut(); approve(); await enabling;
   assert.equal(screen.calls.some(call => call[0] === 'enable'), false);
   assert.ok(screen.calls.some(call => call[0] === 'clear-session'));
 });
-test('only scheduled unfinished assignments qualify, and Finish route uses the stop path', async () => {
-  const context = { session: { token: 'fixture' }, assignedRoute: { routePath: config.routePath, schedule: [2], isScheduledToday: true, isCompletedToday: false }, scheduledWeekday: 2, isSubmittingRoute: false };
+test('manual trip start accepts assigned routes outside schedule, after an earlier trip, or without geometry', async () => {
+  const context = { session: { token: 'fixture' }, assignedRoute: { _id: config.routeId, routePath: config.routePath, schedule: [2], isScheduledToday: true, isCompletedToday: false }, scheduledWeekday: 2, isSubmittingRoute: false };
   assert.equal(evaluateScreen('monitoringEligible', context), true);
-  assert.equal(evaluateScreen('monitoringEligible', { ...context, scheduledWeekday: 3 }), false);
+  assert.equal(evaluateScreen('monitoringEligible', { ...context, scheduledWeekday: 3 }), true);
   assert.equal(evaluateScreen('monitoringEligible', { ...context, isSubmittingRoute: true }), false);
-  assert.equal(evaluateScreen('monitoringEligible', { ...context, assignedRoute: { ...context.assignedRoute, isCompletedToday: true } }), false);
+  assert.equal(evaluateScreen('monitoringEligible', { ...context, assignedRoute: null }), false);
+  assert.equal(evaluateScreen('monitoringEligible', { ...context, assignedRoute: { ...context.assignedRoute, routePath: null, isCompletedToday: true } }), true);
+  for (const changes of [{isScheduledToday:false},{isCompletedToday:true},{routePath:null}]) {
+    const screen=screenFixture();Object.assign(screen.context.assignedRoute,changes);screen.context.mapRouteLine=null;
+    await evaluateScreen('enableBackgroundGeofencing',screen.context)();
+    assert.ok(screen.calls.some(call=>call[0]==='enable'));
+  }
+  assert.equal(evaluateScreen('automaticTripPromptEligible',{...context,monitoringEligible:true}),true);
+  assert.equal(evaluateScreen('automaticTripPromptEligible',{...context,monitoringEligible:true,scheduledWeekday:3}),false);
   assert.ok(screenDeclarations.get('confirmRouteCompletion').includes('await disableBackgroundGeofencing()'));
-  assert.ok(!screenSource.text.includes('void recordDriverTrailLocation(location, collectorId)'));
 });
 
 test('three good fixes over ten seconds, then one entry event', async () => {
@@ -179,14 +218,14 @@ test('three good fixes over ten seconds, then one entry event', async () => {
   assert.equal((await service.enableRouteProximityTracking(config)).enabled, true);
   assert.equal(starts.length, 0);
   assert.equal(startedOptions.distanceInterval, 0, 'Stationary drivers must still receive confirmation samples');
-  assert.ok(startedOptions.foregroundService.notificationBody.includes('after entry'));
+  assert.ok(startedOptions.foregroundService.notificationBody.includes('outside the assigned route'));
   await sample(0, 10, 0);
   await sample();
   assert.equal(events().length, 0);
-  assert.equal(points.length, 0);
+  assert.equal(points.length, 2);
   await sample();
   assert.deepEqual(events().map(event => event.event_type), ['entered']);
-  assert.equal(points.length, 1);
+  assert.equal(points.length, 3);
   assert.equal((await service.getRouteProximityStatus()).state, 'on_route');
   await sample();
   assert.equal(events().length, 1);
@@ -194,7 +233,7 @@ test('three good fixes over ten seconds, then one entry event', async () => {
 test('accuracy uncertainty near the boundary cannot trigger entry', async () => {
   reset(); await service.enableRouteProximityTracking(config);
   for (let index = 0; index < 5; index++) await sample(35, 20);
-  assert.equal(events().length, 0); assert.equal(points.length, 0);
+  assert.equal(events().length, 0); assert.equal(points.length, 5);
   assert.equal((await service.getRouteProximityStatus()).state, 'unknown');
 });
 test('poor/null accuracy, mocked fixes, stale/future timestamps and invalid coordinates are rejected', async () => {
@@ -217,12 +256,12 @@ test('poor samples and long gaps reset confirmation rather than accumulate spars
   await sample(0, 10, 40000); await sample(); assert.equal(events().length, 0);
   await sample(); assert.equal(events().length, 1);
 });
-test('outside while waiting does not record a false exit or start a saved trip', async () => {
+test('outside the route records the trip without a false entry or exit', async () => {
   reset(); await service.enableRouteProximityTracking(config);
   await sample(120); await sample(120); await sample(120);
   const status = await service.getRouteProximityStatus();
   assert.equal(status.state, 'off_route'); assert.equal(status.hasEntered, false);
-  assert.equal(events().length, 0); assert.equal(points.length, 0);
+  assert.equal(events().length, 0); assert.equal(points.length, 3);
 });
 test('exit requires confirmation; boundary jitter does not flicker; re-entry is recorded once', async () => {
   reset(); await service.enableRouteProximityTracking(config);
@@ -244,7 +283,7 @@ test('background batch is sorted and uses the same detector while minimized', as
   reset(); await service.enableRouteProximityTracking(config);
   const first = now; now += 10000; appState.currentState = 'background';
   await tasks[service.DRIVER_ROUTE_PROXIMITY_TASK]({ data: { locations: [fix(first + 10000), fix(first), fix(first + 5000)] } });
-  assert.equal(events().length, 1); assert.equal(points.length, 1);
+  assert.equal(events().length, 1); assert.equal(points.length, 3);
 });
 test('confirmation survives a headless JS restart with the same local database', async () => {
   reset(); await service.enableRouteProximityTracking(config); await sample(); await sample();
@@ -284,13 +323,13 @@ test('revoking background permission stops an already running detector', async (
   background = 'denied';
   assert.equal((await service.enableRouteProximityTracking(config, { requestPermissions: false })).enabled, false);
   assert.equal(running, false);
-  await sample(); assert.equal(events().length, 0); assert.equal(points.length, 0);
+  await sample(); assert.equal(events().length, 0); assert.equal(points.length, 2);
 });
 test('manual stop invalidates queued fixes and status reads never restart monitoring', async () => {
   reset(); await service.enableRouteProximityTracking(config); await sample(); await sample();
   await service.stopRouteProximityTracking({ forgetConfiguration: true });
   await sample(); await sample(); await sample();
-  assert.equal(events().length, 0); assert.equal(points.length, 0);
+  assert.equal(events().length, 0); assert.equal(points.length, 2);
   assert.equal((await service.getRouteProximityStatus()).enabled, false);
   assert.equal(nativeStarts, 1);
   assert.equal(await service.updateRouteProximityTracking(config), false);
@@ -300,7 +339,7 @@ test('signed-out sessions cannot save trail points even if a native batch arrive
   reset(); await service.enableRouteProximityTracking(config); await sample(); await sample();
   signedIn = false;
   await sample(); await sample();
-  assert.equal(events().length, 0); assert.equal(points.length, 0);
+  assert.equal(events().length, 0); assert.equal(points.length, 2);
 });
 test('stop during a permission prompt cancels startup', async () => {
   reset(); background = 'denied';
@@ -336,10 +375,31 @@ test('consent and Manila-day pause survive restart and stay isolated by driver',
   assert.equal(filter.monitoringDay(new Date('2026-11-09T15:59:59Z')), '2026-11-09');
   assert.equal(filter.monitoringDay(new Date('2026-11-09T16:00:00Z')), '2026-11-10');
 });
-test('an invalid path cannot arm automatic monitoring', async () => {
+test('prompt suppression survives restart offline and is isolated by assignment, driver and Manila date', async () => {
   reset();
-  assert.equal((await service.enableRouteProximityTracking({ ...config, routePath: { type: 'LineString', coordinates: [] } })).enabled, false);
-  assert.equal(nativeStarts, 0);
+  assert.equal(await service.claimTripStartPrompt('driver-1','route-1'),true);
+  assert.equal(await service.claimTripStartPrompt('driver-1','route-1'),false);
+  tasks={};service=load('driver-route-proximity',dependencies);
+  assert.equal(await service.claimTripStartPrompt('driver-1','route-1'),false);
+  assert.equal(await service.claimTripStartPrompt('driver-1','route-2'),true);
+  assert.equal(await service.claimTripStartPrompt('driver-2','route-1'),true);
+  service=load('driver-route-proximity',{...dependencies,'./route-presence-filter':{...filter,monitoringDay:()=> '2099-01-01'}});
+  assert.equal(await service.claimTripStartPrompt('driver-1','route-1'),true);
+});
+
+test('missing or malformed route geometry records valid trails without false route events, including after restart', async () => {
+  for(const routePath of [null, {type:'LineString',coordinates:[]}, {type:'LineString',coordinates:[[0,95],[1,96]]}]) {
+    reset();assert.equal((await service.enableRouteProximityTracking({...config,routePath})).enabled,true);
+    await sample();await sample();await sample();assert.equal(points.length,3);assert.equal(events().length,0);
+    assert.equal((await service.getRouteProximityStatus()).state,'unknown');
+    tasks={};service=load('driver-route-proximity',dependencies);await sample();assert.equal(points.length,4);
+    await service.processDriverRouteLocation({...fix(now+5000),mocked:true},config);assert.equal(points.length,4);
+    await service.stopRouteProximityTracking();assert.equal((await service.getRouteProximityStatus()).enabled,false);
+  }
+});
+test('missing driver or assignment cannot start recording',async()=>{
+ reset();assert.equal((await service.enableRouteProximityTracking({...config,collectorId:undefined})).enabled,false);
+ assert.equal((await service.enableRouteProximityTracking({...config,routeId:''})).enabled,false);assert.equal(nativeStarts,0);
 });
 
 (async () => {

@@ -624,3 +624,130 @@ body.sidebar-is-collapsed .sidebar-collapse-toggle { left: 42px; top: 52px; }
   .accounts-toolbar > .navigation-tools > label { flex-basis: 100%; min-width: 0; }
   .accounts-toolbar > .navigation-tools > .app-select, .accounts-toolbar .accounts-action-button { flex: 1 1 160px; }
 }
+
+/* Keep navigation text intact while the sidebar changes width. */
+.admin-sidebar { min-width: 0; overflow-x: hidden; }
+.admin-sidebar nav { min-width: 0; }
+.admin-sidebar .nav-link, .admin-sidebar .signout-button { min-width: 0; overflow: hidden; white-space: nowrap; }
+.sidebar-label { flex: 0 0 auto; white-space: nowrap; }
+body.sidebar-is-collapsed .sidebar-label { display: none; }
+@media (min-width: 851px) {
+  body:not(.sidebar-is-collapsed) .sidebar-label { animation: sidebar-label-reveal 120ms ease-out 200ms both; }
+}
+@keyframes sidebar-label-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (max-width: 850px) {
+  .sidebar-label { display: none; }
+}
+@media (max-width: 640px) {
+  body.mobile-sidebar-is-open .sidebar-label { display: inline; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .admin-sidebar, .sidebar-collapse-toggle { transition: none; }
+  body:not(.sidebar-is-collapsed) .sidebar-label { animation: none; }
+}
+/* Header-free dashboard: page titles and actions stay in normal document flow. */
+.admin-shell .dashboard-content { padding: 24px 28px 32px; }
+.admin-shell .dashboard-content > .page-header { display: flex; justify-content: space-between; min-height: 0; margin: 0 0 18px; gap: 16px; }
+.admin-shell .dashboard-content > .page-header > div:first-child { position: static; inset: auto; min-width: 0; }
+.admin-sidebar { height: 100dvh; max-height: 100dvh; }
+.admin-sidebar > nav { flex: 1; align-content: start; overflow-y: auto; overflow-x: hidden; padding-bottom: 16px; flex-shrink: 1; min-height: 0; }
+.sidebar-account-area { flex-shrink: 0; border-top: 1px solid #e3ebe6; padding-top: 12px; margin-top: auto; }
+.sidebar-account { display: flex; align-items: center; justify-content: flex-start; gap: 10px; width: 100%; min-width: 0; height: 64px; padding: 10px; border-radius: 12px; background: #f3f7f5; color: #244437; text-align: left; }
+.sidebar-avatar { display: grid; place-items: center; flex: 0 0 36px; height: 36px; border-radius: 11px; background: #dcefe4; color: #086b42; font-size: 12px; font-weight: 800; }
+.sidebar-account .sidebar-account-copy { display: grid; flex: 1 1 auto; min-width: 0; gap: 3px; }
+.sidebar-account-copy strong { overflow: hidden; text-overflow: ellipsis; font-size: 13px; }
+.sidebar-account-copy small { color: #6b8074; font-size: 11px; font-weight: 400; }
+.sidebar-account-chevron { margin-left: auto; }
+.admin-sidebar .sidebar-notifications { position: relative; width: 100%; justify-content: flex-start; overflow: visible; flex-shrink: 0; }
+.notification-count { margin-left: auto; display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 7px; background: #e0f2e8; color: #086b42; font-size: 11px; font-weight: 750; }
+.sidebar-popover { z-index: 80; background: white; border: 1px solid #dce6df; border-radius: 16px; box-shadow: 0 12px 40px #17382a26; max-width: calc(100vw - 24px); }
+.notification-panel { width: 360px; }
+.sidebar-popover [role="dialog"] { padding: 16px; outline: none; }
+.sidebar-panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.sidebar-popover h2 { margin: 0; color: #193c2c; font-size: 16px; font-weight: 700; }
+.sidebar-popover p { margin: 5px 0 0; color: #6b8074; font-size: 12px; line-height: 1.5; }
+.notification-list { max-height: min(380px, 50dvh); overflow-y: auto; margin: 12px -4px; }
+.notification-item { display: flex; align-items: flex-start; gap: 10px; width: 100%; padding: 12px 8px; border: 0; border-radius: 10px; background: white; text-align: left; }
+.notification-item:hover { background: #f1f7f3; }
+.notification-item > span:last-child { display: grid; gap: 5px; min-width: 0; }
+.notification-item strong { font-size: 13px; color: #244437; }
+.notification-item span span { font-size: 12px; color: #5c7165; overflow-wrap: anywhere; }
+.notification-item small { font-size: 10px; color: #7c8c83; }
+.notification-item-icon { color: #0a7f4f; padding-top: 2px; flex-shrink: 0; }
+.notification-empty { display: grid; justify-items: center; gap: 8px; padding: 28px 12px; text-align: center; color: #729484; }
+.notification-empty strong { color: #315145; font-size: 14px; }
+.sidebar-panel-message { padding: 12px 0; }
+.sidebar-panel-footer { display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid #e5ece7; padding-top: 12px; }
+.account-panel { width: 240px; }
+.account-panel .account-signout { justify-content: flex-start; width: 100%; margin-top: 12px; color: #b42318; gap: 10px; }
+body.sidebar-is-collapsed .sidebar-account { padding: 4px; height: 48px; justify-content: center; }
+body.sidebar-is-collapsed .sidebar-account-copy, body.sidebar-is-collapsed .sidebar-account-chevron { display: none; }
+body.sidebar-is-collapsed .admin-sidebar .sidebar-notifications { width: 44px; justify-content: center; }
+body.sidebar-is-collapsed .notification-count { position: absolute; right: -3px; top: -2px; height: 17px; min-width: 17px; padding: 0 3px; font-size: 9px; border: 2px solid white; }
+@media (max-width: 1120px) and (min-width: 851px) { .admin-sidebar .nav-link { gap: 9px; padding-inline: 8px; font-size: 13px; } }
+@media (max-width: 850px) {
+  .admin-shell .dashboard-content { padding: 20px; }
+  .sidebar-account { padding: 4px; height: 48px; justify-content: center; }
+  .sidebar-account .sidebar-account-copy, .sidebar-account-chevron { display: none; }
+  .admin-sidebar .sidebar-notifications { justify-content: center; }
+  .notification-count { position: absolute; right: -3px; top: -2px; height: 17px; min-width: 17px; padding: 0 3px; font-size: 9px; border: 2px solid white; }
+}
+@media (max-width: 640px) {
+  .admin-shell .dashboard-content { padding: 16px 12px 24px; }
+  .admin-shell .dashboard-content > .page-header { min-height: 38px; margin-bottom: 16px; padding-left: 50px; justify-content: center; gap: 10px; }
+  body.mobile-sidebar-is-open .sidebar-account { padding: 10px; height: 64px; justify-content: flex-start; }
+  body.mobile-sidebar-is-open .sidebar-account-copy { display: grid; }
+  body.mobile-sidebar-is-open .sidebar-account-chevron { display: block; }
+  body.mobile-sidebar-is-open .admin-sidebar .sidebar-notifications { width: 100%; justify-content: flex-start; }
+  body.mobile-sidebar-is-open .notification-count { position: static; height: 22px; min-width: 22px; font-size: 11px; border: 0; }
+}
+@media (max-width: 640px) {
+  .sidebar-popover { position: fixed !important; left: 12px !important; right: 12px !important; top: 68px !important; width: auto; max-width: none; max-height: calc(100dvh - 84px); overflow-y: auto; }
+}
+/* Match the Add account opening motion and backdrop for Add/Edit truck. */
+.truck-editor-backdrop { background: rgba(13,30,24,.5); backdrop-filter: blur(2px); animation: truck-backdrop-in 200ms ease-out; }
+.truck-editor-backdrop .truck-editor-modal { animation: truck-editor-in 200ms ease-out; }
+@keyframes truck-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes truck-editor-in { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .truck-editor-backdrop, .truck-editor-backdrop .truck-editor-modal { animation: none; }
+}
+.truck-editor-backdrop .truck-editor-container { width: 520px; max-width: 100%; height: auto; min-height: 0; flex: none; padding: 0; margin: 0; }
+.truck-editor-container .truck-editor-modal { padding: 0; width: 100%; max-height: calc(100dvh - 48px); overflow-y: auto; outline: none; }
+.truck-editor-backdrop, .truck-editor-backdrop .truck-editor-modal { animation: none; }
+.truck-editor-backdrop[data-entering] { animation: truck-backdrop-in 200ms ease-out; }
+.truck-editor-backdrop[data-exiting] { animation: truck-backdrop-in 200ms ease-in reverse; }
+.truck-editor-container[data-entering] { animation: truck-editor-in 200ms ease-out; }
+.truck-editor-container[data-exiting] { animation: truck-editor-in 200ms ease-in reverse; }
+@media (prefers-reduced-motion: reduce) {
+  .truck-editor-backdrop, .truck-editor-container { animation: none !important; transition: none !important; }
+}
+/* Pages follow the available workspace width, including sidebar collapse. */
+.admin-workspace { flex: 1 1 0%; width: auto; min-width: 0; }
+.admin-shell .dashboard-content { width: 100%; max-width: none; min-width: 0; container-type: inline-size; container-name: dashboard; }
+.dashboard-content > * { min-width: 0; }
+.dashboard-content .truck-management-panel,
+.dashboard-content .route-management-panel { width: 100%; max-width: none; margin-inline: 0; }
+.dashboard-content .table-scroll,
+.dashboard-content .truck-table-scroll,
+.dashboard-content .route-table-scroll { max-width: 100%; min-width: 0; overflow-x: auto; }
+.truck-filter-row,
+.route-directory-toolbar,
+.route-assignment-toolbar { flex-wrap: wrap; }
+.truck-filter-row .truck-search-control { margin-right: auto; }
+.truck-search-control { min-width: 0; }
+.dashboard-content .page-header h2 { overflow-wrap: anywhere; }
+@container dashboard (max-width: 760px) {
+  .tonnage-overview-grid { grid-template-columns: minmax(0, 1fr); }
+  .tonnage-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: none; }
+  .truck-filter-row .truck-search-control,
+  .route-directory-toolbar .truck-search-control,
+  .route-assignment-toolbar .truck-search-control { flex-basis: 100%; max-width: none; }
+}
+@container dashboard (max-width: 540px) {
+  .metrics-grid { grid-template-columns: minmax(0, 1fr); }
+  .accounts-toolbar > .navigation-tools > label { min-width: 0; flex-basis: 100%; }
+}

@@ -1,14 +1,17 @@
-import { Button, Card } from '@heroui/react';
+import { Button, Card, Modal } from '@heroui/react';
 import mapboxgl from 'mapbox-gl';
 import MapboxDraw from '@mapbox/mapbox-gl-draw';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import '@mapbox/mapbox-gl-draw/dist/mapbox-gl-draw.css';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import BarangayCombobox from './BarangayCombobox';
+import AppSelect from './AppSelect.jsx';
+import './RouteEditor.css';
 
 const API_URL = import.meta.env.VITE_API_URL;
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const EMPTY_ROUTE = { name: '', barangayText: '', schedule: [], collectorId: '', stops: [], routePath: null };
+const EMPTY_ROUTE = { name: '', barangayText: '', schedule: [], shift: '', stops: [], routePath: null };
 
 function RouteIcon({ name, size = 18 }) {
   const paths = {
@@ -17,6 +20,8 @@ function RouteIcon({ name, size = 18 }) {
     edit: <><path d="m4 20 4.2-1 10.5-10.5a2.1 2.1 0 0 0-3-3L5.2 16 4 20Z" /><path d="m14.5 6.5 3 3" /></>,
     map: <><path d="m9 18-6 3V6l6-3 6 3 6-3v15l-6 3-6-3Z" /><path d="M9 3v15M15 6v15" /></>,
     plus: <path d="M12 5v14M5 12h14" />,
+    pin: <><path d="M20 10c0 6-8 11-8 11S4 16 4 10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="3" /></>,
+    route: <><circle cx="6" cy="6" r="3" /><circle cx="18" cy="18" r="3" /><path d="M9 6h7a4 4 0 0 1 0 8H8a4 4 0 0 0 0 8h4" /></>,
     stop: <><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="2" /></>,
     upload: <><path d="M12 16V3m0 0-4 4m4-4 4 4M4 14v5h16v-5" /></>,
   };
@@ -41,7 +46,7 @@ function editorFromRoute(route) {
     name: route.name || '',
     barangayText: (route.barangay || []).join(', '),
     schedule: route.schedule || [],
-    collectorId: route.collectorId || '',
+    shift: route.shift || '',
     stops: (route.stops || []).map((stop, index) => ({ ...stop, clientId: stop._id || `stop-${Date.now()}-${index}` })),
     routePath: route.routePath || null,
   };
@@ -61,12 +66,12 @@ function featuresFromPath(routePath) {
 
 export default function RouteManagementPanel({ token }) {
   const apiBase = API_URL?.replace(/\/$/, '');
-  const mapNode = useRef(null);
+  const [mapNode, setMapNode] = useState(null);
+  const initialForm = useRef('');
   const mapRef = useRef(null);
   const drawRef = useRef(null);
   const stopMarkers = useRef([]);
   const [routes, setRoutes] = useState([]);
-  const [collectors, setCollectors] = useState([]);
   const [filter, setFilter] = useState('active');
   const [query, setQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
@@ -74,6 +79,13 @@ export default function RouteManagementPanel({ token }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [editing, setEditing] = useState(null);
+  const [editorClosing, setEditorClosing] = useState(false);
+  useEffect(() => {
+    if (!editorClosing) return;
+    const delay = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 220;
+    const timer = setTimeout(() => { setEditing(null); setEditorClosing(false); setForm(EMPTY_ROUTE); setAddingStops(false); document.querySelector('.route-add-button')?.focus(); }, delay);
+    return () => clearTimeout(timer);
+  }, [editorClosing]);
   const [form, setForm] = useState(EMPTY_ROUTE);
   const [addingStops, setAddingStops] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState(null);
@@ -84,19 +96,28 @@ export default function RouteManagementPanel({ token }) {
     setIsLoading(true); setError('');
     try {
       const headers = { Authorization: `Bearer ${token}` };
-      const [routeResponse, userResponse] = await Promise.all([fetch(`${apiBase}/admin/routes`, { headers }), fetch(`${apiBase}/admin/users`, { headers })]);
+      const routeResponse = await fetch(`${apiBase}/admin/routes`, { headers });
       const routeResult = await routeResponse.json();
       if (!routeResponse.ok || !routeResult.success) throw new Error(routeResult.error || 'Unable to load routes.');
       setRoutes((routeResult.data?.routes || []).map(normaliseRoute));
-      if (userResponse.ok) {
-        const userResult = await userResponse.json();
-        setCollectors((userResult.data?.users || userResult.data || []).filter((user) => user.role === 'collector'));
-      }
     } catch (loadError) { setError(loadError instanceof Error ? loadError.message : 'Unable to load routes.'); }
     finally { setIsLoading(false); }
   }, [apiBase, token]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    if (!editing || !addingStops) return undefined;
+    // Handle this before the modal/document Escape listener and Mapbox Draw.
+    const exitStopMode = (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      setAddingStops(false);
+    };
+    window.addEventListener('keydown', exitStopMode, true);
+    return () => window.removeEventListener('keydown', exitStopMode, true);
+  }, [editing, addingStops]);
 
   const visibleRoutes = useMemo(() => routes.filter((route) => {
     const matchesStatus = filter === 'all' || (filter === 'active' ? route.isActive : !route.isActive);
@@ -116,10 +137,18 @@ export default function RouteManagementPanel({ token }) {
   }, [form.stops]);
 
   useEffect(() => {
-    if (!editing || !MAPBOX_TOKEN || mapRef.current || !mapNode.current) return undefined;
+    if (!editing || !MAPBOX_TOKEN || mapRef.current || !mapNode) return undefined;
     mapboxgl.accessToken = MAPBOX_TOKEN;
-    const map = new mapboxgl.Map({ container: mapNode.current, style: 'mapbox://styles/mapbox/streets-v12', center: [123.1814, 13.6218], zoom: 12 });
-    const draw = new MapboxDraw({ displayControlsDefault: false, controls: { line_string: true, trash: true }, defaultMode: 'simple_select' });
+    const map = new mapboxgl.Map({ container: mapNode, style: 'mapbox://styles/mapbox/streets-v12', center: [123.1814, 13.6218], zoom: 12 });
+    // Preserve Draw's editing handles and filters; customize only the line paint.
+    const styles = MapboxDraw.lib.theme.flatMap((style) => style.type === 'line' ? [
+      { ...style, id: `${style.id}-casing`, paint: { 'line-color': '#ffffff', 'line-width': 9 } },
+      { ...style, paint: { 'line-color': '#0A7F4F', 'line-width': 6 } },
+    ] : [style]);
+    const draw = new MapboxDraw({ displayControlsDefault: false, controls: { line_string: true, trash: true }, defaultMode: 'simple_select', styles });
+    const resizeObserver = new ResizeObserver(() => map.resize());
+    resizeObserver.observe(mapNode);
+    const resizeTimer = setTimeout(() => map.resize(), 220);
     map.addControl(new mapboxgl.NavigationControl(), 'top-right'); map.addControl(draw, 'top-left');
     map.on('load', () => {
       drawRef.current = draw;
@@ -140,8 +169,8 @@ export default function RouteManagementPanel({ token }) {
       setForm((current) => ({ ...current, stops: [...current.stops, { clientId: `stop-${Date.now()}`, name: '', expectedTime: '', longitude: event.lngLat.lng, latitude: event.lngLat.lat, order: current.stops.length + 1 }] }));
     });
     mapRef.current = map;
-    return () => { removeMarkers(); drawRef.current = null; map.remove(); mapRef.current = null; };
-  }, [addingStops, editing]);
+    return () => { clearTimeout(resizeTimer); resizeObserver.disconnect(); removeMarkers(); drawRef.current = null; map.remove(); mapRef.current = null; };
+  }, [addingStops, editing, mapNode]);
 
   useEffect(() => {
     if (!drawRef.current) return;
@@ -152,8 +181,8 @@ export default function RouteManagementPanel({ token }) {
   }, [form.routePath, renderStops]);
   useEffect(() => { renderStops(); }, [renderStops]);
 
-  const openEditor = (route = null) => { setEditing(route ? route.id : 'new'); setForm(editorFromRoute(route)); setAddingStops(false); setNotice(''); setError(''); };
-  const closeEditor = () => { setEditing(null); setForm(EMPTY_ROUTE); setAddingStops(false); };
+  const openEditor = (route = null) => { setEditorClosing(false); const next = editorFromRoute(route); initialForm.current = JSON.stringify(next); setEditing(route ? route.id : 'new'); setForm(next); setAddingStops(false); setNotice(''); setError(''); };
+  const closeEditor = () => setEditorClosing(true);
   const updateForm = (field, value) => setForm((current) => ({ ...current, [field]: value }));
   const toggleDay = (day) => updateForm('schedule', form.schedule.includes(day) ? form.schedule.filter((value) => value !== day) : [...form.schedule, day].sort());
   const updateStop = (clientId, field, value) => setForm((current) => ({ ...current, stops: current.stops.map((stop) => stop.clientId === clientId ? { ...stop, [field]: value } : stop) }));
@@ -188,7 +217,7 @@ export default function RouteManagementPanel({ token }) {
     setIsSaving(true); setError('');
     try {
       const headers = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
-      const payload = { name: form.name.trim(), barangay, schedule: form.schedule, collectorId: form.collectorId || undefined, stops, routePath: form.routePath };
+      const payload = { name: form.name.trim(), barangay, schedule: form.schedule, shift: form.shift || null, stops, routePath: form.routePath };
       let saved;
       if (editing === 'new') {
         const createResponse = await fetch(`${apiBase}/admin/routes`, { method: 'POST', headers, body: JSON.stringify(payload) });
@@ -197,13 +226,9 @@ export default function RouteManagementPanel({ token }) {
       } else {
         const response = await fetch(`${apiBase}/admin/routes/${editing}`, { method: 'PATCH', headers, body: JSON.stringify(payload) });
         const result = await response.json(); if (!response.ok || !result.success) throw new Error(result.error || 'Unable to save route.'); saved = result.data;
-        const assignmentResponse = await fetch(`${apiBase}/admin/routes/${editing}/assign`, { method: 'PATCH', headers, body: JSON.stringify({ collectorId: form.collectorId || null }) });
-        const assignmentResult = await assignmentResponse.json();
-        if (!assignmentResponse.ok || !assignmentResult.success) throw new Error(assignmentResult.error || 'Route saved, but its collector assignment could not be updated.');
-        saved = assignmentResult.data;
       }
       const next = normaliseRoute(saved);
-      setRoutes((current) => editing === 'new' ? [...current, next] : current.map((route) => route.id === next.id ? { ...route, ...next, collectorName: collectors.find((person) => person._id === form.collectorId)?.name || next.collectorName } : route));
+      setRoutes((current) => editing === 'new' ? [...current, next] : current.map((route) => route.id === next.id ? { ...route, ...next } : route));
       const warnings = saved.warnings || [];
       closeEditor(); setNotice(warnings.length ? `Route saved. Warning: ${warnings.join(' ')}` : 'Route saved successfully.');
     } catch (saveError) { setError(saveError instanceof Error ? saveError.message : 'Unable to save route.'); }
@@ -226,7 +251,44 @@ export default function RouteManagementPanel({ token }) {
       {error && !editing ? <p className="feedback error-feedback" role="alert">{error}</p> : null}{notice && !editing ? <p className="route-management-notice">{notice}</p> : null}
       <div className="route-table-scroll"><table className="route-management-table"><thead><tr><th>Route</th><th>Barangay</th><th>Schedule</th><th>Collector</th><th>Status</th><th>Actions</th></tr></thead><tbody>{isLoading ? <tr><td colSpan="6" className="route-table-message">Loading routes…</td></tr> : null}{!isLoading && !visibleRoutes.length ? <tr><td colSpan="6" className="route-table-message">No routes match this filter.</td></tr> : visibleRoutes.map((route) => <tr key={route.id}><td><strong>{route.name}</strong><small>{route.stops.length} active stop{route.stops.length === 1 ? '' : 's'}</small></td><td>{route.barangay.join(', ') || '—'}</td><td>{route.schedule.map((day) => DAYS[day]).join(', ') || '—'}</td><td>{route.collectorName}</td><td><span className={`route-status ${route.isActive ? 'route-active' : 'route-archived'}`}>{route.isActive ? 'Active' : 'Archived'}</span></td><td><div className="route-row-actions"><button aria-label={`Edit ${route.name}`} className="truck-icon-button" onClick={() => openEditor(route)} type="button"><RouteIcon name="edit" size={16} /></button>{route.isActive ? <button aria-label={`Archive ${route.name}`} className="truck-icon-button truck-archive-button" onClick={() => setArchiveTarget(route)} type="button"><RouteIcon name="archive" size={16} /></button> : null}</div></td></tr>)}</tbody></table></div></Card>
 
-    {editing ? <div className="modal-layer route-editor-layer" role="presentation"><div aria-modal="true" className="route-editor-modal" role="dialog"><form onSubmit={save}><div className="route-editor-heading"><div><p className="eyebrow">Route management</p><h2>{editing === 'new' ? 'Trace a new route' : 'Edit route'}</h2><p>Draw the collection path, then switch to stop mode and click the map in collection order.</p></div><button aria-label="Close route editor" onClick={closeEditor} type="button"><RouteIcon name="close" size={20} /></button></div><div className="route-editor-layout"><section className="route-editor-form"><label>Route name<input onChange={(event) => updateForm('name', event.target.value)} placeholder="e.g. Area 1 — Night shift" required value={form.name} /></label><label>Barangays <span>Separate multiple barangays with commas.</span><input onChange={(event) => updateForm('barangayText', event.target.value)} placeholder="e.g. Triangulo, Bagumbayan Norte" required value={form.barangayText} /></label><fieldset><legend>Schedule days</legend><div className="route-day-buttons">{DAYS.map((day, index) => <button className={form.schedule.includes(index) ? 'is-selected' : ''} key={day} onClick={() => toggleDay(index)} type="button">{day}</button>)}</div></fieldset><label>Assigned collector<select onChange={(event) => updateForm('collectorId', event.target.value)} value={form.collectorId}><option value="">No collector assigned</option>{collectors.map((collector) => <option key={collector._id} value={collector._id}>{collector.name}</option>)}</select></label><div className="route-import-row"><input accept=".json,.geojson,application/geo+json,application/json" onChange={importGeoJson} ref={importRef} type="file" /><Button className="outline-button" onPress={() => importRef.current?.click()} startContent={<RouteIcon name="upload" size={16} />} type="button" variant="secondary">Import GeoJSON</Button></div>{notice ? <p className="route-management-notice">{notice}</p> : null}<div className="route-stops-heading"><div><strong>Stops</strong><span>{form.stops.length} ordered stop{form.stops.length === 1 ? '' : 's'}</span></div><button className={addingStops ? 'is-adding' : ''} onClick={() => setAddingStops((current) => !current)} type="button"><RouteIcon name="stop" size={15} />{addingStops ? 'Stop adding' : 'Add stops on map'}</button></div><div className="route-stops-list">{form.stops.length ? form.stops.map((stop, index) => <article className="route-stop-editor" key={stop.clientId}><b>{stop.order}</b><div><input aria-label={`Stop ${stop.order} name`} onChange={(event) => updateStop(stop.clientId, 'name', event.target.value)} placeholder="Stop name" value={stop.name} /><input aria-label={`Stop ${stop.order} expected time`} onChange={(event) => updateStop(stop.clientId, 'expectedTime', event.target.value)} placeholder="Expected time (optional)" type="time" value={stop.expectedTime || ''} /></div><div className="route-stop-actions"><button aria-label="Move stop up" disabled={!index} onClick={() => reorderStop(index, -1)} type="button">↑</button><button aria-label="Move stop down" disabled={index === form.stops.length - 1} onClick={() => reorderStop(index, 1)} type="button">↓</button><button aria-label="Remove stop" onClick={() => removeStop(stop.clientId)} type="button">×</button></div></article>) : <p className="route-stop-empty">Use “Add stops on map”, then click each collection point.</p>}</div>{error ? <p className="route-editor-error" role="alert">{error}</p> : null}</section><section className="route-map-section"><div className="route-map-toolbar"><span><RouteIcon name="map" size={16} />{addingStops ? 'Stop mode: click map to add a stop' : 'Use the map tools to draw route lines'}</span><small>{form.routePath ? `${form.routePath.type} ready` : 'No route path yet'}</small></div>{MAPBOX_TOKEN ? <div className={addingStops ? 'route-map is-adding-stops' : 'route-map'} ref={mapNode} /> : <div className="route-map-token-missing"><RouteIcon name="map" size={26} /><strong>Mapbox token required</strong><p>Add <code>VITE_MAPBOX_ACCESS_TOKEN=pk…</code> to <code>web-dashboard/.env</code>, then restart Vite.</p></div>}</section></div><div className="modal-footer route-editor-footer"><Button className="outline-button" isDisabled={isSaving} onPress={closeEditor} type="button" variant="secondary">Cancel</Button><Button className="primary-button" isDisabled={isSaving} type="submit">{isSaving ? 'Saving…' : 'Save route'}</Button></div></form></div></div> : null}
+{editing ? <Modal.Backdrop className="route-editor-backdrop" isOpen={!editorClosing} isDismissable={!isSaving && JSON.stringify(form) === initialForm.current} isKeyboardDismissDisabled={addingStops || isSaving} onOpenChange={(open) => { if (!open) closeEditor(); }}>
+  <Modal.Container className="route-editor-container" placement="center">
+    <Modal.Dialog className="route-editor-modal" aria-labelledby="route-editor-title" onKeyDownCapture={(event) => {
+      if (event.key === 'Escape' && addingStops) { event.preventDefault(); event.stopPropagation(); setAddingStops(false); }
+    }}>
+      <form onSubmit={save}>
+        <div className="route-editor-heading">
+          <div><p className="eyebrow">Route management</p><h2 id="route-editor-title">{editing === 'new' ? 'Trace a new route' : 'Edit route'}</h2><p>Draw the collection path, then switch to stop mode and click the map in collection order.</p></div>
+          <button aria-label="Close route editor" onClick={closeEditor} type="button"><RouteIcon name="close" size={20} /></button>
+        </div>
+        <div className="route-editor-layout">
+          <section className="route-editor-form">
+            <label>Route name<div className="route-name-control"><RouteIcon name="route" size={20} /><input autoFocus onChange={(event) => updateForm('name', event.target.value)} placeholder="e.g. Area 1" required value={form.name} /></div></label>
+            <BarangayCombobox apiBase={apiBase} onChange={(value) => updateForm('barangayText', value)} value={form.barangayText} />
+            <fieldset><legend>Schedule days</legend><div className="route-day-buttons">{DAYS.map((day, index) => <button aria-pressed={form.schedule.includes(index)} className={form.schedule.includes(index) ? 'is-selected' : ''} key={day} onClick={() => toggleDay(index)} type="button">{day}</button>)}</div></fieldset>
+            <div className="route-shift-field"><span>Route shift</span><AppSelect aria-label="Route shift" className="route-shift-select" popoverClassName="route-shift-popover" value={form.shift || 'unset'} onChange={(value) => updateForm('shift', value === 'unset' ? '' : value)} options={[{ value: 'unset', label: 'Not set' }, { value: 'AM', label: 'AM' }, { value: 'PM', label: 'PM' }]} /></div>
+            <details className="route-advanced-options">
+              <summary>Advanced options</summary>
+              <p>Import a route and stops prepared in a mapping tool using a GeoJSON file.</p>
+              <div className="route-import-row"><input accept=".json,.geojson,application/geo+json,application/json" onChange={importGeoJson} ref={importRef} type="file" /><Button className="outline-button" onPress={() => importRef.current?.click()} type="button" variant="secondary"><RouteIcon name="upload" size={20} />Import GeoJSON</Button></div>
+            </details>
+            {notice ? <p className="route-management-notice">{notice}</p> : null}
+            <section className="route-stops-card" aria-label="Ordered stops">
+              <div className="route-stops-heading"><div><strong>Stops</strong><span>{form.stops.length} ordered stop{form.stops.length === 1 ? '' : 's'}</span></div><button aria-pressed={addingStops} className={addingStops ? 'is-adding' : ''} onClick={() => setAddingStops((current) => !current)} type="button"><RouteIcon name="pin" size={18} />{addingStops ? 'Stop adding' : 'Add stops on map'}</button></div>
+              {form.stops.length ? <ol className="route-stops-list">{form.stops.map((stop, index) => <li className="route-stop-editor" key={stop.clientId}><b>{stop.order}</b><div><input aria-label={`Stop ${stop.order} name`} onChange={(event) => updateStop(stop.clientId, 'name', event.target.value)} placeholder="Stop name" value={stop.name} /><input aria-label={`Stop ${stop.order} expected time`} onChange={(event) => updateStop(stop.clientId, 'expectedTime', event.target.value)} placeholder="Expected time (optional)" type="time" value={stop.expectedTime || ''} /></div><div className="route-stop-actions"><button aria-label="Move stop up" disabled={!index} onClick={() => reorderStop(index, -1)} type="button">↑</button><button aria-label="Move stop down" disabled={index === form.stops.length - 1} onClick={() => reorderStop(index, 1)} type="button">↓</button><button aria-label="Remove stop" onClick={() => removeStop(stop.clientId)} type="button">×</button></div></li>)}</ol> : <p className="route-stop-empty"><RouteIcon name="pin" size={20} />Use “Add stops on map”, then click each collection point.</p>}
+            </section>
+            {error ? <p className="route-editor-error" role="alert">{error}</p> : null}
+          </section>
+          <section className="route-map-section" aria-label="Route drawing map">
+            <div className="route-map-toolbar"><span><RouteIcon name="map" size={18} />{addingStops ? 'Stop mode: click map to add a stop' : 'Use the map tools to draw route lines'}</span><small className={form.routePath ? 'has-path' : ''}><i aria-hidden="true" />{form.routePath ? `${form.routePath.type} ready` : 'No route path yet'}</small></div>
+            {MAPBOX_TOKEN ? <div className={addingStops ? 'route-map is-adding-stops' : 'route-map'} ref={setMapNode} /> : <div className="route-map-token-missing"><RouteIcon name="map" size={26} /><strong>Mapbox token required</strong><p>Add <code>VITE_MAPBOX_ACCESS_TOKEN=pk…</code> to <code>web-dashboard/.env</code>, then restart Vite.</p></div>}
+          </section>
+        </div>
+        <div className="modal-footer route-editor-footer"><Button className="outline-button" isDisabled={isSaving} onPress={closeEditor} type="button" variant="secondary">Cancel</Button><Button className="primary-button" isDisabled={isSaving} type="submit">{isSaving ? 'Saving…' : 'Save route'}</Button></div>
+      </form>
+    </Modal.Dialog>
+  </Modal.Container>
+</Modal.Backdrop> : null}
     {archiveTarget ? <div className="modal-layer" onClick={() => !isSaving && setArchiveTarget(null)} role="presentation"><div aria-modal="true" className="truck-archive-modal" onClick={(event) => event.stopPropagation()} role="dialog"><div className="modal-header"><div><p className="eyebrow">Archive route</p><h2>Archive {archiveTarget.name}?</h2></div><button aria-label="Close archive confirmation" onClick={() => setArchiveTarget(null)} type="button"><RouteIcon name="close" size={20} /></button></div><p>This keeps the route in history and assignment records but excludes it from active operations.</p><div className="modal-footer"><Button className="outline-button" isDisabled={isSaving} onPress={() => setArchiveTarget(null)} variant="secondary">Cancel</Button><Button className="truck-archive-confirm" isDisabled={isSaving} onPress={archiveRoute}>{isSaving ? 'Archiving…' : 'Archive route'}</Button></div></div></div> : null}
   </section>;
 }

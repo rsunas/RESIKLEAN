@@ -40,8 +40,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow ResiKlean to select photos for collection reports and truckload audits.",
-          "cameraPermission": "Allow ResiKlean to take photos for collection reports and truckload audits.",
+          "photosPermission": "Allow ResiKlean to select photos for your profile, collection reports and truckload audits.",
+          "cameraPermission": "Allow ResiKlean to take photos for your profile, collection reports and truckload audits.",
           "microphonePermission": false
         }
       ],

@@ -28,7 +28,7 @@ const getAllUsers = async (req, res) => {
     const filter = role ? { role } : {};
 
     const users = await User.find(filter)
-      .select('-password')
+      .select('name email role employeeId contact phone shift profilePhotoUrl assignedRouteId createdAt')
       .sort({ createdAt: -1 })
       .lean();
 
@@ -101,7 +101,10 @@ const getAllRoutes = async (req, res) => {
 // Do NOT accept areaBoundary. Do NOT hard-delete routes or stops.
 const createRoute = async (req, res) => {
   try {
-    const { name, barangay, schedule, stops, collectorId, routePath } = req.body;
+    const { name, barangay, schedule, stops, collectorId, routePath, shift } = req.body;
+    if (shift !== undefined && shift !== null && !['AM', 'PM'].includes(shift)) {
+      return sendError(res, 'shift must be AM, PM, or null', 400);
+    }
 
     // ── Reject deprecated/disallowed fields ───────────────────────────────
     if (req.body.areaBoundary !== undefined) {
@@ -135,6 +138,7 @@ const createRoute = async (req, res) => {
       stops,
       routePath,
       collectorId: collectorId || undefined,
+      shift: shift ?? null,
       isActive: true,
     });
 
@@ -215,7 +219,10 @@ const updateRoute = async (req, res) => {
     }
 
     // ── Collect simple field updates ──────────────────────────────────────
-    const simpleFields = ['name', 'barangay', 'schedule'];
+    if (req.body.shift !== undefined && req.body.shift !== null && !['AM', 'PM'].includes(req.body.shift)) {
+      return sendError(res, 'shift must be AM, PM, or null', 400);
+    }
+    const simpleFields = ['name', 'barangay', 'schedule', 'shift'];
     for (const field of simpleFields) {
       if (req.body[field] !== undefined) {
         route[field] = req.body[field];

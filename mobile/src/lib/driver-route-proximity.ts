@@ -52,7 +52,7 @@ export type RoutePresenceEvent = {
 export type RouteTrackingConfig = {
   routeId: string;
   routeName: string;
-  routePath: RoutePath;
+  routePath?: RoutePath | null;
   collectorId?: string;
 };
 
@@ -127,6 +127,12 @@ const getDatabase = () => {
           consent INTEGER,
           paused_day TEXT
         );
+        CREATE TABLE IF NOT EXISTS driver_trip_start_prompts (
+          collector_id TEXT NOT NULL,
+          route_id TEXT NOT NULL,
+          prompt_day TEXT NOT NULL,
+          PRIMARY KEY (collector_id, route_id, prompt_day)
+        );
         CREATE TABLE IF NOT EXISTS driver_assigned_route_cache (
           collector_id TEXT PRIMARY KEY NOT NULL,
           route_json TEXT NOT NULL,
@@ -163,7 +169,7 @@ const normalizeLine = (value: unknown): [number, number][] => {
     .filter((coordinate): coordinate is [number, number] => coordinate !== null);
 };
 
-export const getRouteLines = (routePath?: RoutePath): [number, number][][] => {
+export const getRouteLines = (routePath?: RoutePath | null): [number, number][][] => {
   if (!routePath || !Array.isArray(routePath.coordinates)) return [];
   if (routePath.type === 'LineString') {
     const line = normalizeLine(routePath.coordinates);
@@ -179,7 +185,7 @@ export const getRouteLines = (routePath?: RoutePath): [number, number][][] => {
   return [];
 };
 
-export const getRouteBounds = (routePath?: RoutePath): [[number, number], [number, number]] | null => {
+export const getRouteBounds = (routePath?: RoutePath | null): [[number, number], [number, number]] | null => {
   const coordinates = getRouteLines(routePath).flat();
   if (!coordinates.length) return null;
 
@@ -191,7 +197,7 @@ export const getRouteBounds = (routePath?: RoutePath): [[number, number], [numbe
   ];
 };
 
-export const getDistanceToRouteMeters = (latitude: number, longitude: number, routePath?: RoutePath): number | null => {
+export const getDistanceToRouteMeters = (latitude: number, longitude: number, routePath?: RoutePath | null): number | null => {
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
 
   const latitudeRadians = toRadians(latitude);
@@ -227,7 +233,7 @@ const getConfig = async (): Promise<RouteTrackingConfig | null> => {
 
   try {
     const routePath = JSON.parse(row.route_path_json) as RoutePath;
-    return getRouteLines(routePath).length ? { collectorId: row.collector_id ?? undefined, routeId: row.route_id, routeName: row.route_name, routePath } : null;
+    return row.collector_id && row.route_id ? { collectorId: row.collector_id ?? undefined, routeId: row.route_id, routeName: row.route_name, routePath } : null;
   } catch {
     return null;
   }
@@ -286,7 +292,7 @@ const processPresence = async (location: Location.LocationObject, expected?: { c
   const detection = await readDetection();
   if (location.timestamp < detection.armedAt) return;
   const distance = getDistanceToRouteMeters(location.coords.latitude, location.coords.longitude, config.routePath);
-  const result = evaluateRoutePresence(detection.filter, location, distance ?? NaN, Date.now());
+  const result = evaluateRoutePresence(detection.filter, location, distance, Date.now());
   const database = await getDatabase();
   const current = await getStoredStatus();
   const checkedAt = result.accepted ? new Date(location.timestamp).toISOString() : current.lastCheckedAt;
@@ -317,9 +323,9 @@ const processPresence = async (location: Location.LocationObject, expected?: { c
       );
     }
   });
-  // Waiting samples stay local to the detector. Only start the saved trip after
-  // confirmed entry; afterwards keep the valid trail through exits until Stop/Finish.
-  if (result.accepted && result.filter.hasEntered && config.collectorId) {
+  // Record the explicitly started trip independently of route entry.
+  // GPS quality checks still reject stale, inaccurate, mocked and jumping fixes.
+  if (result.accepted && config.collectorId) {
     await startDriverTrailSession({ collectorId: config.collectorId, routeId: config.routeId, routeName: config.routeName });
     await recordDriverTrailLocation(location, config.collectorId);
   }
@@ -369,6 +375,16 @@ export async function pauseRouteMonitoringToday(collectorId: string) {
      ON CONFLICT(collector_id) DO UPDATE SET paused_day = excluded.paused_day`,
     collectorId, monitoringDay(),
   );
+}
+
+/** Claim before presenting so tab changes and process restarts cannot repeat the prompt. */
+export async function claimTripStartPrompt(collectorId: string, routeId: string): Promise<boolean> {
+  const database = await getDatabase();
+  const result = await database.runAsync(
+    'INSERT OR IGNORE INTO driver_trip_start_prompts (collector_id, route_id, prompt_day) VALUES (?, ?, ?)',
+    collectorId, routeId, monitoringDay(),
+  );
+  return result.changes === 1;
 }
 
 export async function cacheAssignedRoute(collectorId: string, route: unknown) {
@@ -470,7 +486,7 @@ async function persistRouteTrackingConfig({ collectorId, routeId, routeName, rou
     collectorId ?? null,
     routeId,
     routeName,
-    JSON.stringify(routePath),
+    JSON.stringify(routePath ?? null),
     new Date().toISOString(),
   );
 }
@@ -491,7 +507,7 @@ export function enableRouteProximityTracking(config: RouteTrackingConfig, { requ
     if (cancelled()) return unavailable('Monitoring was stopped.');
     if (Platform.OS === 'web') return unavailable('Route monitoring is available only in the Android or iOS app.');
     if (!await TaskManager.isAvailableAsync()) return unavailable('Use a rebuilt development app to run route monitoring in the background.');
-    if (!config.collectorId || !getRouteLines(config.routePath).length) return unavailable('This assignment needs a valid traced road route before monitoring can start.');
+    if (!config.collectorId || !config.routeId) return unavailable('An assigned route and signed-in driver are required to start a trip.');
     if (AppState.currentState !== 'active') return unavailable('Open the app before enabling route monitoring.');
 
     let foreground = await Location.getForegroundPermissionsAsync();
@@ -508,7 +524,7 @@ export function enableRouteProximityTracking(config: RouteTrackingConfig, { requ
     const previous = await getConfig();
     const running = await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK);
     const sameRoute = previous?.collectorId === config.collectorId && previous?.routeId === config.routeId
-      && JSON.stringify(previous?.routePath) === JSON.stringify(config.routePath);
+      && JSON.stringify(previous?.routePath ?? null) === JSON.stringify(config.routePath ?? null);
     try {
       const existingDetector = await database.getFirstAsync<{ id: number }>('SELECT id FROM driver_route_detection WHERE id = 1');
       if (!running || !sameRoute || !existingDetector) {
@@ -530,7 +546,7 @@ export function enableRouteProximityTracking(config: RouteTrackingConfig, { requ
           deferredUpdatesDistance: 0,
           deferredUpdatesInterval: 5_000,
           foregroundService: {
-            notificationBody: 'Detecting route entry; your trip is saved after entry, including while minimized or offline.',
+            notificationBody: 'Recording your trip, including outside the assigned route, while minimized or offline.',
             notificationTitle: 'ResiKlean automatic route monitoring',
             killServiceOnDestroy: false,
           },
@@ -543,7 +559,7 @@ export function enableRouteProximityTracking(config: RouteTrackingConfig, { requ
       void Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High })
         .then(location => processDriverRouteLocation(location, config, generation)).catch(() => {});
       emitStatus({ ...(await getStoredStatus()), routeId: config.routeId, routeName: config.routeName, enabled: true, signal: (await readDetection()).signal });
-      return { enabled: true, message: 'Automatic detection is on. Waiting for confirmed route entry.' };
+      return { enabled: true, message: 'Trip recording is on. Route entry is detected separately.' };
     } catch {
       await database.execAsync('DELETE FROM driver_route_tracking_config; DELETE FROM driver_route_detection; DELETE FROM driver_route_presence_state;');
       await finishDriverTrailSession();

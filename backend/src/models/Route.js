@@ -20,6 +20,8 @@ const routeSchema = new mongoose.Schema(
     barangay: [{ type: String, trim: true }],
     // Days of week this route runs: 0=Sun, 1=Mon, …, 6=Sat
     schedule: [{ type: Number, min: 0, max: 6 }],
+    // Optional route period; legacy routes remain unset until explicitly edited.
+    shift: { type: String, enum: ['AM', 'PM', null], default: null },
     stops: [stopSchema],
     collectorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     isActive: { type: Boolean, default: true },
