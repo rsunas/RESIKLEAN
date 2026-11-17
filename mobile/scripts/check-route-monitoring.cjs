@@ -103,7 +103,7 @@ function evaluateScreen(name, context) {
   const code = ts.transpileModule(`const result = ${screenDeclarations.get(name)};`, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
   return new Function(...Object.keys(context), `${code}\nreturn result;`)(...Object.values(context));
 }
-function screenFixture(consent = null, pausedDay = null, accept = true) {
+function screenFixture(consent = null, pausedDay = null, accept = true, trackingEnabled = consent === true && !pausedDay) {
   let preference = { consent, pausedDay };
   let prompts = 0;
   let claimed = false;
@@ -116,13 +116,13 @@ function screenFixture(consent = null, pausedDay = null, accept = true) {
     collectorId: config.collectorId, assignedRoute: { _id: config.routeId, name: config.routeName, routePath: config.routePath }, mapRouteLine: {}, monitoringEligible: true,
     setIsUpdatingGeofence() {}, setGeofencingMessage() {}, setRoutePresence() {}, setIsGeofencingEnabled() {},
     getRouteMonitoringPreference: async () => preference,
-    getRouteProximityStatus: async () => ({ enabled: consent === true && !pausedDay, routeId: config.routeId }),
+    getRouteProximityStatus: async () => ({ enabled: trackingEnabled, routeId: config.routeId }),
     setRouteMonitoringConsent: async (_, value) => { preference = { consent: value, pausedDay: null }; },
     pauseRouteMonitoringToday: async () => { preference.pausedDay = filter.monitoringDay(); },
     monitoringDay: filter.monitoringDay,
     requestMonitoringConsent: () => consentPrompt.request(), respondToMonitoringConsent() {},
     AppState: { currentState: 'active' }, API_URL: '', geofenceStops: [], session: { token: 'fixture' },
-    enableRouteProximityTracking: async (_, options) => { calls.push(['enable', options]); return { enabled: true }; },
+    enableRouteProximityTracking: async (_, options) => { calls.push(['enable', options]); trackingEnabled = true; return { enabled: true }; },
     stopRouteProximityTracking: async () => { calls.push(['stop']); },
     stopDriverGeofencing: async () => { calls.push(['stop-zones']); },
     enableDriverGeofencing: async () => ({ enabled: true }),
@@ -160,6 +160,14 @@ test('approved automatic setup never prompts again or clears a manual pause', as
   const paused = screenFixture(true, filter.monitoringDay()); await paused.enable({ automatic: true });
   assert.equal(paused.calls.some(call => call[0] === 'enable'), false);
   assert.equal(paused.preference().pausedDay, filter.monitoringDay());
+});
+test('an unfinished saved trip resumes after reopening without a prompt, even off the map tab', async () => {
+  const resumed = screenFixture(true, null, true, false);
+  resumed.context.activeTab = 'history';
+  resumed.context.automaticTripPromptEligible = false;
+  await resumed.enable({ automatic: true });
+  assert.equal(resumed.prompts(), 0);
+  assert.deepEqual(resumed.calls.find(call => call[0] === 'enable'), ['enable', { requestPermissions: false }]);
 });
 test('automatic refresh preserves an active off-schedule trip without prompting or starting an idle one', async () => {
   const active = screenFixture(true);
@@ -307,6 +315,14 @@ test('background batch is sorted and uses the same detector while minimized', as
 test('confirmation survives a headless JS restart with the same local database', async () => {
   reset(); await service.enableRouteProximityTracking(config); await sample(); await sample();
   tasks = {}; service = load('driver-route-proximity', dependencies);
+  await sample(); assert.equal(events().length, 1);
+});
+test('reopening after a force-close restarts GPS without ending the saved trip', async () => {
+  reset(); await service.enableRouteProximityTracking(config); await sample(); await sample();
+  const completedBeforeRestart = finishes;
+  running = false; tasks = {}; service = load('driver-route-proximity', dependencies);
+  assert.equal((await service.enableRouteProximityTracking(config, { requestPermissions: false })).enabled, true);
+  assert.equal(finishes, completedBeforeRestart);
   await sample(); assert.equal(events().length, 1);
 });
 test('a different owner/route cannot feed fixes into this session', async () => {

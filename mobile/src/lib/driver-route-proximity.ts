@@ -532,7 +532,10 @@ export function enableRouteProximityTracking(config: RouteTrackingConfig, { requ
       && JSON.stringify(previous?.routePath ?? null) === JSON.stringify(config.routePath ?? null);
     try {
       const existingDetector = await database.getFirstAsync<{ id: number }>('SELECT id FROM driver_route_detection WHERE id = 1');
-      if (!running || !sameRoute || !existingDetector) {
+      // A native location service may stop when the app is force-closed. The
+      // saved configuration and detector still represent the unfinished trip,
+      // so restarting the service must keep its local trail session intact.
+      if (!sameRoute || !existingDetector) {
         await finishDriverTrailSession();
         await database.execAsync('DELETE FROM driver_route_presence_state; DELETE FROM driver_route_detection;');
         await database.runAsync(

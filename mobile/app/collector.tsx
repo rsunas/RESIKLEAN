@@ -1295,12 +1295,20 @@ export default function CollectorScreen() {
       let newlyConsented = false;
       const currentTracking = await getRouteProximityStatus();
       const sameActiveTrip = currentTracking.enabled && currentTracking.routeId === assignedRoute._id;
+      // A saved configuration belongs to an unfinished trip. It survives an
+      // app/process close and may be restarted from the cached assignment while
+      // offline, without asking the driver for consent again.
+      const sameSavedTrip = preference.consent === true
+        && preference.pausedDay !== monitoringDay()
+        && currentTracking.routeId === assignedRoute._id;
       if (automatic && !sameActiveTrip) {
-        if (!automaticTripPromptEligible || activeTab !== 'map' || editingProfile || preference.pausedDay === monitoringDay()) return;
-        if (!await claimTripStartPrompt(collectorId, assignedRoute._id)) return;
+        if (!sameSavedTrip) {
+          if (!automaticTripPromptEligible || activeTab !== 'map' || editingProfile || preference.pausedDay === monitoringDay()) return;
+          if (!await claimTripStartPrompt(collectorId, assignedRoute._id)) return;
+        }
         if (!contextIsCurrent()) return;
       }
-      if (!automatic || !sameActiveTrip) {
+      if ((!automatic || !sameActiveTrip) && !(automatic && sameSavedTrip)) {
         if (!automatic) await claimTripStartPrompt(collectorId, assignedRoute._id);
         const accepted = await requestMonitoringConsent();
         if (!contextIsCurrent()) return;
