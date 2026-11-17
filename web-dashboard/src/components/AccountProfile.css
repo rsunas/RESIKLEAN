@@ -16,9 +16,9 @@
 .account-profile-detail dt { font-size: 12px; color: #5A6761; }
 .account-profile-detail dd { margin: 2px 0 0; font-size: 15px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
 .account-profile-detail dd.is-muted { color: #5A6761; font-weight: 400; }
-.account-profile-id { display: flex; align-items: center; gap: 16px; margin: 0 28px 24px; padding: 14px; border-radius: 18px; background: #F4F6F5; }
-.account-profile-id-placeholder { position: relative; isolation: isolate; overflow: hidden; display: grid; place-items: center; flex: 0 0 112px; height: 72px; border-radius: 12px; background: #67756f; color: white; }
-.account-profile-id-placeholder::before { content: ''; position: absolute; inset: -6px; z-index: -1; background: linear-gradient(130deg,#9caaa4,#455b50); filter: blur(8px); }
+.account-profile-id { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin: 0 28px 24px; padding: 14px; border-radius: 18px; background: #F4F6F5; }
+.account-profile-id-preview { flex: 0 0 100%; min-width: 0; }
+.account-profile-id-preview img { display: block; width: 100%; height: 290px; object-fit: contain; border-radius: 12px; }
 .account-profile-id-copy { flex: 1; min-width: 0; }
 .account-profile-id-copy h3 { margin: 0 0 4px; font-size: 15px; font-weight: 700; }
 .account-profile-id-copy p { margin: 0; color: #5A6761; font-size: 13px; line-height: 1.4; }

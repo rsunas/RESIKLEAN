@@ -13,7 +13,6 @@ function ProfileIcon({ name }) {
     clock: <><circle cx="12" cy="12" r="9" /><path d="M12 6v6l4 2" /></>,
     route: <><circle cx="6" cy="18" r="3" /><circle cx="18" cy="6" r="3" /><path d="M6 15V9h12m0 0v6H9" /></>,
     truck: <><path d="M3 6h11v12H3Zm11 4h4l3 4v4h-7" /><circle cx="7" cy="18" r="2" /><circle cx="17" cy="18" r="2" /></>,
-    lock: <><rect x="4" y="10" width="16" height="11" rx="2" /><path d="M8 10V6a4 4 0 0 1 8 0v4" /></>,
     eye: <><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></>,
     close: <path d="m6 6 12 12M6 18 18 6" />,
   };
@@ -56,7 +55,8 @@ export default function AccountIdentityButton({ account, token, apiUrl }) {
     return () => { active = false; clearTimeout(timeout); controller.abort(); };
   }, [open, attempt, account.id, token, apiUrl]);
   useEffect(() => {
-    if (!open || !photoOpen) return undefined;
+    if (!open || !result.data?.hasIdPhoto) return undefined;
+    setPhoto({ loading: true });
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
     let active = true;
@@ -71,9 +71,8 @@ export default function AccountIdentityButton({ account, token, apiUrl }) {
       } finally { clearTimeout(timeout); }
     })();
     return () => { active = false; clearTimeout(timeout); controller.abort(); };
-  }, [open, photoOpen, photoAttempt, account.id, token, apiUrl]);
+  }, [open, result.data?.hasIdPhoto, photoAttempt, account.id, token, apiUrl]);
   const changeOpen = value => { setOpen(value); if (!value) { setPhotoOpen(false); setPhoto({ loading: true }); } };
-  const revealPhoto = () => { setPhoto({ loading: true }); setPhotoOpen(true); };
   const detailsLoading = useLoadingPresentation({ loading: result.loading, hasData: Boolean(result.data), error: result.error, enabled: open });
   const truck = result.data?.assignedTruck;
   const truckLabel = truck ? [truck.truckNumber, truck.plateNumber].filter(Boolean).join(' / ') : '';
@@ -100,9 +99,13 @@ export default function AccountIdentityButton({ account, token, apiUrl }) {
           </dl>
           {detailsLoading.failure ? <div className="account-profile-error"><p role="alert">{detailsLoading.failure}</p><Button variant="secondary" onPress={() => { detailsLoading.retry(); setAttempt(value => value + 1); }}>Retry</Button></div> : null}
           <div aria-busy={detailsLoading.busy} className={`account-profile-id ${detailsLoading.initial && !detailsLoading.visible ? 'skeleton-waiting' : ''}`}>
-            {result.data?.hasIdPhoto ? <div className="account-profile-id-placeholder" aria-label="ID photo hidden"><ProfileIcon name="lock" /></div> : null}
-            <div className="account-profile-id-copy"><h3>ID photo</h3><p>{detailsLoading.initial ? <Skeleton width={200} height={13}/> : detailsLoading.failure ? 'Unable to load ID details.' : result.data?.hasIdPhoto ? 'Hidden until you choose to view it.' : 'Not provided'}</p></div>
-            {result.data?.hasIdPhoto ? <Button className="account-profile-view-id" onPress={revealPhoto}><ProfileIcon name="eye" />View ID</Button> : null}
+            <div className="account-profile-id-copy"><h3>ID photo</h3><p>{detailsLoading.initial ? <Skeleton width={200} height={13}/> : detailsLoading.failure ? 'Unable to load ID details.' : result.data?.hasIdPhoto ? 'Submitted identification document' : 'Not provided'}</p></div>
+            {result.data?.hasIdPhoto ? <>
+              <Button className="account-profile-view-id" isDisabled={!photo.url} onPress={() => setPhotoOpen(true)}><ProfileIcon name="eye" />Enlarge</Button>
+              <LoadingRegion className="account-profile-id-preview" key={`${account.id}-${photoAttempt}`} loading={photo.loading} hasData={Boolean(photo.url)} error={photo.error} onRetry={() => { setPhoto({ loading: true }); setPhotoAttempt(value => value + 1); }} placeholder={<Skeleton height={290} radius={12}/>}>
+                {photo.url ? <img src={photo.url} alt={`ID document for ${account.name}`} referrerPolicy="no-referrer" onError={() => setPhoto({ loading: false, error: 'The ID image could not load or its link expired. Please retry.' })} /> : null}
+              </LoadingRegion>
+            </> : null}
           </div>
         </div>
         <div className="account-dialog-footer"><Button className="account-cancel" onPress={() => changeOpen(false)}>Close</Button></div>
