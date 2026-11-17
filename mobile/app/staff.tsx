@@ -1,4 +1,5 @@
 import { useNetworkRecovery } from '@/hooks/use-network-recovery';
+import { useAppTheme } from '@/hooks/app-preferences';
 import { requestJson } from '@/lib/network-request';
 import { WorkProfileEditor } from '@/components/work-profile-editor';
 import { ResidentAvatar } from '@/components/resident-avatar';
@@ -389,6 +390,8 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: Tab; onChange: (
 }
 
 export default function StaffScreen() {
+  const appTheme = useAppTheme();
+  const isDarkTheme = appTheme === 'dark';
   const networkRevision = useNetworkRecovery();
   const router = useRouter();
   const { fontScale } = useWindowDimensions();
@@ -1500,8 +1503,8 @@ export default function StaffScreen() {
   if (editingProfile) return <WorkProfileEditor onClose={() => setEditingProfile(false)} onSaved={updated => { setProfile(updated.user); const id=updated.user._id || updated.user.id; if(id) void saveStaffCache(`profile:${id}`,updated.user); }}/>;
 
   return (
-    <SafeAreaView edges={['left', 'right']} style={styles.safeArea}>
-      <StatusBar backgroundColor="#ffffff" style="dark" translucent={false} />
+    <SafeAreaView edges={['left', 'right']} style={[styles.safeArea, isDarkTheme && { backgroundColor: '#101815' }]}>
+      <StatusBar backgroundColor={isDarkTheme ? '#101815' : '#ffffff'} style={isDarkTheme ? 'light' : 'dark'} translucent={false} />
         <View style={[styles.header, { paddingTop: insets.top }]}>
           <View style={styles.brandHeader}>
             <BrandMark height={48} width={150} />
@@ -1512,7 +1515,7 @@ export default function StaffScreen() {
           </View>
         </View>
 
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.content}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={[styles.content, isDarkTheme && { backgroundColor: '#101815' }]}>
         <TabTransition activeKey={activeTab}>
           {activeTab === 'input' ? renderInput() : activeTab === 'history' ? renderHistory() : renderProfile()}
         </TabTransition>

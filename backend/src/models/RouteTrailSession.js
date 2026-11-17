@@ -6,6 +6,8 @@ const routeTrailSessionSchema = new mongoose.Schema(
     collectorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     routeId: { type: mongoose.Schema.Types.ObjectId, ref: 'Route', required: true, index: true },
     routeName: { type: String, required: true },
+    // Frozen assigned geometry, area and stops from the recorded trip.
+    routeSnapshot: { type: mongoose.Schema.Types.Mixed, default: undefined },
     startedAt: { type: Date, required: true },
     endedAt: { type: Date },
     status: { type: String, enum: ['active', 'completed'], default: 'active' },

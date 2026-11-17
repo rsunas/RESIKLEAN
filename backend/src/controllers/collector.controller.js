@@ -11,6 +11,7 @@ const { uploadPhoto } = require('../services/cloudinary.service');
 const { sendSuccess, sendError } = require('../utils/response');
 const CapacityLog = require('../models/CapacityLog');
 const { DENSITY_TONNES_PER_M3 } = require('../utils/capacityProjection');
+const { makeRouteSnapshot, historicalRoute } = require('../services/routeSnapshot');
 
 // ── GET /api/collector/route ──────────────────────────────────────────────────
 // Returns the route assigned to the logged-in collector,
@@ -50,7 +51,8 @@ const getAssignedRoute = async (req, res) => {
     const completedSession = await RouteTrailSession.findOne({
       collectorId: req.user._id,
       routeId: route._id,
-      status: 'completed',
+      // An ended GPS recording is not the driver's explicit route submission.
+      routeCompletedAt: { $type: 'date' },
       startedAt: { $gte: startOfToday }
     }).lean();
 
@@ -182,6 +184,7 @@ const completeRoute = async (req, res) => {
         collectorId: req.user._id,
         routeId,
         routeName: route.name || 'Manual Submission',
+        routeSnapshot: makeRouteSnapshot(route),
         startedAt: new Date(),
         status: 'active'
       });
@@ -203,10 +206,13 @@ const completeRoute = async (req, res) => {
       { $set: { shiftStatus: 'completed', shiftEnd: session.endedAt } },
     );
 
-    const finishedRoute = await Route.findById(routeId).select('stops').lean();
+    const currentRoute = await Route.findById(routeId).select('name barangay routePath stops updatedAt').lean();
+    const finishedRoute = historicalRoute(currentRoute, session);
+    const completionSnapshot = !session.routeSnapshot && finishedRoute?.routePath ? makeRouteSnapshot(finishedRoute) : null;
     await RouteTrailSession.updateOne({ _id: session._id, routeCompletedAt: null }, { $set: {
       routeCompletedAt: session.endedAt,
       completionStopIds: (finishedRoute?.stops || []).filter(stop => !stop.isArchived).map(stop => stop._id),
+      ...(completionSnapshot ? { routeSnapshot: completionSnapshot } : {}),
     } });
 
     sendSuccess(res, { message: 'Route successfully completed.' });
@@ -412,7 +418,7 @@ const getRouteHistory = async (req, res) => {
     }
 
     const logs = await RouteLog.find(filter)
-      .populate('routeId', 'name barangay routePath stops')
+      .populate('routeId', 'name barangay routePath stops updatedAt')
       .sort({ collectedAt: -1 })
       .lean();
 
@@ -475,20 +481,20 @@ const getRouteHistory = async (req, res) => {
       status: 'completed',
     })
       .sort({ startedAt: -1 })
-      .limit(50)
       .lean();
     const sessionRouteIds = sessionCandidates
       .map((session) => session.routeId)
       .filter((routeId) => mongoose.Types.ObjectId.isValid(routeId));
     const sessionRoutes = sessionRouteIds.length
-      ? await Route.find({ _id: { $in: sessionRouteIds } }).select('name barangay routePath stops').lean()
+      ? await Route.find({ _id: { $in: sessionRouteIds } }).select('name barangay routePath stops updatedAt').lean()
       : [];
     const sessionRouteById = new Map(sessionRoutes.map((route) => [String(route._id), route]));
     sessionCandidates.forEach((session) => {
       const dateKey = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date(session.startedAt));
       const routeId = String(session.routeId);
       const key = `${dateKey}|${routeId}`;
-      const route = sessionRouteById.get(routeId) || {};
+      if ((from && dateKey < from) || (to && dateKey > to)) return;
+      const route = historicalRoute(sessionRouteById.get(routeId), session) || {};
       if (!groupsMap.has(key)) {
         groupsMap.set(key, {
           id: key,
@@ -510,6 +516,13 @@ const getRouteHistory = async (req, res) => {
         });
       }
       const group = groupsMap.get(key);
+      if (!group.sessionId) {
+        group.routeName = route.name || session.routeName;
+        group.routePath = route.routePath || null;
+        group.barangay = route.barangay || [];
+        group.totalStops = route.stops?.length ?? 0;
+        group.routeSnapshot = session.routeSnapshot || null;
+      }
       if (!group.sessionId) group.sessionId = session.clientSessionId;
       group.sessionIds = [...new Set([...(group.sessionIds || []), session.clientSessionId])];
       if (!group.sessionStartedAt || new Date(session.startedAt) < new Date(group.sessionStartedAt)) group.sessionStartedAt = session.startedAt;
@@ -569,8 +582,12 @@ const getRouteHistory = async (req, res) => {
         sessionEndedAt: group.sessionEndedAt ? new Date(group.sessionEndedAt).toISOString() : null,
         sessionId: sessionId || null,
         routePath: group.routePath,
+        routeSnapshot: group.routeSnapshot || null,
         trailPath,
-        stopLogs: group.stopLogs.sort((a, b) => new Date(a.collectedAt) - new Date(b.collectedAt)),
+        stopLogs: group.stopLogs.sort((a, b) => new Date(a.collectedAt) - new Date(b.collectedAt)).map(log => {
+          const stop = group.routeSnapshot?.stops?.find(stop => String(stop._id) === String(log.stopId));
+          return stop ? { ...log, stopName: stop.name, latitude: stop.latitude, longitude: stop.longitude } : log;
+        }),
       };
     }));
 
@@ -737,30 +754,38 @@ const batchSyncTrails = async (req, res) => {
     const startedAt = parseTrailDate(payload?.startedAt);
     if (!clientSessionId || !mongoose.Types.ObjectId.isValid(routeId) || !startedAt) continue;
 
-    const route = await Route.findOne({ _id: routeId, collectorId: req.user._id, isActive: true }).select('name');
-    if (!route) continue;
-
     const endedAt = parseTrailDate(payload?.endedAt);
     const isCompleted = payload?.status === 'completed';
     const sessionIdentity = {
       clientSessionId,
       collectorId: req.user._id,
-      routeId: route._id,
+      routeId,
     };
     let session = await RouteTrailSession.findOne({ clientSessionId });
 
     // A client session is immutable: a delayed or duplicated request must never
     // reassign it to another collector or route.
-    if (session && (!session.collectorId.equals(req.user._id) || !session.routeId.equals(route._id))) {
+    if (session && (!session.collectorId.equals(req.user._id) || !session.routeId.equals(routeId))) {
       rejectedSessions.push({ clientSessionId, reason: 'session identity conflict' });
       continue;
     }
+
+    // Existing sessions belong to their original driver even after reassignment.
+    const route = await Route.findOne({ _id: routeId, collectorId: req.user._id, isActive: true }).select('name barangay routePath stops updatedAt');
+    if (!session && !route) {
+      rejectedSessions.push({ clientSessionId, reason: 'No recorded session or current assignment for this route' });
+      continue;
+    }
+    const originalRoute = historicalRoute(route, { routeId, routeName: payload.routeName || session?.routeName, startedAt });
+    const snapshot = makeRouteSnapshot(payload.routeSnapshot)
+      || (originalRoute?.routePath ? makeRouteSnapshot(originalRoute) : null);
 
     if (!session) {
       try {
         session = await RouteTrailSession.create({
           ...sessionIdentity,
-          routeName: route.name,
+          routeName: snapshot?.name || String(payload.routeName || route.name).slice(0, 200),
+          ...(snapshot ? { routeSnapshot: snapshot } : {}),
           startedAt,
           ...(endedAt ? { endedAt } : {}),
           status: isCompleted ? 'completed' : 'active',
@@ -771,11 +796,17 @@ const batchSyncTrails = async (req, res) => {
         // and create. Re-read it and apply the same immutable-identity check.
         if (error?.code !== 11000) throw error;
         session = await RouteTrailSession.findOne({ clientSessionId });
-        if (!session || !session.collectorId.equals(req.user._id) || !session.routeId.equals(route._id)) {
+        if (!session || !session.collectorId.equals(req.user._id) || !session.routeId.equals(routeId)) {
           rejectedSessions.push({ clientSessionId, reason: 'session identity conflict' });
           continue;
         }
       }
+    }
+
+    // Older phones kept the path locally. Fill a missing snapshot once on upgrade.
+    if (snapshot && (!session.routeSnapshot || (!session.routeSnapshot.routePath && snapshot.routePath))) {
+      const snapshotFilter = session.routeSnapshot ? { 'routeSnapshot.routePath': null } : { routeSnapshot: null };
+      await RouteTrailSession.updateOne({ ...sessionIdentity, ...snapshotFilter }, { $set: { routeSnapshot: snapshot } });
     }
 
     // Completion is monotonic. An older "active" replay may update sync
@@ -808,7 +839,7 @@ const batchSyncTrails = async (req, res) => {
         clientSessionId,
         collectorId: req.user._id,
         routeId,
-        routeName: route.name,
+        routeName: session.routeSnapshot?.name || snapshot?.name || session.routeName,
         recordedAt,
         latitude,
         longitude,

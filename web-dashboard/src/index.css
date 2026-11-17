@@ -785,3 +785,42 @@ body.sidebar-is-collapsed .sidebar-collapse-toggle { left: 54px; top: 66px; }
   body.mobile-sidebar-is-open .brand-logo-full { display: block; height: 100px; width: 220px; object-fit: contain; }
   body.mobile-sidebar-is-open .brand-logo-mark { display: none; }
 }
+
+html[data-theme="dark"] { color-scheme: dark; background: #101815; color: #e6eee9; }
+html[data-theme="dark"] body, html[data-theme="dark"] .admin-shell, html[data-theme="dark"] .admin-workspace,
+html[data-theme="dark"] .dashboard-content, html[data-theme="dark"] .admin-shell:has(.admin-settings),
+html[data-theme="dark"] .admin-workspace:has(.admin-settings) { background: #101815; color: #e6eee9; }
+html[data-theme="dark"] .admin-sidebar, html[data-theme="dark"] .topbar, html[data-theme="dark"] .card,
+html[data-theme="dark"] .table-card, html[data-theme="dark"] .chart-card, html[data-theme="dark"] .settings-card,
+html[data-theme="dark"] .settings-dialog, html[data-theme="dark"] .account-menu, html[data-theme="dark"] .account-modal,
+html[data-theme="dark"] .complaint-card, html[data-theme="dark"] .truck-form-card, html[data-theme="dark"] .truck-list-card,
+html[data-theme="dark"] .tonnage-summary-card { background: #1a2420 !important; color: #e6eee9 !important; border-color: #34443c !important; }
+html[data-theme="dark"] .dashboard-content h1, html[data-theme="dark"] .dashboard-content h2,
+html[data-theme="dark"] .dashboard-content h3, html[data-theme="dark"] .dashboard-content strong,
+html[data-theme="dark"] .settings-heading h1, html[data-theme="dark"] .settings-card h2,
+html[data-theme="dark"] .settings-account-copy h3, html[data-theme="dark"] .nav-link,
+html[data-theme="dark"] .sidebar-account, html[data-theme="dark"] .route-preview strong { color: #e6eee9; }
+html[data-theme="dark"] p, html[data-theme="dark"] .settings-description, html[data-theme="dark"] .settings-row-copy p,
+html[data-theme="dark"] .settings-account-copy p, html[data-theme="dark"] .settings-muted,
+html[data-theme="dark"] .topbar-context, html[data-theme="dark"] .route-preview p,
+html[data-theme="dark"] .route-preview > span, html[data-theme="dark"] .metric-label,
+html[data-theme="dark"] .metric-caption, html[data-theme="dark"] .card-heading-row p:last-child { color: #aab9b1; }
+html[data-theme="dark"] .nav-link:hover, html[data-theme="dark"] .nav-link.active,
+html[data-theme="dark"] .settings-section-nav a[aria-current], html[data-theme="dark"] .sidebar-account.is-active { background: #203c30 !important; color: #8ee0b6 !important; }
+html[data-theme="dark"] .settings-section-nav a, html[data-theme="dark"] .settings-row-label { color: #d3e0d9; }
+html[data-theme="dark"] .settings-segmented, html[data-theme="dark"] .metric-progress,
+html[data-theme="dark"] .settings-field input, html[data-theme="dark"] .admin-settings .settings-control [data-slot="select-trigger"],
+html[data-theme="dark"] .search-input input, html[data-theme="dark"] .filter-row select,
+html[data-theme="dark"] .filter-row input, html[data-theme="dark"] .settings-dialog header .button,
+html[data-theme="dark"] .navigation-tools label, html[data-theme="dark"] .navigation-tools select { background: #25332c !important; color: #e6eee9 !important; border-color: #415249 !important; }
+html[data-theme="dark"] .settings-segmented .selected { background: #35463d !important; color: #8ee0b6 !important; }
+html[data-theme="dark"] .settings-outline, html[data-theme="dark"] .outline-button,
+html[data-theme="dark"] .sidebar-collapse-toggle, html[data-theme="dark"] .mobile-sidebar-toggle { background: #202c26 !important; color: #d7e6de !important; border-color: #46584e !important; }
+html[data-theme="dark"] .standard-data-table th { background: #202c26; color: #b9c8c0; }
+html[data-theme="dark"] .standard-data-table td, html[data-theme="dark"] .settings-row + .settings-row,
+html[data-theme="dark"] .settings-dialog header, html[data-theme="dark"] .settings-dialog footer,
+html[data-theme="dark"] .table-pagination { border-color: #34443c !important; }
+html[data-theme="dark"] .standard-data-table td { color: #dbe5df; }
+html[data-theme="dark"] .settings-admin-tag { background: #203c30 !important; color: #8ee0b6 !important; }
+html[data-theme="dark"] .modal-header, html[data-theme="dark"] .modal-body, html[data-theme="dark"] .modal-footer { background: #1a2420; color: #e6eee9; border-color: #34443c; }
+html[data-theme="dark"] input, html[data-theme="dark"] select, html[data-theme="dark"] textarea { color-scheme: dark; }

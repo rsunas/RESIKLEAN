@@ -17,6 +17,7 @@ const { sendSuccess, sendError } = require('../utils/response');
 const { buildRouteHistoryPayload, generateRouteHistoryPDF } = require('../services/pdf/routeHistoryReport');
 const { calculateProjection, STATUS_OK, STATUS_WARNING, STATUS_CRITICAL } = require('../utils/capacityProjection');
 const { getRouteHistoryTrail } = require('../services/routeHistoryTrail');
+const { historicalRoute } = require('../services/routeSnapshot');
 const { getTonnageTrendData } = require('../services/tonnageService');
 const { generateTonnageTrendPDF } = require('../services/pdf/tonnageTrendReport');
 const { validateRoutePath, validateStops, getStopProximityWarnings } = require('../utils/routeValidation');
@@ -768,10 +769,9 @@ const getAllRouteHistory = async (req, res) => {
 
     const routeFilters = {};
     if (routeId) routeFilters._id = routeId;
-    if (barangay) routeFilters.barangay = { $elemMatch: { $regex: barangay, $options: 'i' } };
     const routeMap = new Map();
-    (await Route.find(routeFilters).select('_id name barangay stops').lean()).forEach((r) => routeMap.set(String(r._id), r));
-    if ((routeId || barangay) && !routeMap.size) {
+    (await Route.find(routeFilters).select('_id name barangay stops updatedAt').lean()).forEach((r) => routeMap.set(String(r._id), r));
+    if (routeId && !routeMap.size) {
       return sendSuccess(res, {
         count: 0,
         page: 1,
@@ -799,11 +799,10 @@ const getAllRouteHistory = async (req, res) => {
     // trail sessions as history groups so the admin list still links to the
     // real GPS trail and does not depend on stop-log rows existing.
     const trailSessionFilter = { status: 'completed' };
-    if (routeMap.size) trailSessionFilter.routeId = { $in: [...routeMap.keys()] };
+    if (routeId) trailSessionFilter.routeId = routeId;
     if (collectorId) trailSessionFilter.collectorId = new mongoose.Types.ObjectId(collectorId);
     const trailSessions = await RouteTrailSession.find(trailSessionFilter)
       .sort({ startedAt: -1 })
-      .limit(500)
       .lean();
 
     const groups = new Map();
@@ -829,7 +828,7 @@ const getAllRouteHistory = async (req, res) => {
     });
 
     trailSessions.forEach((session) => {
-      const route = routeMap.get(String(session.routeId)) || null;
+      const route = historicalRoute(routeMap.get(String(session.routeId)), session);
       if (!route) return;
       const eventDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila' }).format(new Date(session.startedAt));
       if (fromDate && eventDate < fromDate) return;
@@ -850,7 +849,10 @@ const getAllRouteHistory = async (req, res) => {
           trailSession: session,
         });
       } else if (!groups.get(key).trailSession) {
-        groups.get(key).trailSession = session;
+        Object.assign(groups.get(key), {
+          trailSession: session, routeName: route.name, barangay: route.barangay || [],
+          streetList: (route.stops || []).map(stop => stop.name), totalStops: (route.stops || []).length,
+        });
       }
     });
 
@@ -896,7 +898,7 @@ const getAllRouteHistory = async (req, res) => {
     }));
 
     const query = String(q).trim().toLowerCase();
-    const filtered = rows.filter(row => (!status || row.rowStatus === status) && (!query || [row.area, row.street, row.routeName, row.collector, row.truck?.plateNumber, row.truck?.truckNumber, row.truck?.color].some(value => String(value || '').toLowerCase().includes(query))));
+    const filtered = rows.filter(row => (!barangay || String(row.area || '').toLowerCase().includes(String(barangay).toLowerCase())) && (!status || row.rowStatus === status) && (!query || [row.area, row.street, row.routeName, row.collector, row.truck?.plateNumber, row.truck?.truckNumber, row.truck?.color].some(value => String(value || '').toLowerCase().includes(query))));
     const pageNum = Math.max(1, Number(page) || 1);
     const pageLimit = Math.min(100, Math.max(1, Number(limit) || 25));
     const total = filtered.length;
@@ -934,13 +936,14 @@ const getRouteHistoryDetail = async (req, res) => {
     if (!key) return sendError(res, 'Invalid route history record identifier', 400);
     const { collectorId, routeId, eventDate } = key;
 
-    const [route, collector, logs, trailData] = await Promise.all([
+    const [liveRoute, collector, logs, trailData] = await Promise.all([
       Route.findById(routeId).lean(),
       User.findById(collectorId).select('name email barangay location').lean(),
       RouteLog.find({ collectorId, routeId, eventDate }).sort({ collectedAt: 1 }).lean(),
       getRouteHistoryTrail(collectorId, routeId, eventDate),
     ]);
 
+    const route = historicalRoute(liveRoute, trailData.session);
     if (!route) return sendError(res, 'Route not found', 404);
 
     const { sessions, session, trailPoints } = trailData;
@@ -982,13 +985,14 @@ const exportRouteHistoryPDF = async (req, res) => {
     if (!key) return sendError(res, 'Invalid route history record identifier', 400);
     const { collectorId, routeId, eventDate } = key;
 
-    const [route, collector, logs, trailData] = await Promise.all([
+    const [liveRoute, collector, logs, trailData] = await Promise.all([
       Route.findById(routeId).lean(),
       User.findById(collectorId).select('name email barangay location').lean(),
       RouteLog.find({ collectorId, routeId, eventDate }).sort({ collectedAt: 1 }).lean(),
       getRouteHistoryTrail(collectorId, routeId, eventDate),
     ]);
 
+    const route = historicalRoute(liveRoute, trailData.session);
     if (!route) return sendError(res, 'Route not found', 404);
 
     const { sessions, session, trailPoints } = trailData;

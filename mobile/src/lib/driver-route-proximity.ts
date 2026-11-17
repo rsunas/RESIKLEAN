@@ -3,7 +3,7 @@ import * as Location from 'expo-location';
 import * as SQLite from 'expo-sqlite';
 import * as TaskManager from 'expo-task-manager';
 import { AppState, Platform } from 'react-native';
-import { finishDriverTrailSession, recordDriverTrailLocation, startDriverTrailSession } from '@/lib/driver-trail-queue';
+import { finishDriverTrailSession, recordDriverTrailLocation, startDriverTrailSession, type TripRouteSnapshot } from '@/lib/driver-trail-queue';
 import { getSession } from '@/lib/session';
 
 export const DRIVER_ROUTE_PROXIMITY_TASK = 'resiklean-driver-route-proximity';
@@ -50,6 +50,7 @@ export type RoutePresenceEvent = {
 };
 
 export type RouteTrackingConfig = {
+  routeSnapshot?: TripRouteSnapshot;
   routeId: string;
   routeName: string;
   routePath?: RoutePath | null;
@@ -143,6 +144,9 @@ const getDatabase = () => {
       if (!columns.some((column) => column.name === 'collector_id')) {
         await database.execAsync('ALTER TABLE driver_route_tracking_config ADD COLUMN collector_id TEXT');
       }
+      if (!columns.some((column) => column.name === 'route_snapshot_json')) {
+        await database.execAsync('ALTER TABLE driver_route_tracking_config ADD COLUMN route_snapshot_json TEXT');
+      }
       return database;
     });
   }
@@ -226,14 +230,14 @@ export const getDistanceToRouteMeters = (latitude: number, longitude: number, ro
 
 const getConfig = async (): Promise<RouteTrackingConfig | null> => {
   const database = await getDatabase();
-  const row = await database.getFirstAsync<{ collector_id: string | null; route_id: string; route_name: string; route_path_json: string }>(
-    'SELECT collector_id, route_id, route_name, route_path_json FROM driver_route_tracking_config WHERE id = 1',
+  const row = await database.getFirstAsync<{ collector_id: string | null; route_id: string; route_name: string; route_path_json: string; route_snapshot_json: string | null }>(
+    'SELECT collector_id, route_id, route_name, route_path_json, route_snapshot_json FROM driver_route_tracking_config WHERE id = 1',
   );
   if (!row) return null;
 
   try {
     const routePath = JSON.parse(row.route_path_json) as RoutePath;
-    return row.collector_id && row.route_id ? { collectorId: row.collector_id ?? undefined, routeId: row.route_id, routeName: row.route_name, routePath } : null;
+    return row.collector_id && row.route_id ? { collectorId: row.collector_id ?? undefined, routeId: row.route_id, routeName: row.route_name, routePath, routeSnapshot: row.route_snapshot_json ? JSON.parse(row.route_snapshot_json) : undefined } : null;
   } catch {
     return null;
   }
@@ -326,7 +330,7 @@ const processPresence = async (location: Location.LocationObject, expected?: { c
   // Record the explicitly started trip independently of route entry.
   // GPS quality checks still reject stale, inaccurate, mocked and jumping fixes.
   if (result.accepted && config.collectorId) {
-    await startDriverTrailSession({ collectorId: config.collectorId, routeId: config.routeId, routeName: config.routeName, routePath: config.routePath });
+    await startDriverTrailSession({ collectorId: config.collectorId, routeId: config.routeId, routeName: config.routeName, routePath: config.routePath, routeSnapshot: config.routeSnapshot });
     await recordDriverTrailLocation(location, config.collectorId);
   }
   emitStatus({ ...(await getStoredStatus()), enabled: true, signal: result.signal, hasEntered: result.filter.hasEntered });
@@ -477,17 +481,18 @@ export function subscribeToRouteProximityStatus(listener: (status: RoutePresence
   return () => statusListeners.delete(listener);
 }
 
-async function persistRouteTrackingConfig({ collectorId, routeId, routeName, routePath }: RouteTrackingConfig) {
+async function persistRouteTrackingConfig({ collectorId, routeId, routeName, routePath, routeSnapshot }: RouteTrackingConfig) {
   const database = await getDatabase();
   await database.runAsync(
-    `INSERT INTO driver_route_tracking_config (id, collector_id, route_id, route_name, route_path_json, updated_at)
-     VALUES (1, ?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET collector_id = excluded.collector_id, route_id = excluded.route_id, route_name = excluded.route_name, route_path_json = excluded.route_path_json, updated_at = excluded.updated_at`,
+    `INSERT INTO driver_route_tracking_config (id, collector_id, route_id, route_name, route_path_json, updated_at, route_snapshot_json)
+     VALUES (1, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET collector_id = excluded.collector_id, route_id = excluded.route_id, route_name = excluded.route_name, route_path_json = excluded.route_path_json, updated_at = excluded.updated_at, route_snapshot_json = excluded.route_snapshot_json`,
     collectorId ?? null,
     routeId,
     routeName,
     JSON.stringify(routePath ?? null),
     new Date().toISOString(),
+    routeSnapshot ? JSON.stringify(routeSnapshot) : null,
   );
 }
 

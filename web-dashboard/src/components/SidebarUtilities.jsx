@@ -2,16 +2,21 @@ import { Skeleton, useLoadingPresentation } from './Skeleton.jsx';
 import { Button, Dropdown } from '@heroui/react';
 import { useState } from 'react';
 import { SettingsAvatar, SettingsIcon } from './SettingsDialogs.jsx';
+import { translate, usePreferences } from './preferences.jsx';
 
 export function NotificationNav({ count, loading, error, active, onOpen, Icon }) {
+  const { preferences } = usePreferences();
+  const label = translate('Notifications', preferences.language);
   const badge = useLoadingPresentation({ loading, hasData: count !== null, error });
-  return <Button className={`nav-link sidebar-notifications${active ? ' active' : ''}`} aria-current={active ? 'page' : undefined} aria-label={`Notifications${count !== null ? `, ${count} unread` : ''}`} title="Notifications" variant="ghost" onPress={onOpen}>
-    <Icon name="bell"/><span className="sidebar-label">Notifications</span>
+  return <Button className={`nav-link sidebar-notifications${active ? ' active' : ''}`} aria-current={active ? 'page' : undefined} aria-label={`${label}${count !== null ? `, ${count} unread` : ''}`} title={label} variant="ghost" onPress={onOpen}>
+    <Icon name="bell"/><span className="sidebar-label">{label}</span>
     <span aria-busy={badge.busy}>{badge.initial ? <><span className="skeleton-sr-only">Loading notifications</span><Skeleton variant="circle" width={24} height={24}/></> : <span className="notification-count" aria-hidden="true">{count === null ? '\u2014' : count > 99 ? '99+' : count}</span>}</span>
   </Button>;
 }
 
 export function SidebarAccount({ user, onSignOut, onSettings, settingsActive, Icon }) {
+  const { preferences } = usePreferences();
+  const tr = value => translate(value, preferences.language);
   const [open, setOpen] = useState(false);
   const name = user.name || 'Admin';
   const role = (user.role === 'collector' ? 'Driver' : user.role || 'Administrator').replace(/[_-]/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase());
@@ -20,8 +25,8 @@ export function SidebarAccount({ user, onSignOut, onSettings, settingsActive, Ic
       <SettingsAvatar user={user} /><span className="sidebar-account-copy sidebar-label"><strong>{name}</strong><small>{role}</small></span><span className="sidebar-account-chevron" aria-hidden="true"><SettingsIcon name="chevron" /></span>
     </Dropdown.Trigger>
     <Dropdown.Popover placement="top start" offset={12} className="account-menu"><Dropdown.Menu aria-label="Account options" onAction={key => { setOpen(false); if (key === 'settings') onSettings(); else if (key === 'signout') onSignOut(); }}>
-      <Dropdown.Item id="settings" textValue="Settings"><SettingsIcon name="settings" />Settings</Dropdown.Item>
-      <Dropdown.Item id="signout" textValue="Sign out" className="account-signout"><Icon name="logout" />Sign out</Dropdown.Item>
+      <Dropdown.Item id="settings" textValue={tr('Settings')}><SettingsIcon name="settings" />{tr('Settings')}</Dropdown.Item>
+      <Dropdown.Item id="signout" textValue={tr('Sign out')} className="account-signout"><Icon name="logout" />{tr('Sign out')}</Dropdown.Item>
     </Dropdown.Menu></Dropdown.Popover>
   </Dropdown></div>;
 }

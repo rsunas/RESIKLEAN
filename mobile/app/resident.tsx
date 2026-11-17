@@ -1,6 +1,7 @@
 import { AppSelect } from '@/components/app-select';
 import { WASTE_CATEGORY_OPTIONS, wasteCategoryLabel } from '@/lib/waste-categories';
 import { useNetworkRecovery } from '@/hooks/use-network-recovery';
+import { useAppTheme } from '@/hooks/app-preferences';
 import { requestJson } from '@/lib/network-request';
 import { ResidentProfileEditor } from '@/components/resident-profile-editor';
 import { ResidentAvatar } from '@/components/resident-avatar';
@@ -27,6 +28,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { AppText as Text } from '@/components/app-text';
 import { MotionPressable as Pressable, MotionModal as Modal, TabTransition, useSlidingTabPill, useClosingValue, RevealRow, useFirstLoadReveal, ToastMotion, MotionChevron, AccordionBody } from '@/components/app-motion';
 import { SignOutConfirmModal } from '@/components/sign-out-confirm-modal';
+import { PrivacyPolicyModal } from '@/components/signup-privacy';
 import { ResidentSettingsModal } from '@/components/resident-settings-modal';
 import { SkeletonBlock, SkeletonRegion, SkeletonRows, useSkeletonVisible } from '@/components/loading-skeleton';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -512,12 +514,15 @@ function ReportList({ reports, onSelect, showPhoto, animate = false }: { reports
 }
 
 export default function ResidentScreen() {
+  const appTheme = useAppTheme();
+  const isDarkTheme = appTheme === 'dark';
   const networkRevision = useNetworkRecovery();
   const router = useRouter();
   const { tab } = useLocalSearchParams<{ tab?: string }>();
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<ResidentTab>(tab === 'schedule' ? 'schedule' : 'home');
   const [isSignOutConfirmVisible, setIsSignOutConfirmVisible] = useState(false);
+  const [isPrivacyVisible, setIsPrivacyVisible] = useState(false);
   const [showAllUpcoming, setShowAllUpcoming] = useState(false);
   const [session, setSession] = useState<AuthSession | null>(null);
   const [schedule, setSchedule] = useState<ScheduleData | null>(null);
@@ -1485,7 +1490,7 @@ export default function ResidentScreen() {
       <View style={styles.menuCard}>
         <Pressable accessibilityRole="button" onPress={() => setIsSettingsVisible(true)} style={styles.menuRow}><View accessible={false} style={styles.profileMenuBadge}><Feather color="#0A7F4F" name="settings" size={20} /></View><Text style={styles.menuText}>Settings & Preferences</Text><Feather color="#5A6761" name="chevron-right" size={20} /></Pressable>
         <Pressable accessibilityRole="button" onPress={() => setActiveTab('schedule')} style={styles.menuRow}><View accessible={false} style={styles.profileMenuBadge}><Feather color="#0A7F4F" name="calendar" size={20} /></View><Text style={styles.menuText}>Collection Schedule</Text><Feather color="#5A6761" name="chevron-right" size={20} /></Pressable>
-        <Pressable accessibilityRole="button" style={[styles.menuRow, { borderBottomWidth: 0 }]}><View accessible={false} style={styles.profileMenuBadge}><Feather color="#0A7F4F" name="shield" size={20} /></View><Text style={styles.menuText}>Privacy Policy</Text><Feather color="#5A6761" name="chevron-right" size={20} /></Pressable>
+        <Pressable accessibilityRole="button" onPress={() => setIsPrivacyVisible(true)} style={[styles.menuRow, { borderBottomWidth: 0 }]}><View accessible={false} style={styles.profileMenuBadge}><Feather color="#0A7F4F" name="shield" size={20} /></View><Text style={styles.menuText}>Privacy Policy</Text><Feather color="#5A6761" name="chevron-right" size={20} /></Pressable>
       </View>
 
       <Pressable accessibilityRole="button" onPress={signOut} style={styles.signOutButton}><Feather color="#B3261E" name="log-out" size={20} /><Text style={styles.signOutText}>Sign Out</Text></Pressable>
@@ -1497,8 +1502,8 @@ export default function ResidentScreen() {
   if (isEditingProfile && session) return <ResidentProfileEditor session={session} apiUrl={API_URL || ''} name={profileName} phone={profilePhone} location={profileLocation} photo={profilePhoto} removed={profilePhotoRemoved} busy={isSavingProfile} error={profileMessage} setName={setProfileName} setPhone={setProfilePhone} setLocation={setProfileLocation} setPhoto={setProfilePhoto} setRemoved={setProfilePhotoRemoved} save={saveProfile} close={() => { setIsEditingProfile(false); setProfilePhoto(null); setProfilePhotoRemoved(false); setProfileMessage(''); }}/>;
 
   return (
-    <SafeAreaView edges={['left', 'right']} style={styles.safeArea}>
-      <StatusBar backgroundColor="#FFFFFF" style="dark" translucent={false} />
+    <SafeAreaView edges={['left', 'right']} style={[styles.safeArea, isDarkTheme && { backgroundColor: '#101815' }]}>
+      <StatusBar backgroundColor={isDarkTheme ? '#101815' : '#FFFFFF'} style={isDarkTheme ? 'light' : 'dark'} translucent={false} />
       {activeTab === 'home' && (
         <View style={[styles.residentHeader, { paddingTop: insets.top }]}>
           <View style={styles.brandHeader}>
@@ -1510,10 +1515,11 @@ export default function ResidentScreen() {
           </View>
         </View>
       )}
-      <View style={[styles.content, activeTab !== 'home' && { paddingTop: insets.top }]}><TabTransition activeKey={activeTab}>{tabScreen}</TabTransition></View>
+      <View style={[styles.content, isDarkTheme && { backgroundColor: '#101815' }, activeTab !== 'home' && { paddingTop: insets.top }]}><TabTransition activeKey={activeTab}>{tabScreen}</TabTransition></View>
       <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
       {renderReportDetails()}
       <SignOutConfirmModal visible={isSignOutConfirmVisible} onCancel={() => setIsSignOutConfirmVisible(false)} onConfirm={completeSignOut} />
+      <PrivacyPolicyModal visible={isPrivacyVisible} onClose={() => setIsPrivacyVisible(false)} />
       {session ? (
         <ResidentSettingsModal
           apiUrl={API_URL ?? ''}

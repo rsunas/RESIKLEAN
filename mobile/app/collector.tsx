@@ -2,11 +2,13 @@ import { DriverRouteLayers, DriverStopLayers } from '@/components/driver-map-lay
 import { buildMapStops } from '@/lib/driver-map-presentation';
 import { useAppReducedMotion } from '@/hooks/use-app-reduced-motion';
 import { useNetworkRecovery } from '@/hooks/use-network-recovery';
+import { useAppTheme } from '@/hooks/app-preferences';
 import { requestJson } from '@/lib/network-request';
 import { withTimeout } from '@/lib/async-timeout';
 import { WorkProfileEditor } from '@/components/work-profile-editor';
 import { ResidentAvatar } from '@/components/resident-avatar';
 import { ProfileSettingsRow } from '@/components/profile-settings-row';
+import { FinishRouteModal } from '@/components/finish-route-modal';
 import { SkeletonBlock, SkeletonRegion, SkeletonRows, useSkeletonVisible } from '@/components/loading-skeleton';
 import { RouteMonitoringConsentModal, useRouteMonitoringConsent } from '@/components/route-monitoring-consent-modal';
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
@@ -128,7 +130,7 @@ type RouteHistoryGroup = {
   date: string;
   routeId: string;
   routeName: string;
-  barangay: string;
+  barangay: string | string[];
   totalStops: number;
   collected: number;
   flagged: number;
@@ -400,6 +402,8 @@ function AccountDetail({ label, value }: { label: string; value: string }) {
 }
 
 export default function CollectorScreen() {
+  const appTheme = useAppTheme();
+  const isDarkTheme = appTheme === 'dark';
   const networkRevision = useNetworkRecovery();
   const reducedMotion = useAppReducedMotion();
   const mapCamera = useRef<React.ElementRef<typeof Mapbox.Camera>>(null);
@@ -447,8 +451,9 @@ export default function CollectorScreen() {
   const [isHistoryDetailVisible, setIsHistoryDetailVisible] = useState(false);
   const [isHistoryMapExpanded, setIsHistoryMapExpanded] = useState(false);
   const [isSubmittingRoute, setIsSubmittingRoute] = useState(false);
+  const submittingRouteRef = useRef(false);
   const [isFinishRouteConfirmVisible, setIsFinishRouteConfirmVisible] = useState(false);
-  const [routeActionMessage, setRouteActionMessage] = useState<{ kind: 'success' | 'error'; title: string; message: string } | null>(null);
+  const [routeActionMessage, setRouteActionMessage] = useState<{ kind: 'success' | 'error'; title: string; message: string; retryCompletion?: boolean } | null>(null);
   
   const [isEmptiedUndoing, setIsEmptiedUndoing] = useState(false);
   const [localResetTimestamp, setLocalResetTimestamp] = useState<number>(0);
@@ -933,7 +938,8 @@ export default function CollectorScreen() {
   };
 
   const confirmRouteCompletion = async () => {
-    if (!session?.token || !assignedRoute || isSubmittingRoute) return;
+    if (!session?.token || !assignedRoute || isSubmittingRoute || submittingRouteRef.current) return;
+    submittingRouteRef.current = true;
     const routeId = assignedRoute._id;
     const token = session.token;
     const effectiveCollectorId = collectorId || session.user._id || session.user.id || '';
@@ -1034,15 +1040,17 @@ export default function CollectorScreen() {
 
       if (isNetworkErr) {
         try { await completeOffline(); }
-        catch (saveError) { setRouteActionMessage({ kind: 'error', title: 'Could not save route', message: saveError instanceof Error ? saveError.message : 'Please try saving again.' }); }
+        catch (saveError) { setRouteActionMessage({ kind: 'error', title: 'Could not save route', message: saveError instanceof Error ? saveError.message : 'Please try saving again.', retryCompletion: true }); }
       } else {
         setRouteActionMessage({
           kind: 'error',
           title: 'Could not finish route',
           message: err instanceof Error ? err.message : 'The route could not be completed. Please try again.',
+          retryCompletion: true,
         });
       }
     } finally {
+      submittingRouteRef.current = false;
       setIsSubmittingRoute(false);
     }
   };
@@ -1270,6 +1278,7 @@ export default function CollectorScreen() {
       if (!contextIsCurrent()) return;
       const routeResult = await enableRouteProximityTracking({
         collectorId, routeId: assignedRoute._id, routeName: assignedRoute.name, routePath: assignedRoute.routePath ?? null,
+        routeSnapshot: { name: assignedRoute.name, barangay: Array.isArray(assignedRoute.barangay) ? assignedRoute.barangay : [assignedRoute.barangay], routePath: assignedRoute.routePath, stops: assignedRoute.stops },
       }, { requestPermissions: !automatic || newlyConsented });
       if (!contextIsCurrent()) {
         await stopRouteProximityTracking({ forgetConfiguration: true });
@@ -1332,14 +1341,8 @@ export default function CollectorScreen() {
 
   const endTrip = async () => {
     if (isUpdatingGeofence || isSubmittingRoute) return;
-    try {
-      await disableBackgroundGeofencing();
-      // Ending GPS recording and closing the collection day remain separate choices.
-      // Keep route open leaves recording stopped, so a later trip can resume the route.
-      await submitRoute();
-    } catch (error) {
-      setRouteActionMessage({ kind: 'error', title: 'Could not end trip', message: error instanceof Error ? error.message : 'Please try ending the trip again.' });
-    }
+    // Opening or cancelling the dialog must leave GPS and the active trip intact.
+    await submitRoute();
   };
 
   useEffect(() => {
@@ -1533,7 +1536,7 @@ export default function CollectorScreen() {
     <View style={styles.mapScreen}>
       <View style={styles.mapPlaceholder}>
         {MAPBOX_ACCESS_TOKEN ? (
-          <Mapbox.MapView scaleBarEnabled={false} style={styles.mapView} styleURL={Mapbox.StyleURL.Street} logoEnabled attributionEnabled logoPosition={{ top: 8, left: 8 }} attributionPosition={{ top: 8, right: 8 }}>
+          <Mapbox.MapView scaleBarEnabled={false} style={styles.mapView} styleURL={isDarkTheme ? Mapbox.StyleURL.Dark : Mapbox.StyleURL.Street} logoEnabled attributionEnabled logoPosition={{ top: 8, left: 8 }} attributionPosition={{ top: 8, right: 8 }}>
             <Mapbox.Camera
               ref={mapCamera}
               defaultSettings={INITIAL_MAP_CAMERA}
@@ -1752,31 +1755,6 @@ export default function CollectorScreen() {
             )}
           </View>
         )}
-        {assignedRoute && (
-          <Pressable
-            accessibilityRole="button"
-            style={styles.finishRouteButton}
-            onPress={submitRoute}
-            disabled={isSubmittingRoute}
-          >
-            <Feather color="#ffffff" name="check-circle" size={16} />
-            <Text style={styles.finishRouteButtonText}>{isSubmittingRoute ? 'Submitting…' : 'Finish route'}</Text>
-          </Pressable>
-        )}
-
-        {assignedRoute && <View style={styles.offlineMapCard}>
-          <View style={styles.offlineMapRow}>
-            <View style={styles.detailIconBadge}><Feather name="download" size={20} color="#0A7F4F" /></View>
-            <View style={styles.offlineMapTextWrap}>
-              <Text style={styles.offlineMapTitle}>{offlineMap.downloaded ? 'Offline map ready' : offlineMap.downloading ? `Downloading map - ${offlineMap.percentage}%` : 'Download route map'}</Text>
-              <Text style={styles.offlineMapCaption}>{offlineMapMessage || (offlineMap.downloaded ? `${formatStorage(offlineMap.completedSizeBytes)} stored on this phone.` : 'Save this assigned route map for use without mobile data.')}</Text>
-            </View>
-            <Pressable disabled={isUpdatingOfflineMap} onPress={() => void toggleOfflineMap()} style={[styles.offlineMapButton, offlineMap.downloaded && styles.offlineMapButtonDownloaded, isUpdatingOfflineMap && styles.geofenceButtonDisabled]}>
-              <Feather color={offlineMap.downloaded ? '#9d3139' : '#286349'} name={offlineMap.downloaded ? 'trash-2' : 'download'} size={14} />
-              <Text style={[styles.offlineMapButtonText, offlineMap.downloaded && styles.offlineMapButtonTextDownloaded]}>{isUpdatingOfflineMap ? 'Working…' : offlineMap.downloaded ? 'Remove' : 'Download'}</Text>
-            </Pressable>
-          </View>
-        </View>}
         <View style={styles.historyGroup}>
           <Text style={styles.sectionHeading}>PAST COLLECTIONS</Text>
           {historyLoading && historyGroups.length > 0 ? <ActivityIndicator accessibilityLabel="Loading" color="#0A7F4F" /> : null}
@@ -1787,7 +1765,7 @@ export default function CollectorScreen() {
               <View style={styles.historyCard}>
                 <View style={styles.historyCardMap}>
                   {MAPBOX_ACCESS_TOKEN ? (
-                    <Mapbox.MapView key={group.id} scaleBarEnabled={false} styleURL={Mapbox.StyleURL.Street} style={styles.historyMapPreview} logoEnabled attributionEnabled logoPosition={{ bottom: 4, left: 4 }} attributionPosition={{ top: 4, right: 4 }} scrollEnabled={false} pitchEnabled={false} rotateEnabled={false} zoomEnabled={false}>
+                    <Mapbox.MapView key={group.id} scaleBarEnabled={false} styleURL={isDarkTheme ? Mapbox.StyleURL.Dark : Mapbox.StyleURL.Street} style={styles.historyMapPreview} logoEnabled attributionEnabled logoPosition={{ bottom: 4, left: 4 }} attributionPosition={{ top: 4, right: 4 }} scrollEnabled={false} pitchEnabled={false} rotateEnabled={false} zoomEnabled={false}>
                       <HistoryMapCamera group={group} center={historyGroupLastLocation(group)} zoom={15} />
                       {group.routePath ? (
                         <Mapbox.ShapeSource id={`h-rp-${group.id}`} shape={routeLineFeature(group.routePath) ?? undefined}>
@@ -1883,6 +1861,19 @@ export default function CollectorScreen() {
           <Pressable disabled={!session || isLoading} onPress={() => session && void loadDriverData(session.token, collectorId)} style={[styles.syncButton, (!session || isLoading) && styles.syncButtonDisabled]}><Text style={styles.syncButtonText}>{isLoading ? 'Refreshing' : 'Refresh'}</Text></Pressable>
         </View>
 
+        {assignedRoute && <View style={[styles.offlineMapCard, styles.offlineMapCardAfterSync]}>
+          <View style={styles.offlineMapRow}>
+            <View style={styles.detailIconBadge}><Feather name={offlineMap.downloaded ? 'check' : 'download'} size={20} color="#0A7F4F" /></View>
+            <View style={styles.offlineMapTextWrap}>
+              <Text style={styles.offlineMapTitle}>{offlineMap.downloaded ? 'Map downloaded' : offlineMap.downloading ? `Downloading map - ${offlineMap.percentage}%` : 'Download route map'}</Text>
+              <Text style={styles.offlineMapCaption}>{offlineMapMessage || (offlineMap.downloaded ? `${formatStorage(offlineMap.completedSizeBytes)} stored on this phone.` : 'Save this assigned route map for use without mobile data.')}</Text>
+            </View>
+            <Pressable accessibilityRole="button" accessibilityLabel={offlineMap.downloaded ? 'Route map downloaded for offline use' : 'Download route map'} accessibilityState={{ disabled: offlineMap.downloaded || isUpdatingOfflineMap || offlineMap.downloading }} disabled={offlineMap.downloaded || isUpdatingOfflineMap || offlineMap.downloading} onPress={() => void toggleOfflineMap()} style={[styles.offlineMapButton, offlineMap.downloaded && styles.offlineMapButtonDownloaded, (offlineMap.downloaded || isUpdatingOfflineMap || offlineMap.downloading) && styles.geofenceButtonDisabled]}>
+              <Feather color={offlineMap.downloaded ? '#086B42' : '#286349'} name={offlineMap.downloaded ? 'check-circle' : 'download'} size={16} />
+              <Text style={[styles.offlineMapButtonText, offlineMap.downloaded && styles.offlineMapButtonTextSaved]}>{offlineMap.downloaded ? 'Downloaded' : offlineMap.downloading ? 'Downloading…' : isUpdatingOfflineMap ? 'Working…' : 'Download'}</Text>
+            </Pressable>
+          </View>
+        </View>}
         <View style={styles.accountCard}>
           <Text style={styles.accountHeading}>ACCOUNT DETAILS</Text>
           <SkeletonRegion state={profileSkeleton} placeholder={<SkeletonRows kind="account" count={6} />}>
@@ -1908,7 +1899,7 @@ export default function CollectorScreen() {
   );
 
   const renderHistoryTrailMap = () => (MAPBOX_ACCESS_TOKEN && selectedHistoryGroup ? (
-                      <Mapbox.MapView scaleBarEnabled={false} styleURL={Mapbox.StyleURL.Street} style={styles.segmentTrailMap} logoEnabled attributionEnabled scrollEnabled={isHistoryMapExpanded} pitchEnabled={false} rotateEnabled={false} zoomEnabled={isHistoryMapExpanded}>
+                      <Mapbox.MapView scaleBarEnabled={false} styleURL={isDarkTheme ? Mapbox.StyleURL.Dark : Mapbox.StyleURL.Street} style={styles.segmentTrailMap} logoEnabled attributionEnabled scrollEnabled={isHistoryMapExpanded} pitchEnabled={false} rotateEnabled={false} zoomEnabled={isHistoryMapExpanded}>
                         <HistoryMapCamera group={selectedHistoryGroup} center={historyGroupLastLocation(selectedHistoryGroup)} zoom={16} />
                         {selectedHistoryGroup.routePath ? (
                           <Mapbox.ShapeSource id={`d-rp-${selectedHistoryGroup.id}`} shape={routeLineFeature(selectedHistoryGroup.routePath) ?? undefined}>
@@ -1950,10 +1941,10 @@ export default function CollectorScreen() {
   if (editingProfile) return <WorkProfileEditor onClose={() => setEditingProfile(false)} onSaved={updated => { setSession(updated); setDriver(updated.user); }}/>;
 
   return (
-    <SafeAreaView edges={['left', 'right']} style={styles.safeArea}>
-      <StatusBar backgroundColor="#ffffff" style="dark" translucent={false} />
+    <SafeAreaView edges={['left', 'right']} style={[styles.safeArea, isDarkTheme && { backgroundColor: '#101815' }]}>
+      <StatusBar backgroundColor={isDarkTheme ? '#101815' : '#ffffff'} style={isDarkTheme ? 'light' : 'dark'} translucent={false} />
       <View style={[styles.header, { paddingTop: insets.top }]}><View style={styles.brandHeader}><BrandMark height={48} width={150} /><View style={styles.headerCopy}><Text numberOfLines={1} adjustsFontSizeToFit style={styles.headerTitle}>{collectorName || 'Driver'}</Text><Text numberOfLines={1} adjustsFontSizeToFit style={styles.headerSubtitle}>Route Driver</Text></View></View></View>
-      <View style={styles.content}><TabTransition activeKey={activeTab}>{activeTab === 'map' ? mapScreen : activeTab === 'history' ? historyScreen : profileScreen}</TabTransition></View>
+      <View style={[styles.content, isDarkTheme && { backgroundColor: '#101815' }]}><TabTransition activeKey={activeTab}>{activeTab === 'map' ? mapScreen : activeTab === 'history' ? historyScreen : profileScreen}</TabTransition></View>
       <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
       <Modal animationType="slide" onRequestClose={() => isHistoryMapExpanded ? setIsHistoryMapExpanded(false) : setIsHistoryDetailVisible(false)} presentationStyle="fullScreen" visible={isHistoryDetailVisible}>
         <SafeAreaView style={styles.historyDetailBackdrop}>
@@ -2124,30 +2115,11 @@ export default function CollectorScreen() {
           </View>
         </SafeAreaView>
       </Modal>
-      <Modal
-        animationType="fade"
-        onRequestClose={() => setIsFinishRouteConfirmVisible(false)}
-        statusBarTranslucent
-        transparent
+      <FinishRouteModal
         visible={isFinishRouteConfirmVisible}
-      >
-        <View style={styles.finishRouteBackdrop}>
-          <View style={styles.finishRouteCard}>
-            <View style={styles.finishRouteIcon}><Feather color="#176b3a" name="flag" size={22} /></View>
-            <Text style={styles.finishRouteEyebrow}>END TODAY'S SHIFT</Text>
-            <Text style={styles.finishRouteTitle}>Finish route collection?</Text>
-            <Text style={styles.finishRouteMessage}>This will close your assigned route for today. Any remaining stops can only be logged on the next scheduled collection day.</Text>
-            <View style={styles.finishRouteActions}>
-              <Pressable accessibilityRole="button" onPress={() => setIsFinishRouteConfirmVisible(false)} style={styles.finishRouteCancelButton}>
-                <Text style={styles.finishRouteCancelText}>Keep route open</Text>
-              </Pressable>
-              <Pressable accessibilityRole="button" onPress={() => void confirmRouteCompletion()} style={styles.finishRouteConfirmButton}>
-                <Text style={styles.finishRouteConfirmText}>Finish route</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
+        onCancel={() => setIsFinishRouteConfirmVisible(false)}
+        onConfirm={() => void confirmRouteCompletion()}
+      />
       <Modal
         animationType="fade"
         onRequestClose={() => setRouteActionMessage(null)}
@@ -2162,8 +2134,8 @@ export default function CollectorScreen() {
             </View>
             <Text style={styles.finishRouteTitle}>{routeActionMessage?.title}</Text>
             <Text style={styles.finishRouteMessage}>{routeActionMessage?.message}</Text>
-            <Pressable accessibilityRole="button" onPress={() => setRouteActionMessage(null)} style={styles.finishRouteDoneButton}>
-              <Text style={styles.finishRouteDoneText}>Done</Text>
+            <Pressable accessibilityRole="button" onPress={() => { const retry = routeActionMessage?.retryCompletion; setRouteActionMessage(null); if (retry) void submitRoute(); }} style={styles.finishRouteDoneButton}>
+              <Text style={styles.finishRouteDoneText}>{routeActionMessage?.retryCompletion ? 'Try again' : 'Done'}</Text>
             </Pressable>
           </View>
         </View>
@@ -2287,28 +2259,22 @@ const styles = StyleSheet.create({
   resolveSuccessButton: { alignItems: 'center', backgroundColor: '#07815f', borderRadius: 12, marginTop: 20, minHeight: 44, justifyContent: 'center', paddingHorizontal: 30, width: '100%' },
   resolveSuccessButtonText: { color: '#ffffff', fontSize: 13, fontWeight: '800' },
   offlineMapCard: { backgroundColor: '#F4F6F5', borderRadius: 20, borderWidth: 0, marginTop: 24, padding: 16, gap: 0 },
+  offlineMapCardAfterSync: { marginTop: 12 },
   offlineMapRow: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
   offlineMapTextWrap: { flexGrow: 1, flexShrink: 1, flexBasis: 120, minWidth: 0 },
   offlineMapTitle: { color: '#121A16', fontSize: 16, fontWeight: '700' },
   offlineMapCaption: { color: '#5A6761', fontSize: 13, marginTop: 4 },
   offlineMapButton: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#E3F4EB', borderRadius: 14, flexDirection: 'row', gap: 4, minHeight: 44, paddingHorizontal: 12, paddingVertical: 8 },
-  offlineMapButtonDownloaded: { backgroundColor: '#fff3f4', borderColor: '#f0c7cb' },
+  offlineMapButtonDownloaded: { backgroundColor: '#E3F4EB', borderColor: '#B8DDC7' },
   offlineMapButtonText: { color: '#086B42', fontSize: 14, fontWeight: '700' },
+  offlineMapButtonTextSaved: { color: '#086B42' },
   offlineMapButtonTextDownloaded: { color: '#9d3139' },
-  finishRouteButton: { alignItems: 'center', backgroundColor: '#0A7F4F', borderRadius: 18, flexDirection: 'row', gap: 8, justifyContent: 'center', marginTop: 12, minHeight: 56, padding: 12 },
-  finishRouteButtonText: { color: '#ffffff', fontSize: 16, fontWeight: '700', flexShrink: 1 },
   finishRouteBackdrop: { alignItems: 'center', backgroundColor: 'rgba(13, 35, 25, 0.56)', flex: 1, justifyContent: 'center', padding: 22 },
   finishRouteCard: { backgroundColor: '#ffffff', borderRadius: 22, maxWidth: 360, paddingHorizontal: 22, paddingVertical: 24, shadowColor: '#102d20', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.22, shadowRadius: 18, width: '100%' },
   finishRouteIcon: { alignItems: 'center', alignSelf: 'center', backgroundColor: '#e8f7ef', borderRadius: 30, height: 56, justifyContent: 'center', width: 56 },
   finishRouteIconError: { backgroundColor: '#fff0f1' },
-  finishRouteEyebrow: { color: '#07815f', fontSize: 10, fontWeight: '800', letterSpacing: 0.7, marginTop: 15, textAlign: 'center' },
   finishRouteTitle: { color: '#203b2d', fontSize: 20, fontWeight: '800', marginTop: 5, textAlign: 'center' },
   finishRouteMessage: { color: '#687a70', fontSize: 13, lineHeight: 20, marginTop: 10, textAlign: 'center' },
-  finishRouteActions: { flexDirection: 'row', gap: 9, marginTop: 21 },
-  finishRouteCancelButton: { alignItems: 'center', borderColor: '#b8d3c3', borderRadius: 11, borderWidth: 1, flex: 1, justifyContent: 'center', minHeight: 45, paddingHorizontal: 8 },
-  finishRouteCancelText: { color: '#286349', fontSize: 11, fontWeight: '800', textAlign: 'center' },
-  finishRouteConfirmButton: { alignItems: 'center', backgroundColor: '#176b3a', borderRadius: 11, flex: 1, justifyContent: 'center', minHeight: 45, paddingHorizontal: 8 },
-  finishRouteConfirmText: { color: '#ffffff', fontSize: 11, fontWeight: '800', textAlign: 'center' },
   finishRouteDoneButton: { alignItems: 'center', backgroundColor: '#176b3a', borderRadius: 11, justifyContent: 'center', marginTop: 21, minHeight: 45, paddingHorizontal: 28 },
   finishRouteDoneText: { color: '#ffffff', fontSize: 12, fontWeight: '800' },
   historyHeader: { backgroundColor: '#176b3a', paddingBottom: 11, paddingHorizontal: 16, paddingTop: 10 },

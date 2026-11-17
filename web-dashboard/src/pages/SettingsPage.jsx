@@ -1,8 +1,9 @@
-import { Button, Switch, Tooltip } from '@heroui/react';
+import { Button, Switch } from '@heroui/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import AppSelect from '../components/AppSelect.jsx';
 import { PasswordDialog, ProfileDialog, SettingsAvatar } from '../components/SettingsDialogs.jsx';
 import { settingsRequest } from '../components/settingsApi.js';
+import { translate, usePreferences } from '../components/preferences.jsx';
 import './SettingsPage.css';
 
 // The current API has no super-admin permission. Never infer it from a display name.
@@ -10,18 +11,19 @@ import './SettingsPage.css';
 const sections = [['account', 'Account'], ['appearance', 'Appearance and language'], ['notifications', 'Notifications'], ['preferences', 'Dashboard preferences'], ['security', 'Security']];
 function ComingSoon() { return <span className="settings-soon">Coming soon</span>; }
 function Section({ id, title, description, children }) {
-  return <section className="settings-card" id={`settings-${id}`} aria-labelledby={`settings-${id}-title`}><h2 id={`settings-${id}-title`}>{title}</h2><p className="settings-description">{description}</p>{children}</section>;
+  const { preferences } = usePreferences();
+  return <section className="settings-card" id={`settings-${id}`} aria-labelledby={`settings-${id}-title`}><h2 id={`settings-${id}-title`}>{translate(title, preferences.language)}</h2><p className="settings-description">{translate(description, preferences.language)}</p>{children}</section>;
 }
 function Row({ label, description, children, coming = false }) {
-  return <div className="settings-row"><div className="settings-row-copy"><div className="settings-row-label">{label}{coming ? <ComingSoon /> : null}</div><p>{description}</p></div><div className="settings-control">{children}</div></div>;
-}
-function UnavailableOption({ children, reason }) {
-  return <Tooltip delay={100}><Tooltip.Trigger className="settings-unavailable" tabIndex={0} aria-disabled="true" aria-label={`${children}. ${reason}`}><span>{children}</span></Tooltip.Trigger><Tooltip.Content>{reason}</Tooltip.Content></Tooltip>;
+  const { preferences } = usePreferences();
+  return <div className="settings-row"><div className="settings-row-copy"><div className="settings-row-label">{translate(label, preferences.language)}{coming ? <ComingSoon /> : null}</div><p>{translate(description, preferences.language)}</p></div><div className="settings-control">{children}</div></div>;
 }
 function Toggle({ label, selected = false, disabled = false, onChange }) {
   return <Switch aria-label={label} className="settings-switch" isSelected={selected} isDisabled={disabled} onChange={onChange}><Switch.Content><Switch.Control><Switch.Thumb /></Switch.Control></Switch.Content></Switch>;
 }
 export default function SettingsPage({ user, token, onUserChange }) {
+  const { preferences, setPreferences } = usePreferences();
+  const tr = value => translate(value, preferences.language);
   const [profile, setProfile] = useState(user);
   const [settings, setSettings] = useState(null);
   const [loadError, setLoadError] = useState('');
@@ -35,10 +37,10 @@ export default function SettingsPage({ user, token, onUserChange }) {
   useEffect(() => {
     const controller = new AbortController(); setLoadError(''); setSettings(null);
     Promise.all([settingsRequest('settings', token, { signal: controller.signal }), settingsRequest('me', token, { signal: controller.signal })])
-      .then(([data, me]) => { if (!controller.signal.aborted) { setSettings(data.settings); setProfile({ ...me, authProvider: data.authProvider, isPasswordSet: data.isPasswordSet }); onUserChange(me); } })
+      .then(([data, me]) => { if (!controller.signal.aborted) { const loaded = { ...data.settings, theme: data.settings?.theme === 'dark' ? 'dark' : 'light' }; setSettings(loaded); setPreferences(current => ({ ...current, theme: loaded.theme, language: loaded.language === 'fil' ? 'fil' : 'en' })); setProfile({ ...me, authProvider: data.authProvider, isPasswordSet: data.isPasswordSet }); onUserChange(me); } })
       .catch(error => { if (!controller.signal.aborted) setLoadError(error.message); });
     return () => controller.abort();
-  }, [token, retry, onUserChange]);
+  }, [token, retry, onUserChange, setPreferences]);
   useEffect(() => {
     if (!toast) return;
     const timer = window.setTimeout(() => setToast(null), toast.error ? 8000 : 3000);
@@ -61,24 +63,25 @@ export default function SettingsPage({ user, token, onUserChange }) {
   const savePreference = useCallback(async patch => {
     if (!settings || saving) return;
     const previous = settings;
-    setSettings(current => ({ ...current, ...patch, notifications: { ...current.notifications, ...patch.notifications } })); setSaving(true);
+    setSettings(current => ({ ...current, ...patch, notifications: { ...current.notifications, ...patch.notifications } }));
+    setPreferences(current => ({ ...current, ...(patch.theme ? { theme: patch.theme } : {}), ...(patch.language ? { language: patch.language } : {}) })); setSaving(true);
     try {
       const data = await settingsRequest('settings', token, { method: 'PATCH', body: patch });
       if (mounted.current) { setSettings(data.settings); setToast({ text: 'Saved' }); }
     } catch (error) {
-      if (mounted.current) { setSettings(previous); setToast({ text: error.message, error: true }); }
+      if (mounted.current) { setSettings(previous); setPreferences(current => ({ ...current, theme: previous.theme === 'dark' ? 'dark' : 'light', language: previous.language === 'fil' ? 'fil' : 'en' })); setToast({ text: error.message, error: true }); }
     } finally { if (mounted.current) setSaving(false); }
-  }, [saving, settings, token]);
-  return <div className="admin-settings"><header className="settings-heading"><h1>Settings</h1><p>Manage your account and dashboard preferences.</p></header>
+  }, [saving, settings, token, setPreferences]);
+  return <div className="admin-settings"><header className="settings-heading"><h1>{tr('Settings')}</h1><p>{tr('Manage your account and dashboard preferences.')}</p></header>
     <div className="settings-layout"><nav className="settings-section-nav" aria-label="Settings sections">{sections.map(([id, label]) => <a key={id} href={`#settings-${id}`} aria-current={active === id ? 'location' : undefined} onClick={event => {
       event.preventDefault(); const node = document.getElementById(`settings-${id}`); node?.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }); setActive(id);
-    }}>{label}</a>)}</nav>
+    }}>{tr(label)}</a>)}</nav>
     <div className="settings-sections">
       {loadError ? <div className="settings-load-error" role="alert">{loadError}<Button variant="secondary" onPress={() => setRetry(value => value + 1)}>Retry</Button></div> : !settings ? <p role="status" className="settings-muted">Loading account preferences...</p> : null}
-      <Section id="account" title="Account" description="Your profile on the dashboard."><div className="settings-account"><SettingsAvatar user={profile} /><div className="settings-account-copy"><h3>{profile.name || 'Admin'}</h3><p>{profile.email}</p><span className="settings-admin-tag">Admin</span></div><Button variant="secondary" className="settings-outline" isDisabled={!settings} onPress={() => setDialog('profile')}>Edit profile</Button></div></Section>
-      <Section id="appearance" title="Appearance and language" description="Personalize how the dashboard looks.">
-        <Row label="Theme" description="The dashboard currently uses the light theme." coming><div className="settings-segmented" role="group" aria-label="Theme"><Button variant="tertiary" aria-pressed className="selected" isDisabled={!settings || saving} onPress={() => savePreference({ theme: 'light' })}>Light</Button><UnavailableOption reason="Dark mode is not available on the dashboard yet.">Dark</UnavailableOption><UnavailableOption reason="System theme needs dashboard dark-mode support.">System</UnavailableOption></div></Row>
-        <Row label="Language" description="Dashboard translations are not available yet." coming><div className="settings-segmented" role="group" aria-label="Language"><Button variant="tertiary" aria-pressed className="selected" isDisabled={!settings || saving} onPress={() => savePreference({ language: 'en' })}>English</Button><UnavailableOption reason="Filipino translations are not available on the dashboard yet.">Filipino</UnavailableOption></div></Row>
+      <Section id="account" title={tr('Account')} description={tr('Your profile on the dashboard.')}><div className="settings-account"><SettingsAvatar user={profile} /><div className="settings-account-copy"><h3>{profile.name || 'Admin'}</h3><p>{profile.email}</p><span className="settings-admin-tag">Admin</span></div><Button variant="secondary" className="settings-outline" isDisabled={!settings} onPress={() => setDialog('profile')}>{tr('Edit profile')}</Button></div></Section>
+      <Section id="appearance" title={tr('Appearance and language')} description={tr('Personalize how the dashboard looks.')}>
+        <Row label={tr('Theme')} description={tr('The dashboard color scheme.')}><div className="settings-segmented" role="group" aria-label={tr('Theme')}>{['light', 'dark'].map(value => <Button key={value} variant="tertiary" aria-pressed={preferences.theme === value} className={preferences.theme === value ? 'selected' : ''} isDisabled={!settings || saving} onPress={() => savePreference({ theme: value })}>{tr(value === 'light' ? 'Light' : 'Dark')}</Button>)}</div></Row>
+        <Row label={tr('Language')} description={tr('Language used across the dashboard.')}><div className="settings-segmented" role="group" aria-label={tr('Language')}>{[['en', 'English'], ['fil', 'Filipino']].map(([value, label]) => <Button key={value} variant="tertiary" aria-pressed={preferences.language === value} className={preferences.language === value ? 'selected' : ''} isDisabled={!settings || saving} onPress={() => savePreference({ language: value })}>{tr(label)}</Button>)}</div></Row>
       </Section>
       <Section id="notifications" title="Notifications" description="Choose what you want to be told about.">
         <Row label="Push notifications" description="Allow push notifications on devices registered to your account."><Toggle label="Push notifications" selected={!!settings?.notifications?.pushEnabled} disabled={!settings || saving} onChange={value => savePreference({ notifications: { pushEnabled: value } })} /></Row>

@@ -21,12 +21,18 @@ export function SignupPrivacy({ accepted, onChange, disabled = false }: { accept
         </Pressable>
       </View>
     </View>
-    <Modal animationType="fade" transparent visible={visible} onRequestClose={() => setVisible(false)}>
+    <PrivacyPolicyModal visible={visible} onClose={() => setVisible(false)} />
+  </View>;
+}
+
+/** The same notice is available before signup and from signed-in profiles. */
+export function PrivacyPolicyModal({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  return <Modal animationType="fade" transparent visible={visible} onRequestClose={onClose}>
       <SafeAreaView style={styles.backdrop}>
         <View accessibilityViewIsModal style={styles.card}>
           <View style={styles.heading}>
             <Text accessibilityRole="header" style={styles.title}>Data Privacy Notice</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel="Close Data Privacy Notice" onPress={() => setVisible(false)} style={styles.close}><Feather name="x" size={22} color={C.ink} /></Pressable>
+            <Pressable accessibilityRole="button" accessibilityLabel="Close Data Privacy Notice" onPress={onClose} style={styles.close}><Feather name="x" size={22} color={C.ink} /></Pressable>
           </View>
           <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
             <Text style={styles.description}>Please read this notice before creating your ResiKlean account.</Text>
@@ -41,11 +47,10 @@ export function SignupPrivacy({ accepted, onChange, disabled = false }: { accept
             <Text style={styles.subtitle}>Your choices and questions</Text>
             <Text style={styles.description}>You can review and update your profile, manage notification settings and device permissions, or contact the Naga City Solid Waste Management Office about your information and requests concerning it. If you do not accept this notice, do not continue registration.</Text>
           </ScrollView>
-          <Pressable accessibilityRole="button" onPress={() => setVisible(false)} style={styles.done}><Text style={styles.doneText}>Close notice</Text></Pressable>
+          <Pressable accessibilityRole="button" onPress={onClose} style={styles.done}><Text style={styles.doneText}>Close notice</Text></Pressable>
         </View>
       </SafeAreaView>
-    </Modal>
-  </View>;
+    </Modal>;
 }
 
 const styles = StyleSheet.create({

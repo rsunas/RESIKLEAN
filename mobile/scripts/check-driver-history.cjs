@@ -8,6 +8,7 @@ const path={type:'LineString',coordinates:[[123.17,13.62],[123.19,13.62]]},trail
 const day='2026-11-13',local={id:day+'|route',date:day,routeId:'route',routeName:'Test',trailPath:trail,routePath:path,stopLogs:[],sessionStartedAt:day+'T01:00:00Z',sessionEndedAt:day+'T02:00:00Z'};
 let shown=[],cached=[],loading=false,cleared=false,queued=false,ended=false,connected=false;
 const context={isUpdatingGeofence:false,isSubmittingRoute:false,useCallback:fn=>fn,collectorId:'driver',session:{token:'token',user:{_id:'driver'}},API_URL:'https://fixture',historyLoadRequestRef:{current:0},
+ submittingRouteRef:{current:false},
  setHistoryLoading:v=>loading=v,setHistoryLoadError(){},setHistoryGroups:v=>shown=v,setSelectedHistoryGroup(){},getRouteHistoryCache:async()=>cached,getLocalDriverTrailHistory:async()=>[local],saveRouteHistoryCache:async(_,v)=>cached=v,mergeRouteHistory,withTimeout:promise=>withTimeout(promise,50),NetInfo:{fetch:async()=>({isConnected:connected,isInternetReachable:connected})},fetch:async()=>({ok:true,json:async()=>({success:true,data:{groups:[{...local,routePath:null,trailPath:null}]}})}),
  assignedRoute:{_id:'route',name:'Test',barangay:['Abella'],routePath:path},setIsFinishRouteConfirmVisible(){},setIsSubmittingRoute(){},setRouteActionMessage(){},queueRouteCompletion:async()=>{queued=true;},monitoringDay:()=>day,displayBarangay:v=>v.join(', '),totalStops:1,completed:0,setAssignedRoute:()=>cleared=true,clearCachedAssignedRoute:async()=>{},clearRouteProximityEvents:async()=>{},disableBackgroundGeofencing:async()=>{ended=true;},loadRouteHistory:async()=>{},syncDriverTrailQueue:async()=>({pendingSessions:1})};
 context.requestJson=async (...args)=>{const response=await context.fetch(...args);return {response,payload:await response.json()};};
@@ -23,8 +24,8 @@ context.requestJson=async (...args)=>{const response=await context.fetch(...args
  let opened=false;
  context.setIsFinishRouteConfirmVisible=value=>opened=value;
  context.submitRoute=evaluate('submitRoute',context);
- ended=false;await evaluate('endTrip',context)();assert.equal(ended,true);assert.equal(opened,true);
- context.setIsFinishRouteConfirmVisible(false);assert.equal(ended,true);assert.equal(opened,false);
+ ended=false;queued=false;await evaluate('endTrip',context)();assert.equal(ended,false);assert.equal(queued,false);assert.equal(opened,true);
+ context.setIsFinishRouteConfirmVisible(false);assert.equal(ended,false);assert.equal(opened,false);
  const jsx=source.getFullText();assert.ok(jsx.includes('routePresence.enabled ? endTrip() : enableBackgroundGeofencing()'));
  assert.ok(!jsx.includes('ROUTE PRESENCE'));
  let failureMessage;
@@ -32,6 +33,6 @@ context.requestJson=async (...args)=>{const response=await context.fetch(...args
  context.queueRouteCompletion=async()=>{throw Error('Device storage unavailable');};
  connected=false;cleared=false;
  await evaluate('confirmRouteCompletion',context)();assert.equal(cleared,false);assert.equal(failureMessage.kind,'error');
- console.log('PASS: End trip opens the shared finish dialog; failed offline persistence keeps the route available to retry.');
+ console.log('PASS: End trip and cancel leave tracking active; failed offline persistence keeps the route available to retry.');
  console.log('PASS: offline finish stores both paths, offline history renders local points, empty/failed server responses preserve paths, partial sync deduplicates, separate trips stay separate, camera fits both paths.');
 })().catch(e=>{console.error(e);process.exitCode=1;});

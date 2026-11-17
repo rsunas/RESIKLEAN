@@ -4,12 +4,14 @@ import { Alert, StyleSheet, View } from 'react-native';
 import { MotionPressable as Pressable } from '@/components/app-motion';
 import { AppText as Text } from '@/components/app-text';
 import { ResidentSettingsModal } from '@/components/resident-settings-modal';
+import { PrivacyPolicyModal } from '@/components/signup-privacy';
 import { getSession, type AuthSession } from '@/lib/session';
 
 /** Opens the same settings modal as Resident Profile; no separate preferences. */
 export function ProfileSettingsRow({ onSignOut }: { onSignOut: () => void }) {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [visible, setVisible] = useState(false);
+  const [privacyVisible, setPrivacyVisible] = useState(false);
   const open = async () => {
     try {
       const current = await getSession();
@@ -27,6 +29,12 @@ export function ProfileSettingsRow({ onSignOut }: { onSignOut: () => void }) {
       <Feather name="chevron-right" size={20} color="#5A6761" />
     </Pressable>
     {session ? <ResidentSettingsModal apiUrl={process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '') ?? ''} session={session} visible={visible} onClose={() => setVisible(false)} onSessionUpdate={setSession} onSignOut={onSignOut} /> : null}
+    <Pressable accessibilityRole="button" onPress={() => setPrivacyVisible(true)} style={styles.row}>
+      <View accessible={false} style={styles.badge}><Feather name="shield" size={20} color="#0A7F4F" /></View>
+      <Text style={styles.label}>Privacy Policy</Text>
+      <Feather name="chevron-right" size={20} color="#5A6761" />
+    </Pressable>
+    <PrivacyPolicyModal visible={privacyVisible} onClose={() => setPrivacyVisible(false)} />
   </>;
 }
 

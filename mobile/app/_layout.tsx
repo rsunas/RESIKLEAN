@@ -14,7 +14,9 @@ import { HeroUINativeProvider } from 'heroui-native';
 import { Text, TextInput, type TextInputProps, type TextProps } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
 import { useEffect, useRef } from 'react';
+import { AppPreferencesProvider, useResolvedTheme } from '@/hooks/app-preferences';
 import { AppMotionProvider, useAppReducedMotion } from '@/hooks/use-app-reduced-motion';
 import '@/lib/notifications';
 import { startNetworkRecovery } from '@/lib/network-recovery';
@@ -76,6 +78,11 @@ function AppStack() {
   </Stack>;
 }
 
+function ThemeAwareStack() {
+  const theme = useResolvedTheme();
+  return <><StatusBar style={theme === 'dark' ? 'light' : 'dark'} /><AppStack /></>;
+}
+
 export default function RootLayout() {
   useEffect(startNetworkRecovery, []);
   const [fontsLoaded] = useFonts({
@@ -90,12 +97,7 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <AppMotionProvider>
-          <HeroUINativeProvider>
-            <NotificationObserver />
-            <AppStack />
-          </HeroUINativeProvider>
-        </AppMotionProvider>
+        <AppPreferencesProvider><AppMotionProvider><HeroUINativeProvider><NotificationObserver /><ThemeAwareStack /></HeroUINativeProvider></AppMotionProvider></AppPreferencesProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

@@ -6,6 +6,13 @@ import * as SQLite from 'expo-sqlite';
 const DATABASE_NAME = 'resiklean-driver-trail.db';
 const SESSION_BATCH_SIZE = 3;
 
+export type TripRouteSnapshot = {
+  name: string;
+  barangay?: string[];
+  routePath?: { type: 'LineString' | 'MultiLineString'; coordinates: unknown } | null;
+  stops?: Array<{ _id: string; name: string; order: number; latitude: number; longitude: number }>;
+};
+
 export type DriverTrailLocation = {
   timestamp?: number;
   coords: {
@@ -29,6 +36,8 @@ type TrailSessionRow = {
   attempts: number;
   last_error: string | null;
   sync_version: number;
+  route_path_json: string | null;
+  route_snapshot_json: string | null;
 };
 
 type TrailPointRow = {
@@ -47,6 +56,7 @@ type TrailPointRow = {
 };
 
 type TrailSessionPayload = {
+  routeSnapshot?: TripRouteSnapshot;
   clientSessionId: string;
   collectorId: string;
   routeId: string;
@@ -142,6 +152,13 @@ const getDatabase = () => {
       if (!columns.some((column) => column.name === 'route_path_json')) {
         await database.execAsync('ALTER TABLE driver_trail_sessions ADD COLUMN route_path_json TEXT');
       }
+      if (!columns.some((column) => column.name === 'route_snapshot_json')) {
+        await database.execAsync(`
+          ALTER TABLE driver_trail_sessions ADD COLUMN route_snapshot_json TEXT;
+          UPDATE driver_trail_sessions SET synced_at = NULL, sync_version = sync_version + 1
+            WHERE route_path_json IS NOT NULL;
+        `);
+      }
       return database;
     });
   }
@@ -183,7 +200,7 @@ const getStats = async (collectorId: string): Promise<DriverTrailQueueStats> => 
   };
 };
 
-export async function startDriverTrailSession({ collectorId, routeId, routeName, routePath }: { collectorId: string; routeId: string; routeName: string; routePath?: {type: 'LineString' | 'MultiLineString'; coordinates: unknown} | null }) {
+export async function startDriverTrailSession({ collectorId, routeId, routeName, routePath, routeSnapshot }: { collectorId: string; routeId: string; routeName: string; routePath?: {type: 'LineString' | 'MultiLineString'; coordinates: unknown} | null; routeSnapshot?: TripRouteSnapshot }) {
   const database = await getDatabase();
   const existing = await database.getFirstAsync<{ client_session_id: string }>(
     `SELECT client_session_id FROM driver_trail_sessions
@@ -193,7 +210,6 @@ export async function startDriverTrailSession({ collectorId, routeId, routeName,
     routeId,
   );
   if (existing) {
-    if (routePath) await database.runAsync('UPDATE driver_trail_sessions SET route_path_json = COALESCE(route_path_json, ?) WHERE client_session_id = ?', JSON.stringify(routePath), existing.client_session_id);
     return existing.client_session_id;
   }
 
@@ -210,14 +226,15 @@ export async function startDriverTrailSession({ collectorId, routeId, routeName,
   const clientSessionId = Crypto.randomUUID();
   await database.runAsync(
     `INSERT INTO driver_trail_sessions
-       (client_session_id, collector_id, route_id, route_name, started_at, status, route_path_json)
-     VALUES (?, ?, ?, ?, ?, 'active', ?)`,
+       (client_session_id, collector_id, route_id, route_name, started_at, status, route_path_json, route_snapshot_json)
+     VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`,
     clientSessionId,
     collectorId,
     routeId,
     routeName,
     new Date().toISOString(),
     routePath ? JSON.stringify(routePath) : null,
+    JSON.stringify(routeSnapshot || { name: routeName, routePath }),
   );
   return clientSessionId;
 }
@@ -277,6 +294,13 @@ export async function finishDriverTrailSession() {
 }
 
 /** Read saved trips directly: history must not depend on upload succeeding. */
+function readRouteSnapshot(session: TrailSessionRow): TripRouteSnapshot {
+  try {
+    if (session.route_snapshot_json) return JSON.parse(session.route_snapshot_json);
+    return { name: session.route_name, ...(session.route_path_json ? { routePath: JSON.parse(session.route_path_json) } : {}) };
+  } catch { return { name: session.route_name }; }
+}
+
 export async function getLocalDriverTrailHistory(collectorId: string) {
   const database = await getDatabase();
   const sessions = await database.getAllAsync<TrailSessionRow & {route_path_json: string | null; synced_at: string | null}>(
@@ -289,13 +313,14 @@ export async function getLocalDriverTrailHistory(collectorId: string) {
     const coordinates = points.filter(p => validCoordinate(p.latitude, p.longitude)).map(p => [p.longitude, p.latitude] as [number, number]);
     let routePath: {type: 'LineString' | 'MultiLineString'; coordinates: unknown} | undefined;
     try { routePath = session.route_path_json ? JSON.parse(session.route_path_json) : undefined; } catch { /* Older records may not have a route snapshot. */ }
+    const routeSnapshot = readRouteSnapshot(session);
     const date = new Date(Date.parse(session.started_at) + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
     return {
       id: `${date}|${session.route_id}`, date, routeId: session.route_id, routeName: session.route_name,
-      barangay: '', totalStops: 0, collected: 0, flagged: 0, distanceMi: 0, greeneryPct: null,
+      barangay: routeSnapshot.barangay || [], totalStops: routeSnapshot.stops?.length || 0, collected: 0, flagged: 0, distanceMi: 0, greeneryPct: null,
       elevationGainFt: 0, elevationLossFt: 0, sessionId: session.client_session_id,
       sessionStartedAt: session.started_at, sessionEndedAt: session.ended_at || undefined,
-      routePath, trailPath: coordinates.length >= 2 ? {type: 'LineString' as const, coordinates} : undefined,
+      routeSnapshot, routePath, trailPath: coordinates.length >= 2 ? {type: 'LineString' as const, coordinates} : undefined,
       lastLocation: coordinates.at(-1), pendingSync: !session.synced_at, stopLogs: [],
     };
   }));
@@ -304,7 +329,7 @@ export async function getLocalDriverTrailHistory(collectorId: string) {
 const getPendingSessions = async (collectorId: string) => {
   const database = await getDatabase();
   const sessions = await database.getAllAsync<TrailSessionRow>(
-    `SELECT client_session_id, collector_id, route_id, route_name, started_at, ended_at, status, attempts, last_error, sync_version
+    `SELECT client_session_id, collector_id, route_id, route_name, started_at, ended_at, status, attempts, last_error, sync_version, route_path_json, route_snapshot_json
      FROM driver_trail_sessions
      WHERE collector_id = ? AND synced_at IS NULL
      ORDER BY started_at ASC LIMIT ${SESSION_BATCH_SIZE}`,
@@ -324,6 +349,7 @@ const getPendingSessions = async (collectorId: string) => {
       collectorId: session.collector_id,
       routeId: session.route_id,
       routeName: session.route_name,
+      routeSnapshot: readRouteSnapshot(session),
       startedAt: session.started_at,
       endedAt: session.ended_at,
       status: session.status,

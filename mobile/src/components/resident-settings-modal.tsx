@@ -6,7 +6,7 @@ import { ResidentAvatar } from './resident-avatar';
  *
  * Sections:
  *   1. Account (avatar, email, auth provider badge)
- *   2. Appearance  – theme selector (Light / Dark / System)
+ *   2. Appearance  – theme selector (Light / Dark)
  *   3. Language    – English / Filipino
  *   4. Notifications – individual toggles + master push
  *   5. Security    – Change Password (modal-in-modal)
@@ -34,10 +34,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText as Text } from '@/components/app-text';
 import { MotionModal as Modal, MotionPressable as Pressable, AccordionBody, MotionChevron } from '@/components/app-motion';
 import type { AuthSession } from '@/lib/session';
+import { useAppPreferences, useAppTheme } from '@/hooks/app-preferences';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type Theme = 'light' | 'dark' | 'system';
+type Theme = 'light' | 'dark';
 type Language = 'en' | 'fil';
 
 type NotificationSettings = {
@@ -85,7 +86,7 @@ interface Props {
 // ─── Default values ───────────────────────────────────────────────────────────
 
 const DEFAULT_SETTINGS: UserSettings = {
-  theme: 'system',
+  theme: 'light',
   language: 'en',
   notifications: {
     pushEnabled: true,
@@ -171,7 +172,6 @@ function ThemePills({ value, onChange }: { value: Theme; onChange: (theme: Theme
   return <PreferenceTabs value={value} onChange={(next) => onChange(next as Theme)} options={[
     { key: 'light', label: 'Light', icon: 'sun' },
     { key: 'dark', label: 'Dark', icon: 'moon' },
-    { key: 'system', label: 'System', icon: 'smartphone' },
   ]} />;
 }
 
@@ -431,6 +431,8 @@ export function ChangePasswordModal({
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSignOut, onSessionUpdate }: Props) {
+  const { updatePreferences } = useAppPreferences();
+  const appTheme = useAppTheme();
   const insets = useSafeAreaInsets();
 
   // ── Local state ───────────────────────────────────────────────────────────
@@ -460,7 +462,9 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
         isPasswordSet: boolean;
       }>;
       if (!response.ok || !result.success || !result.data) throw new Error(result.error || 'Unable to load settings.');
-      setSettings({ ...DEFAULT_SETTINGS, ...result.data.settings });
+      const loadedSettings: UserSettings = { ...DEFAULT_SETTINGS, ...result.data.settings, theme: result.data.settings.theme === 'dark' ? 'dark' : 'light' };
+      setSettings(loadedSettings);
+      updatePreferences({ theme: loadedSettings.theme, language: loadedSettings.language === 'fil' ? 'fil' : 'en' });
       setAuthProvider(result.data.authProvider === 'google' ? 'google' : 'local');
       setIsPasswordSet(result.data.isPasswordSet);
     } catch (err) {
@@ -468,7 +472,7 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
     } finally {
       setIsLoadingSettings(false);
     }
-  }, [apiUrl, session.token]);
+  }, [apiUrl, session.token, updatePreferences]);
 
   const loadAppInfo = useCallback(async () => {
     if (!apiUrl) return;
@@ -506,7 +510,11 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
         });
         const result = (await response.json()) as ApiResponse<{ settings: UserSettings }>;
         if (!response.ok || !result.success) throw new Error(result.error || 'Unable to save settings.');
-        if (result.data?.settings) setSettings({ ...DEFAULT_SETTINGS, ...result.data.settings });
+        if (result.data?.settings) {
+          const saved: UserSettings = { ...DEFAULT_SETTINGS, ...result.data.settings, theme: result.data.settings.theme === 'dark' ? 'dark' : 'light' };
+          setSettings(saved);
+          updatePreferences({ theme: saved.theme, language: saved.language === 'fil' ? 'fil' : 'en' });
+        }
       } catch {
         // Silently rollback on error
         void loadSettings();
@@ -514,16 +522,18 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
         setIsSavingSettings(false);
       }
     },
-    [apiUrl, session.token, loadSettings],
+    [apiUrl, session.token, loadSettings, updatePreferences],
   );
 
   const setTheme = (theme: Theme) => {
     setSettings((prev) => ({ ...prev, theme }));
+    updatePreferences({ theme });
     void patchSettings({ theme });
   };
 
   const setLanguage = (language: Language) => {
     setSettings((prev) => ({ ...prev, language }));
+    updatePreferences({ language });
     void patchSettings({ language });
   };
 
@@ -601,7 +611,7 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
   // ─────────────────────────────────────────────────────────────────────────
   return (
     <Modal animationType="slide" onRequestClose={onClose} transparent={false} visible={visible}>
-      <View style={[ss.screen, { paddingTop: insets.top }]}>
+      <View style={[ss.screen, appTheme === 'dark' && { backgroundColor: '#101815' }, { paddingTop: insets.top }]}>
         {/* ── Header ─────────────────────────────────────────── */}
         <View style={ss.header}>
           <Pressable accessibilityLabel="Back" hitSlop={10} onPress={onClose} style={ss.headerBack}>
@@ -641,7 +651,7 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
 
             {/* ── Appearance ──────────────────────────────────── */}
             <SectionHeader label="Appearance" />
-            <View style={ss.card}>
+            <View style={[ss.card, appTheme === 'dark' && { backgroundColor: '#1A2420' }]}>
               <View style={ss.cardRowNoBorder}>
                 <View style={[ss.settingIcon, { backgroundColor: '#e8f4ff' }]}>
                   <Feather color="#2f70d7" name="sun" size={16} />
@@ -656,7 +666,7 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
 
             {/* ── Language ────────────────────────────────────── */}
             <SectionHeader label="Language" />
-            <View style={ss.card}>
+            <View style={[ss.card, appTheme === 'dark' && { backgroundColor: '#1A2420' }]}>
               <View style={ss.cardRowNoBorder}>
                 <View style={[ss.settingIcon, { backgroundColor: '#fff7e6' }]}>
                   <Feather color="#c17a00" name="globe" size={16} />
@@ -671,7 +681,7 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
 
             {/* ── Notifications ────────────────────────────────── */}
             <SectionHeader label="Notifications" />
-            <View style={ss.card}>
+            <View style={[ss.card, appTheme === 'dark' && { backgroundColor: '#1A2420' }]}>
               <SettingRow
                 icon="bell"
                 iconBg="#e8faf0"
