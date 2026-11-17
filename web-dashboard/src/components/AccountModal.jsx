@@ -73,7 +73,7 @@ export default function AccountModal({ isOpen, onClose, account, setAccount, sub
               </Select></div>
               <p className="account-contact-note" id="account-contact-note"><FieldIcon name="info" size={14} /><span>Admin accounts can sign in to the dashboard and manage all pages.</span></p>
             </div>
-            <div className="account-field account-field-birthday"><AppDatePicker id="account-birthday" label="Birthday (optional)" value={account.birthday} onChange={value => update('birthday', value)} min="1900-01-01" max={today('Asia/Manila').toString()} /></div>
+            <div className="account-field account-field-birthday"><AppDatePicker id="account-birthday" label="Birthday" value={account.birthday} onChange={value => update('birthday', value)} min="1900-01-01" max={today('Asia/Manila').toString()} /></div>
             {input('email', 'Email address', 'mail', 'user@nagacity.gov.ph')}
             {input('password', 'Temporary password', 'lock', 'At least 6 characters', { required: true, minLength: 6, type: showPassword ? 'text' : 'password', 'aria-describedby': 'account-password-hint' })}
             <div className="account-field"><label htmlFor="account-photo">Profile picture</label><div className="account-upload">
@@ -81,7 +81,7 @@ export default function AccountModal({ isOpen, onClose, account, setAccount, sub
               <div className="account-upload-details"><Button variant="tertiary" type="button" onPress={() => fileInput.current?.click()}><FieldIcon name="upload" />Choose file</Button><span>{account.avatarFile?.name || 'No file chosen'}</span></div>
               <input ref={fileInput} id="account-photo" type="file" hidden accept="image/jpeg,image/png,image/webp" onChange={event => choosePhoto(event)} />
             </div></div>
-            <div className="account-field"><label htmlFor="account-id-photo">ID picture (optional)</label><div className="account-upload">
+            <div className="account-field"><label htmlFor="account-id-photo">ID picture</label><div className="account-upload">
               <span className="account-upload-avatar account-id-preview">{account.idPreview ? <img src={account.idPreview} alt="Selected ID preview" /> : <FieldIcon name="staff" size={28} />}</span>
               <div className="account-upload-details"><Button variant="tertiary" type="button" onPress={() => idInput.current?.click()}><FieldIcon name="upload" />Choose ID image</Button><span>{account.idFile?.name || 'No file chosen'}</span>{account.idFile ? <Button variant="tertiary" type="button" onPress={() => { update('idFile', null); update('idPreview', ''); if (idInput.current) idInput.current.value = ''; }}>Remove ID image</Button> : null}</div>
               <input ref={idInput} id="account-id-photo" type="file" hidden accept="image/jpeg,image/png,image/webp" onChange={event => choosePhoto(event, true)} />
