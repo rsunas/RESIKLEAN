@@ -32,6 +32,11 @@ const { getMessages, sendMessage } = require('../controllers/message.controller'
 
 router.use(protect, authorize('admin'));
 
+const notifications = require('../controllers/adminNotifications.controller');
+router.get('/notifications', notifications.list);
+router.post('/notifications/read', notifications.markRead);
+router.get('/notifications/:id/target', notifications.target);
+
 // Users
 router.get('/users', getAllUsers);
 router.post('/users', upload.fields([{ name: 'avatar', maxCount: 1 }, { name: 'idPhoto', maxCount: 1 }]), createUser);

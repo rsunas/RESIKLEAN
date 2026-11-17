@@ -1,3 +1,5 @@
+import NotificationsPage from './NotificationsPage.jsx';
+import useNotifications from '../components/useNotifications.js';
 import { DisabledControls, LoadingRegion, LoadingTableBody, SkeletonChart, SkeletonDetails, SkeletonStat } from '../components/Skeleton.jsx';
 import SettingsPage from './SettingsPage.jsx';
 import useTablePagination from '../components/useTablePagination.js';
@@ -456,7 +458,8 @@ export default function Dashboard() {
     setStoredUser(user);
   }, []);
   const requestedPage = searchParams.get('view');
-  const activePage = location.pathname === '/settings' ? 'settings' : NAV_ITEMS.some((item) => item.id === requestedPage) ? requestedPage : 'overview';
+  const activePage = location.pathname === '/notifications' ? 'notifications' : location.pathname === '/settings' ? 'settings' : NAV_ITEMS.some((item) => item.id === requestedPage) ? requestedPage : 'overview';
+  const notificationFeed = useNotifications({ token, apiUrl: API_URL });
   const [showAccountForm, setShowAccountForm] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [selectedActivity, setSelectedActivity] = useState(null);
@@ -556,12 +559,13 @@ export default function Dashboard() {
 
     const socket = io(SOCKET_URL, { auth: { token } });
     socketRef.current = socket;
-    const markConnected = () => setComplaintsConnected(true);
+    const markConnected = () => { setComplaintsConnected(true); window.dispatchEvent(new Event('resiklean:notifications-changed')); };
     const markDisconnected = () => setComplaintsConnected(false);
     socket.on('connect', markConnected);
     socket.on('disconnect', markDisconnected);
 
     const handleComplaintEvent = (payload) => {
+      window.dispatchEvent(new Event('resiklean:notifications-changed'));
       const reportId = normalizeId(payload?.report?._id || payload?.reportId);
       if (!reportId) return;
 
@@ -574,6 +578,7 @@ export default function Dashboard() {
     };
 
     const handleMessageEvent = (payload) => {
+      window.dispatchEvent(new Event('resiklean:notifications-changed'));
       const reportId = normalizeId(payload?.reportId);
       const message = payload?.message;
       if (!reportId || !message?._id) return;
@@ -858,7 +863,7 @@ export default function Dashboard() {
   };
 
   const selectPage = (page) => {
-    if (location.pathname === '/settings') navigate(page === 'overview' ? '/dashboard' : `/dashboard?view=${page}`);
+    if (location.pathname !== '/dashboard') navigate(page === 'overview' ? '/dashboard' : `/dashboard?view=${page}`);
     else setSearchParams(page === 'overview' ? {} : { view: page });
   };
 
@@ -1114,8 +1119,20 @@ export default function Dashboard() {
 
   const routeHistorySearch = <RouteHistorySearchPortal><label className="route-history-search-wrapper"><Icon name="search" size={17} /><input disabled={routeHistoryLoading} aria-label="Search route history" onChange={(event) => changeHistoryFilter(setRhQuery, event.target.value)} placeholder="Search area, street, driver, or truck" type="search" value={rhQuery} /></label></RouteHistorySearchPortal>;
   const accountsToolbar = <AccountsToolbarPortal><DisabledControls disabled={isRefreshing}><div className="accounts-toolbar"><div className="navigation-tools"><label><Icon name="search" size={16} /><input aria-label="Search accounts" placeholder="Search accounts" type="search" value={accountQuery} onChange={event => setAccountQuery(event.target.value)} /></label><AppSelect aria-label="All account roles" value={accountRole} onChange={setAccountRole} options={[{ label: 'All account roles', value: 'all' }, { label: 'Admin', value: 'admin' }, { label: 'Driver', value: 'collector' }, { label: 'Staff', value: 'staff' }]} /></div><Button className="primary-button accounts-action-button" onPress={() => { setSubmissionState({ loading: false, error: '', message: '' }); setShowAccountForm(true); }}><Icon name="plus" size={16} />Add account</Button></div></DisabledControls></AccountsToolbarPortal>;
-  const pageContent = { settings: <SettingsPage user={storedUser} token={token} onUserChange={updateOwnProfile} />, overview, routes: <>{routeHistorySearch}{routeHistory}</>, complaints: complaintInbox, activity, 'manage-routes': manageRoutes, assignments, accounts: <><PageHeader title="Manage accounts" />{accountsToolbar}{accountPage}</>, trucks }[activePage];
-  return <main className="admin-shell">{createPortal(<><Button isIconOnly variant="ghost" className="sidebar-collapse-toggle" aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-pressed={isSidebarCollapsed} onPress={() => setIsSidebarCollapsed(value => !value)}><span className="sidebar-collapse-toggle-icon" aria-hidden="true">{isSidebarCollapsed ? '›' : '‹'}</span></Button><Button isIconOnly variant="ghost" className="mobile-sidebar-toggle" aria-label={isMobileSidebarOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={isMobileSidebarOpen} onPress={() => setIsMobileSidebarOpen(value => !value)}><span className="mobile-sidebar-toggle-icon" aria-hidden="true">{isMobileSidebarOpen ? '×' : '☰'}</span></Button><Button variant="ghost" className="mobile-sidebar-backdrop" aria-label="Close navigation" onPress={() => setIsMobileSidebarOpen(false)} /></>, document.body)}<aside className="admin-sidebar"><div className="brand"><img alt="ResiKlean logo" className="brand-logo" src="/swmo-resiklean-logo.svg" /></div><nav>{NAV_ITEMS.map((item) => <Button type="button" variant="tertiary" data-page-link aria-label={item.label} aria-current={activePage === item.id ? 'page' : undefined} className={activePage === item.id ? 'nav-link active' : 'nav-link'} key={item.id} title={item.label} onPress={() => { selectPage(item.id); setIsMobileSidebarOpen(false); }}><Icon name={item.icon} /><span className="sidebar-label">{item.label}</span></Button>)}<NotificationNav reports={apiData.reports} loading={isRefreshing} unavailable={apiData.usingPlaceholder} onRefresh={refreshDashboard} Icon={Icon} onReview={(report) => { selectPage('complaints'); setIsMobileSidebarOpen(false); if (report) setSelectedComplaint(complaintRows.find(row => row.id === report._id) || null); }} /></nav><SidebarAccount user={storedUser} Icon={Icon} settingsActive={activePage === 'settings'} onSettings={() => { navigate('/settings'); window.scrollTo(0, 0); setIsMobileSidebarOpen(false); }} onSignOut={() => { setIsMobileSidebarOpen(false); setShowLogoutConfirm(true); }} /></aside><section className="admin-workspace"><section className="dashboard-content">{apiData.usingPlaceholder && !isRefreshing && activePage !== 'settings' ? <p className="data-note">Live dashboard data is unavailable. Retry the affected section.</p> : null}{pageContent}</section></section><AccountModal isOpen={showAccountForm} onClose={() => setShowAccountForm(false)} account={newAccount} setAccount={setNewAccount} submission={submissionState} setSubmission={setSubmissionState} onSubmit={createAccount} />{selectedActivity ? <TruckloadSubmissionDialog activity={selectedActivity} load={apiData.loads?.find(load => load._id === selectedActivity.id)} onClose={() => setSelectedActivity(null)} /> : null}{isRouteHistoryDetailVisible ? (() => {
+  const openNotification = async (item, record) => {
+    if (item.type === 'route') {
+      await openRouteHistoryDetail({ id: item.targetId });
+    } else if (item.type === 'truckload') {
+      setApiData(current => ({ ...current, loads: [...(current.loads || []).filter(load => load._id !== record._id), record] }));
+      setSelectedActivity({ id: record._id, area: record.routeId?.name || 'Unassigned area', driver: record.staffId?.name || 'Staff member', truckPlate: record.truckPlate, tonnage: formatTonnes(record.tonnesEstimate), submittedAt: record.arrivedAt, notes: record.notes || '', slope: record.slope, length: record.length, width: record.width, height: record.height });
+    } else {
+      setApiData(current => ({ ...current, reports: [...(current.reports || []).filter(report => report._id !== record._id), record] }));
+      setSelectedComplaint({ id: record._id, street: record.description, reporter: record.residentId?.name || 'Resident', status: record.status || 'pending', report: record });
+      navigate('/dashboard?view=complaints');
+    }
+  };
+  const pageContent = { notifications: <NotificationsPage feed={notificationFeed} Icon={Icon} onOpen={openNotification} />, settings: <SettingsPage user={storedUser} token={token} onUserChange={updateOwnProfile} />, overview, routes: <>{routeHistorySearch}{routeHistory}</>, complaints: complaintInbox, activity, 'manage-routes': manageRoutes, assignments, accounts: <><PageHeader title="Manage accounts" />{accountsToolbar}{accountPage}</>, trucks }[activePage];
+  return <main className="admin-shell">{createPortal(<><Button isIconOnly variant="ghost" className="sidebar-collapse-toggle" aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-pressed={isSidebarCollapsed} onPress={() => setIsSidebarCollapsed(value => !value)}><span className="sidebar-collapse-toggle-icon" aria-hidden="true">{isSidebarCollapsed ? '›' : '‹'}</span></Button><Button isIconOnly variant="ghost" className="mobile-sidebar-toggle" aria-label={isMobileSidebarOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={isMobileSidebarOpen} onPress={() => setIsMobileSidebarOpen(value => !value)}><span className="mobile-sidebar-toggle-icon" aria-hidden="true">{isMobileSidebarOpen ? '×' : '☰'}</span></Button><Button variant="ghost" className="mobile-sidebar-backdrop" aria-label="Close navigation" onPress={() => setIsMobileSidebarOpen(false)} /></>, document.body)}<aside className="admin-sidebar"><div className="brand"><img alt="ResiKlean logo" className="brand-logo brand-logo-full" src="/swmo-resiklean-logo.svg" /><img alt="ResiKlean logo" className="brand-logo brand-logo-mark" src="/resiklean-sidebar-mark.svg" /></div><nav>{NAV_ITEMS.map((item) => <Button type="button" variant="tertiary" data-page-link aria-label={item.label} aria-current={activePage === item.id ? 'page' : undefined} className={activePage === item.id ? 'nav-link active' : 'nav-link'} key={item.id} title={item.label} onPress={() => { selectPage(item.id); setIsMobileSidebarOpen(false); }}><Icon name={item.icon} /><span className="sidebar-label">{item.label}</span></Button>)}<NotificationNav count={notificationFeed.data?.unread ?? null} loading={notificationFeed.loading} error={notificationFeed.error} active={activePage === 'notifications'} Icon={Icon} onOpen={() => { navigate('/notifications'); setIsMobileSidebarOpen(false); }} /></nav><SidebarAccount user={storedUser} Icon={Icon} settingsActive={activePage === 'settings'} onSettings={() => { navigate('/settings'); window.scrollTo(0, 0); setIsMobileSidebarOpen(false); }} onSignOut={() => { setIsMobileSidebarOpen(false); setShowLogoutConfirm(true); }} /></aside><section className="admin-workspace"><section className="dashboard-content">{apiData.usingPlaceholder && !isRefreshing && activePage !== 'settings' && activePage !== 'notifications' ? <p className="data-note">Live dashboard data is unavailable. Retry the affected section.</p> : null}{pageContent}</section></section><AccountModal isOpen={showAccountForm} onClose={() => setShowAccountForm(false)} account={newAccount} setAccount={setNewAccount} submission={submissionState} setSubmission={setSubmissionState} onSubmit={createAccount} />{selectedActivity ? <TruckloadSubmissionDialog activity={selectedActivity} load={apiData.loads?.find(load => load._id === selectedActivity.id)} onClose={() => setSelectedActivity(null)} /> : null}{isRouteHistoryDetailVisible ? (() => {
     const d = selectedRouteHistory;
     const data = d || {};
     const summary = data.recordSummary || {};

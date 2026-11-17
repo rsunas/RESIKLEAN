@@ -101,7 +101,7 @@ body.sidebar-is-collapsed .sidebar-collapse-toggle { left: 42px; top: 52px; }
 .dashboard-content > .page-header > div:first-child { left: 30px; position: absolute; right: 230px; top: 32px; }
 .dashboard-content:has(.route-history-card) > .page-header { align-items: center; justify-content: space-between; min-height: 54px; }
 .dashboard-content:has(.route-history-card) > .page-header > div:first-child { left: auto; position: static; right: auto; top: auto; }
-.page-header h2 { color: #142b20; font-size: 26px; letter-spacing: -.04em; line-height: 1.15; margin: 4px 0 6px; }
+.page-header h2 { color: #142b20; font-size: 26px; font-weight: 700; letter-spacing: -.04em; line-height: 1.15; margin: 4px 0 6px; }
 .page-header > div > p:last-child { color: #6c8075; font-size: 14px; margin: 0; }
 .page-header-action { flex: 0 0 auto; }
 .metrics-grid { display: grid; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 14px; }
@@ -769,3 +769,19 @@ body.sidebar-is-collapsed .notification-count { position: absolute; right: -3px;
 .notification-item, .cq-item, .cq-proof { height: auto; white-space: normal; }
 .route-day-buttons button, .route-stop-actions button { width: 100%; }
 .mobile-sidebar-backdrop { height: auto; width: auto; padding: 0; border-radius: 0; }
+
+/* Use the standalone mark in the compact rail without cropping the wordmark. */
+.brand-logo-mark { display: none; }
+body.sidebar-is-collapsed .brand { min-height: 82px; margin: 0; padding: 0 0 12px; }
+body.sidebar-is-collapsed .brand-logo-full { display: none; }
+body.sidebar-is-collapsed .brand-logo-mark { display: block; flex-shrink: 0; width: 44px; height: 44px; object-fit: contain; object-position: center; }
+body.sidebar-is-collapsed .sidebar-collapse-toggle { left: 54px; top: 66px; }
+@media (min-width: 641px) and (max-width: 850px) {
+  .brand { min-height: 82px; margin: 0; padding: 0 0 12px; }
+  .brand-logo-full { display: none; }
+  .brand-logo-mark { display: block; width: 44px; height: 44px; object-fit: contain; object-position: center; }
+}
+@media (max-width: 640px) {
+  body.mobile-sidebar-is-open .brand-logo-full { display: block; height: 100px; width: 220px; object-fit: contain; }
+  body.mobile-sidebar-is-open .brand-logo-mark { display: none; }
+}

@@ -8,7 +8,7 @@ const server = await createServer({ root, server: { host: '127.0.0.1', port: 0 }
   resolveId(id) { if (id === '/__shell.js') return '\0shell-fixture'; },
   load(id) { if (id === '\0shell-fixture') return `import React from 'react'; import {createRoot} from 'react-dom/client'; import {BrowserRouter} from 'react-router-dom'; import Dashboard from '/src/pages/Dashboard.jsx'; import '/src/index.css'; sessionStorage.setItem('resiklean_admin_token','fixture'); sessionStorage.setItem('resiklean_admin_user',JSON.stringify({name:'Super Admin 2',role:'admin'})); createRoot(document.getElementById('root')).render(React.createElement(BrowserRouter,null,React.createElement(Dashboard)));`; },
   configureServer(vite) { vite.middlewares.use(async (req, res, next) => {
-    if (req.url.startsWith('/__shell-api')) { res.setHeader('Content-Type','application/json'); res.end(JSON.stringify({success:true,data:{users:[],routes:[],reports,loads:[],report:[],rows:[],trucks:[]}})); }
+    if (req.url.startsWith('/__shell-api')) { res.setHeader('Content-Type','application/json'); res.end(JSON.stringify({success:true,data:{users:[],routes:[],reports,loads:[],report:[],rows:[],trucks:[],items:[{id:'complaint:507f1f77bcf86cd799439011',type:'complaint',title:'New complaint',description:'Missed collection in Abella',date:'2026-11-12T04:00:00Z',read:false}],total:1,unread:1}})); }
     else if (req.url.startsWith('/__shell') && !req.url.startsWith('/__shell.js')) { res.setHeader('Content-Type','text/html'); res.end(await vite.transformIndexHtml(req.url,'<html><body><div id="root"></div><script type="module" src="/__shell.js"></script></body></html>')); }
     else next();
   }); }
@@ -30,22 +30,22 @@ try {
     assert.ok(bounds.visible && bounds.y >= 16 && bounds.y <= 28, `${label}: heading at top ${JSON.stringify(bounds)}`);
     assert.ok(bounds.next >= bounds.bottom && bounds.next-bounds.bottom <= 24, `${label}: no content gap ${JSON.stringify(bounds)}`);
   }
-  await click('.sidebar-notifications'); await waitFor("!!document.querySelector('.notification-panel [role=dialog]')"); await pause(200);
-  assert.equal(await browser.evaluate("document.querySelectorAll('.notification-item').length"),1);
-  assert.ok(await browser.evaluate("document.querySelector('.notification-panel').getBoundingClientRect().left >= document.querySelector('.admin-sidebar').getBoundingClientRect().right"));
+  await click('.sidebar-notifications'); await waitFor("location.pathname==='/notifications' && !!document.querySelector('.notifications-card')"); await pause(200);
+  assert.equal(await browser.evaluate("document.querySelectorAll('.notifications-row').length"),1);
+  assert.ok(await browser.evaluate("document.querySelector('.notifications-card').getBoundingClientRect().left >= document.querySelector('.admin-sidebar').getBoundingClientRect().right"));
   await browser.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',windowsVirtualKeyCode:27}); await pause(200);
   await click('.sidebar-account'); await waitFor("!!document.querySelector('.account-signout')"); await click('.account-signout'); await waitFor("!!document.querySelector('.logout-confirm-modal')");
   await click('[aria-label="Close sign-out confirmation"]');
   await click('.sidebar-collapse-toggle'); await pause(350);
   assert.equal(await browser.evaluate("getComputedStyle(document.querySelector('.sidebar-account-copy')).display"),'none');
   assert.ok(await browser.evaluate("document.querySelector('.notification-count').getBoundingClientRect().width > 0"));
-  await click('.sidebar-notifications'); await waitFor("!!document.querySelector('.notification-panel')"); await pause(200);
-  await click('[aria-label="Close notifications"]'); await pause(200);
+  await click('.sidebar-notifications'); await waitFor("!!document.querySelector('.notifications-card')"); await pause(200);
+  assert.equal(await browser.evaluate("getComputedStyle(document.querySelector('.brand-logo-mark')).width"),'44px');
   await browser.send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:false}); await pause(200);
   await click('.mobile-sidebar-toggle'); await pause(200);
   assert.equal(await browser.evaluate("getComputedStyle(document.querySelector('.sidebar-account-copy')).display"),'grid');
-  await click('.sidebar-notifications'); await waitFor("!!document.querySelector('.notification-panel')"); await pause(200);
-  assert.ok(await browser.evaluate("document.querySelector('.notification-panel').getBoundingClientRect().right <= innerWidth"));
+  await click('.sidebar-notifications'); await waitFor("!!document.querySelector('.notifications-card')"); await pause(200);
+  assert.ok(await browser.evaluate("document.querySelector('.notifications-card').getBoundingClientRect().right <= innerWidth"));
   assert.deepEqual(errors,[]);
-  console.log('PASS: all eight page headings/content spacing, header removal, live report badge, right-side notifications, account/sign-out, collapsed sidebar, mobile panels.');
+  console.log('PASS: all eight page headings/content spacing, header removal, unread badge, notifications page, account/sign-out, collapsed sidebar, mobile navigation.');
 } finally { if(browser) await browser.close(); await server.close(); }

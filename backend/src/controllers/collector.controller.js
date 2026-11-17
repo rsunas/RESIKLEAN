@@ -203,6 +203,12 @@ const completeRoute = async (req, res) => {
       { $set: { shiftStatus: 'completed', shiftEnd: session.endedAt } },
     );
 
+    const finishedRoute = await Route.findById(routeId).select('stops').lean();
+    await RouteTrailSession.updateOne({ _id: session._id, routeCompletedAt: null }, { $set: {
+      routeCompletedAt: session.endedAt,
+      completionStopIds: (finishedRoute?.stops || []).filter(stop => !stop.isArchived).map(stop => stop._id),
+    } });
+
     sendSuccess(res, { message: 'Route successfully completed.' });
   } catch (err) {
     sendError(res, err.message, 500);

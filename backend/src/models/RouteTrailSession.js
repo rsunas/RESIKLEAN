@@ -12,6 +12,9 @@ const routeTrailSessionSchema = new mongoose.Schema(
     pointCount: { type: Number, default: 0 },
     lastSyncedAt: { type: Date },
     remarks: { type: String },
+    // Set only by Finish route, never by a trip-trail upload.
+    routeCompletedAt: { type: Date },
+    completionStopIds: { type: [mongoose.Schema.Types.ObjectId], default: undefined },
   },
   { timestamps: true },
 );
