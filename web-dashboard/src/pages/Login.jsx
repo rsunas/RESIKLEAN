@@ -1,3 +1,4 @@
+import { Button } from '@heroui/react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import illustration from '../assets/swmo-login-1600.webp';
@@ -82,12 +83,12 @@ export default function Login() {
           </div>
           <div className="login-field">
             <label htmlFor="password">Password</label>
-            <div className={`login-input-wrap login-password-wrap${error ? ' has-error' : ''}`}><FieldIcon type="lock" /><input id="password" name="password" type={isPasswordVisible ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" aria-describedby={error ? 'login-error' : undefined} placeholder="Enter your password" required /><button aria-label={isPasswordVisible ? 'Hide password' : 'Show password'} className="login-password-toggle" onClick={() => setIsPasswordVisible((visible) => !visible)} type="button"><EyeIcon hidden={isPasswordVisible} /></button></div>
+            <div className={`login-input-wrap login-password-wrap${error ? ' has-error' : ''}`}><FieldIcon type="lock" /><input id="password" name="password" type={isPasswordVisible ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" aria-describedby={error ? 'login-error' : undefined} placeholder="Enter your password" required /><Button variant="tertiary" aria-label={isPasswordVisible ? 'Hide password' : 'Show password'} id="login-password-toggle" className="login-password-toggle" onPress={() => setIsPasswordVisible((visible) => !visible)} type="button"><EyeIcon hidden={isPasswordVisible} /></Button></div>
           </div>
         </div>
 
         {error ? <p className="login-error" id="login-error" role="alert">{error}</p> : null}
-        <button className="login-submit" type="submit" disabled={isSubmitting}>{isSubmitting ? 'Signing in…' : <><span>Sign in</span><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></>}</button>
+        <Button variant="tertiary" id="login-submit" className="login-submit" type="submit" isDisabled={isSubmitting}>{isSubmitting ? 'Signing in…' : <><span>Sign in</span><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></>}</Button>
         <p className="login-note"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" /><path d="m8 12 3 3 5-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg><span>Secure access for authorized SWMO administrators</span></p>
         </form>
         <footer className="login-footer">Naga City Solid Waste Management</footer>

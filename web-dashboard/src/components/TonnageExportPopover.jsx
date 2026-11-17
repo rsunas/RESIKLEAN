@@ -1,5 +1,6 @@
-import { Button, Popover, PopoverTrigger, PopoverContent, Input } from '@heroui/react';
+import { Button, Popover } from '@heroui/react';
 import { useState, useMemo } from 'react';
+import AppDatePicker from './AppDatePicker.jsx';
 
 // Helpers for Manila time
 const getManilaDateStr = (date) => {
@@ -43,7 +44,7 @@ const presets = [
   }
 ];
 
-export default function TonnageExportPopover({ onExport }) {
+export default function TonnageExportPopover({ onExport, range }) {
   const [isOpen, setIsOpen] = useState(false);
   const [start, setStart] = useState('');
   const [end, setEnd] = useState('');
@@ -75,49 +76,38 @@ export default function TonnageExportPopover({ onExport }) {
     try {
       await onExport(start, end);
       setIsOpen(false);
+    } catch {
+      // The export callback reports the error; keep the selection available for retry.
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <Popover placement="bottom-end" isOpen={isOpen} onOpenChange={setIsOpen}>
-      <PopoverTrigger>
+    <Popover isOpen={isOpen} onOpenChange={open => {
+      if (open && range) { setStart(range.start.toString()); setEnd(range.end.toString()); setMode('custom'); }
+      setIsOpen(open);
+    }}>
         <Button className="outline-button chart-export-button" variant="secondary">Export</Button>
-      </PopoverTrigger>
-      <PopoverContent className="p-4 w-72">
-        <div className="flex flex-col gap-4">
+      <Popover.Content placement="bottom end" className="tonnage-export-content p-4 w-72">
+        <Popover.Dialog aria-label="Export Tonnage Trend" className="flex flex-col gap-4">
           <h4 className="text-sm font-semibold text-gray-800">Export Tonnage Trend</h4>
           
           {mode === 'preset' ? (
             <div className="flex flex-col gap-2">
               {presets.map(p => (
-                <Button key={p.label} size="sm" variant="flat" onPress={() => handlePreset(p.getRange)} className="justify-start">
+                <Button key={p.label} size="sm" variant="secondary" onPress={() => handlePreset(p.getRange)} className="justify-start">
                   {p.label}
                 </Button>
               ))}
-              <Button size="sm" variant="light" onPress={() => setMode('custom')} className="justify-start text-gray-500">
+              <Button size="sm" variant="ghost" onPress={() => setMode('custom')} className="justify-start text-gray-500">
                 Custom range...
               </Button>
             </div>
           ) : (
             <div className="flex flex-col gap-3">
-              <Input 
-                type="date" 
-                label="Start Date" 
-                size="sm" 
-                value={start} 
-                onChange={e => setStart(e.target.value)}
-                max={end || todayStr}
-              />
-              <Input 
-                type="date" 
-                label="End Date" 
-                size="sm" 
-                value={end} 
-                onChange={e => setEnd(e.target.value)}
-                max={todayStr}
-              />
+              <AppDatePicker label="Start date" value={start} onChange={setStart} max={end || todayStr} isRequired />
+              <AppDatePicker label="End date" value={end} onChange={setEnd} max={todayStr} isRequired />
               
               {start > end && start !== '' && end !== '' && (
                 <span className="text-xs text-red-500">Start date must be before end date.</span>
@@ -129,16 +119,16 @@ export default function TonnageExportPopover({ onExport }) {
                 <span className="text-xs text-red-500">Date range cannot exceed 92 days.</span>
               )}
 
-              <div className="flex justify-between mt-2">
-                <Button size="sm" variant="light" onPress={() => setMode('preset')}>Back</Button>
-                <Button size="sm" color="success" className="bg-[#0B7A55] text-white" onPress={handleExport} isDisabled={!isValid} isLoading={loading}>
+              <div className="tonnage-export-actions">
+                <Button size="sm" variant="ghost" onPress={() => setMode('preset')}>Back</Button>
+                <Button size="sm" variant="primary" className="bg-[#0B7A55] text-white" onPress={handleExport} isDisabled={!isValid} isPending={loading}>
                   Generate PDF
                 </Button>
               </div>
             </div>
           )}
-        </div>
-      </PopoverContent>
+        </Popover.Dialog>
+      </Popover.Content>
     </Popover>
   );
 }

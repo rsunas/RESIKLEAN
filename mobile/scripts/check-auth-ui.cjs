@@ -70,7 +70,10 @@ const progress = load('src/components/signup-progress.tsx', {
     interpolateColor: (value, range, colors) => colors[value === 1 ? 1 : 0],
   },
 }).SignupProgress;
+const privacy = load('src/components/signup-privacy.tsx', { '@/components/app-motion': { MotionPressable: RN.Pressable, MotionModal: () => null } });
 const common = {
+  '@/components/signup-privacy': privacy,
+  '@/lib/network-request': { requestJson: async (...args) => { const response = await global.fetch(...args); return { response, payload: await response.json() }; } },
   react: hooks, 'expo-router': { useRouter: () => nav }, '@/components/auth-ui': ui,
   '@/lib/session': { saveSession: async session => calls.push(['saveSession', session]) },
   '@/components/barangay-picker': { BarangayPicker: picker }, '@/components/signup-progress': { SignupProgress: progress },
@@ -101,14 +104,28 @@ function initializer(source, name) {
   function visit(node) { if (ts.isVariableDeclaration(node) && node.name.getText(file) === name) value = node.initializer.getText(file); ts.forEachChild(node, visit); }
   visit(file); return value;
 }
-// Verify network, validation, token and navigation handlers are byte-for-byte unchanged.
-for (const [file, names] of [['login', ['handleLogin']], ['signup', ['handleGoogleSignup', 'handleSignup', 'returnToFirstStep']]]) {
+// Login remains unchanged; signup is exercised below with the new privacy requirement.
+for (const [file, names] of [['login', ['handleLogin']]]) {
   const before = execFileSync('git', ['show', `HEAD:mobile/app/${file}.tsx`], { encoding: 'utf8', cwd: root }).replace(/\r\n/g, '\n');
   const after = fs.readFileSync(path.join(root, `app/${file}.tsx`), 'utf8').replace(/\r\n/g, '\n');
   for (const name of names) assert.equal(initializer(after, name), initializer(before, name), `${name} changed`);
 }
 async function main() {
   checkProgress();
+  const ModalStub = () => null;
+  const privacyUI = load('src/components/signup-privacy.tsx', { react: hooks, '@/components/app-motion': { MotionPressable: RN.Pressable, MotionModal: ModalStub } });
+  let acknowledged = false;
+  const notice = harness(() => privacyUI.SignupPrivacy({ accepted: acknowledged, onChange: value => { acknowledged = value; } }));
+  let noticeTree = notice.render();
+  findAll(noticeTree, node => node.props.accessibilityRole === 'link')[0].props.onPress();
+  assert.equal(findAll(notice.render(), node => node.type === ModalStub)[0].props.visible, true);
+  button(notice.render(), 'Close Data Privacy Notice').props.onPress();
+  assert.equal(findAll(notice.render(), node => node.type === ModalStub)[0].props.visible, false);
+  assert.equal(acknowledged, false, 'Reading/closing does not accept on the user behalf');
+  findAll(notice.render(), node => node.props.accessibilityRole === 'checkbox')[0].props.onPress();
+  assert.equal(acknowledged, true);
+  assert.equal(findAll(notice.render(), node => node.props.accessibilityRole === 'checkbox')[0].props.accessibilityState.checked, true);
+  console.log('PASS: privacy hyperlink opens/closes the notice; checkbox acceptance is explicit and accessible.');
   const realFetch = global.fetch;
   try {
     const login = harness(Login);
@@ -132,6 +149,14 @@ async function main() {
     assert.ok(calls.some(call => call[0] === 'push' && call[1] === '/signup'));
 
     const signup = harness(Signup);
+    const privacyControl = () => findAll(signup.render(), node => node.type === privacy.SignupPrivacy)[0];
+    let blockedRequests = 0;
+    global.fetch = async () => { blockedRequests++; throw Error('Must not register without acceptance'); };
+    assert.equal(button(signup.render(), 'Continue with Google').props.disabled, true);
+    await button(signup.render(), 'Continue with Google').props.onPress();
+    assert.equal(blockedRequests, 0);
+    assert.ok(words(signup.render()).includes(privacy.PRIVACY_REQUIRED_MESSAGE));
+    privacyControl().props.onChange(true);
     global.fetch = async () => response(null, false, 'Google unavailable');
     await button(signup.render(), 'Continue with Google').props.onPress();
     assert.ok(words(signup.render()).includes('Google unavailable'));
@@ -155,6 +180,13 @@ async function main() {
       assert.equal(JSON.parse(options.body).location, 'Area 1');
       return response({ user: { role: 'resident', email: 'verified@example.com' } });
     };
+    privacyControl().props.onChange(false);
+    assert.equal(button(signup.render(), 'Finish sign up').props.disabled, true);
+    const beforeFinish = calls.filter(call => call[0] === 'saveSession').length;
+    await button(signup.render(), 'Finish sign up').props.onPress();
+    assert.equal(calls.filter(call => call[0] === 'saveSession').length, beforeFinish);
+    assert.ok(words(signup.render()).includes(privacy.PRIVACY_REQUIRED_MESSAGE));
+    privacyControl().props.onChange(true);
     await button(signup.render(), 'Finish sign up').props.onPress();
     assert.ok(calls.some(call => call[0] === 'saveSession' && call[1].token === 'verified-token'));
     for (let i = 0; i < 4; i++) {
@@ -164,7 +196,7 @@ async function main() {
       await button(signup.render(), 'Continue with Google').props.onPress();
       assert.equal(findAll(signup.render(), node => node.type === progress)[0].props.step, 2);
     }
-    console.log('PASS: unchanged handlers; mocked sign-in success/failure/loading, password toggle, Google success/failure, verification, validation, account completion, Back/forward and links');
+    console.log('PASS: privacy blocks both registration steps until accepted; mocked sign-in success/failure/loading, password toggle, Google success/failure, verification, validation, account completion, Back/forward and links');
     if (process.argv.includes('--logic-only')) return;
 
     const loading = harness(Login);

@@ -41,3 +41,6 @@ example
 # generated native folders
 /ios
 /android
+
+# Local exported UI verification build
+/.expo-web-check/

@@ -6,6 +6,7 @@ const upload = require('../middlewares/upload');
 const {
   getAllUsers,
   createUser,
+  getUserIdentity,
   getAllRoutes,
   createRoute,
   updateRoute,
@@ -33,7 +34,8 @@ router.use(protect, authorize('admin'));
 
 // Users
 router.get('/users', getAllUsers);
-router.post('/users', upload.single('avatar'), createUser);
+router.post('/users', upload.fields([{ name: 'avatar', maxCount: 1 }, { name: 'idPhoto', maxCount: 1 }]), createUser);
+router.get('/users/:userId/identity', getUserIdentity);
 
 // Routes
 router.get('/routes', getAllRoutes);

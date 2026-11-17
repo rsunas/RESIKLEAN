@@ -8,7 +8,7 @@ const server = await createServer({ root, server: { host: '127.0.0.1', port: 0 }
   resolveId(id) { if (id === '/__shell.js') return '\0shell-fixture'; },
   load(id) { if (id === '\0shell-fixture') return `import React from 'react'; import {createRoot} from 'react-dom/client'; import {BrowserRouter} from 'react-router-dom'; import Dashboard from '/src/pages/Dashboard.jsx'; import '/src/index.css'; sessionStorage.setItem('resiklean_admin_token','fixture'); sessionStorage.setItem('resiklean_admin_user',JSON.stringify({name:'Super Admin 2',role:'admin'})); createRoot(document.getElementById('root')).render(React.createElement(BrowserRouter,null,React.createElement(Dashboard)));`; },
   configureServer(vite) { vite.middlewares.use(async (req, res, next) => {
-    if (req.url.startsWith('/__shell-api')) { res.setHeader('Content-Type','application/json'); res.end(JSON.stringify({success:true,data:{users:[],routes:[],reports,loads:[],report:[],rows:[],trucks:[]}})); }
+    if (req.url.startsWith('/__shell-api')) { res.setHeader('Content-Type','application/json'); res.end(JSON.stringify({success:true,data:{users:[],routes:[{_id:'active-route',name:'Active QA route',isActive:true,barangay:['Abella'],schedule:[1],stops:[]},{_id:'archived-route',name:'Archived QA route',isActive:false,barangay:['Abella'],schedule:[1],stops:[]}],reports,loads:[],report:[],rows:[],trucks:[]}})); }
     else if (req.url.startsWith('/__shell') && !req.url.startsWith('/__shell.js')) { res.setHeader('Content-Type','text/html'); res.end(await vite.transformIndexHtml(req.url,'<html><body><div id="root"></div><script type="module" src="/__shell.js"></script></body></html>')); }
     else next();
   }); }
@@ -20,10 +20,38 @@ try {
  const errors=[]; browser.on('Runtime.exceptionThrown',e=>errors.push(e.exceptionDetails.exception?.description||e.exceptionDetails.text));
  const click=s=>browser.evaluate(`document.querySelector(${JSON.stringify(s)}).click()`);
  await browser.send('Page.navigate',{url:server.resolvedUrls.local[0]+'__shell'});
- for(let n=0;n<300;n++){if(await browser.evaluate("!!document.querySelector('[data-page-link]')"))break;await pause(100);}
+ for(let n=0;n<600;n++){if(await browser.evaluate("!!document.querySelector('[data-page-link]')"))break;await pause(100);}
+ assert.deepEqual(errors, [], 'Dashboard initial render must succeed');
+ await click('[data-page-link][aria-label="Complaints"]');
+ // Wait for fetched complaints, not just the initial placeholder render.
+ for(let n=0;n<600;n++) {
+  assert.deepEqual(errors, [], 'Dashboard must not crash when populated API data arrives');
+  if(await browser.evaluate("document.body.innerText.includes('Missed collection')")) break;
+  await pause(100);
+ }
+ assert.deepEqual(errors, [], 'Dashboard must render populated complaints without runtime errors');
+ assert.ok(await browser.evaluate("document.body.innerText.includes('Missed collection')"), 'Fetched complaint must appear in the complaint queue');
+ await click('[data-page-link][aria-label="Manage Routes"]');
+ for(let n=0;n<600;n++){if(await browser.evaluate("!!document.querySelector('.route-management-table tbody tr strong')"))break;await pause(100);}
+ const routeNames=()=>browser.evaluate("[...document.querySelectorAll('.route-management-table tbody tr strong')].map(el=>el.textContent)");
+ assert.deepEqual(await routeNames(),['Active QA route']);
+ await browser.evaluate("document.querySelector('.route-filter-tabs [role=tab][aria-selected=true]').focus()");
+ await browser.send('Input.dispatchKeyEvent',{type:'keyDown',key:'ArrowRight',windowsVirtualKeyCode:39});
+ await browser.send('Input.dispatchKeyEvent',{type:'keyUp',key:'ArrowRight',windowsVirtualKeyCode:39});await pause(200);
+ assert.deepEqual(await routeNames(),['Archived QA route'],'Arrow key selects Archived tab and updates rows');
+ await browser.evaluate("[...document.querySelectorAll('.route-filter-tabs [role=tab]')].find(el=>el.textContent==='All').click()");await pause(200);
+ assert.deepEqual(await routeNames(),['Active QA route','Archived QA route']);
+ await click('[data-page-link][aria-label="Staff Activity"]');await pause(200);
+ await click('[aria-label="Choose From date submitted"]');
+ for(let n=0;n<100;n++){if(await browser.evaluate("!!document.querySelector('.app-calendar-popover [role=grid]')"))break;await pause(100);}
+ assert.ok(await browser.evaluate("!!document.querySelector('.app-calendar-popover [role=grid]')"),'Staff date filter opens HeroUI calendar');
+ await browser.evaluate("document.querySelector('.app-calendar-popover [role=button]:not([data-disabled]):not([data-outside-month])').click()");await pause(200);
+ assert.ok(await browser.evaluate("!!document.querySelector('[aria-label=\"Clear From date submitted\"]')"),'Selected date is stored');
+ await click('[aria-label="Clear From date submitted"]');await pause(100);
+ assert.ok(!await browser.evaluate("!!document.querySelector('[aria-label=\"Clear From date submitted\"]')"),'Clear resets date filter');
  for(const width of [1280,1920,1024,390]) {
   await browser.send('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});await pause(300);
-  for(const label of ['Overview','Route History','Complaints','Staff Activity','Manage Routes','Collector Assignments','Manage Accounts','Manage Trucks']) {
+  for(const label of ['Overview','Route History','Complaints','Staff Activity','Manage Routes','Driver Assignments','Manage Accounts','Manage Trucks']) {
    await click(`[data-page-link][aria-label="${label}"]`);await pause(250);
    const sizes=[];
    for(const collapsed of [false,true]) {

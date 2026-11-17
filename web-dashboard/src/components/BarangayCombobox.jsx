@@ -1,3 +1,4 @@
+import { Button } from '@heroui/react';
 import { useEffect, useId, useRef, useState } from 'react';
 import './BarangayCombobox.css';
 
@@ -111,14 +112,14 @@ export default function BarangayCombobox({ apiBase, value, onChange }) {
           if (position !== caret) { setCaret(position); setActive(-1); }
         }}
         onFocus={() => { setBrowse(false); setActive(-1); setOpen(true); }} onKeyDown={onKeyDown} />
-      <button aria-label={open && browse ? 'Hide barangay suggestions' : 'Browse barangays'} aria-controls={`${id}-list`} aria-expanded={open} aria-haspopup="listbox"
-        className="barangay-combobox-toggle" type="button" onClick={() => {
+      <Button variant="tertiary" aria-label={open && browse ? 'Hide barangay suggestions' : 'Browse barangays'} aria-controls={`${id}-list`} aria-expanded={open} aria-haspopup="listbox"
+        className="barangay-combobox-toggle" type="button" onPress={() => {
           const next = !open || !browse;
           inputRef.current?.focus();
           setBrowse(true); setActive(-1); setOpen(next);
         }}>
         <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m6 9 6 6 6-6" /></svg>
-      </button>
+      </Button>
     </div>
     <p id={`${id}-hint`}><svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 11v6m0-10v2" /></svg>Separate multiple barangays with commas.</p>
     {open || popupMounted ? <div className="barangay-combobox-popup" data-state={open ? 'open' : 'closing'} aria-hidden={!open} inert={!open}>
@@ -128,7 +129,7 @@ export default function BarangayCombobox({ apiBase, value, onChange }) {
       </ul>
       {status === 'loading' ? <p role="status">Loading barangays…</p> : status === 'error' ? <div className="barangay-combobox-feedback">
         <p role="status">Suggestions unavailable. You can still type barangays.</p>
-        <button type="button" onClick={() => { setStatus('loading'); setAttempt((current) => current + 1); }}>Retry</button>
+        <Button variant="tertiary" type="button" onPress={() => { setStatus('loading'); setAttempt((current) => current + 1); }}>Retry</Button>
       </div> : !options.length ? <p role="status">{query && !browse ? 'No matching barangays. You can still type a name.' : 'No more barangays to suggest. You can still type a name.'}</p> : null}
     </div> : null}
   </div>;

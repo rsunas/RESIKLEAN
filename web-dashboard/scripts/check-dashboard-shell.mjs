@@ -24,7 +24,7 @@ try {
   await browser.send('Page.navigate',{url:`${server.resolvedUrls.local[0]}__shell`});
   await waitFor("document.querySelector('.notification-count')?.textContent === '1'");
   assert.equal(await browser.evaluate("!!document.querySelector('.topbar')"),false);
-  for (const label of ['Overview','Route History','Complaints','Staff Activity','Manage Routes','Collector Assignments','Manage Accounts','Manage Trucks']) {
+  for (const label of ['Overview','Route History','Complaints','Staff Activity','Manage Routes','Driver Assignments','Manage Accounts','Manage Trucks']) {
     await click(`[data-page-link][aria-label="${label}"]`); await pause(250);
     const bounds = await browser.evaluate(`(() => {const h=document.querySelector('.dashboard-content > .page-header');const r=h.getBoundingClientRect();return {y:r.y,bottom:r.bottom,visible:getComputedStyle(h).display !== 'none',next:h.nextElementSibling?.getBoundingClientRect().top};})()`);
     assert.ok(bounds.visible && bounds.y >= 16 && bounds.y <= 28, `${label}: heading at top ${JSON.stringify(bounds)}`);

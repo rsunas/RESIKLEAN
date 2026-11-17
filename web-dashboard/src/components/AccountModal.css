@@ -67,3 +67,7 @@
 .account-role-popover [role="option"] { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 10px 12px; border-radius: 10px; color: #35463F; font-size: 15px; }
 .account-role-popover [role="option"] + [role="option"] { margin-top: 4px; }
 .account-role-popover [role="option"][data-focused], .account-role-popover [role="option"]:hover, .account-role-popover [role="option"][aria-selected="true"] { background: #E3F4EB; color: #086B42; }
+.account-id-preview { border-radius: 10px; }
+.account-id-preview img { object-fit: contain; }
+.role-admin { background: #E8F0FE; color: #1A56C4; }
+.account-identity-photo { max-width: 100%; max-height: 400px; object-fit: contain; border-radius: 14px; }

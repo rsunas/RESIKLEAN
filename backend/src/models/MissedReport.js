@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const wasteCategories = require('../utils/wasteCategories');
 
 /**
  * MissedReport — submitted by a Resident when their scheduled
@@ -8,6 +9,8 @@ const missedReportSchema = new mongoose.Schema(
   {
     residentId:   { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     barangay:     { type: String, required: true },
+    // Optional for reports sent by older app versions. Never infer a category.
+    wasteCategory: { type: String, enum: wasteCategories },
     description:  { type: String, default: '' },
     photoUrl:     { type: String },                        // Cloudinary URL
     photoMetadata: {

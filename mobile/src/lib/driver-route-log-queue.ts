@@ -1,3 +1,4 @@
+import { requestJson } from './network-request';
 import NetInfo from '@react-native-community/netinfo';
 import * as Crypto from 'expo-crypto';
 import * as SQLite from 'expo-sqlite';
@@ -60,6 +61,8 @@ export type RouteLogSyncContext = {
 
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 let syncInFlight: Promise<RouteLogSyncResult> | null = null;
+// UI observers also hear uploads initiated by the background geofence task.
+const syncObservers = new Set<{ collectorId: string; onSync: (result: RouteLogSyncResult) => void }>();
 
 const getDatabase = () => {
   if (!databasePromise) {
@@ -167,7 +170,7 @@ const syncQueue = async ({ apiUrl, token, collectorId }: RouteLogSyncContext): P
     if (!rows.length) return { ...(await getStats(collectorId)), synced };
 
     try {
-      const response = await fetch(`${apiUrl.replace(/\/$/, '')}/collector/route/logs/batch`, {
+      const { response, payload } = await requestJson<BatchResponse>(`${apiUrl.replace(/\/$/, '')}/collector/route/logs/batch`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -176,7 +179,6 @@ const syncQueue = async ({ apiUrl, token, collectorId }: RouteLogSyncContext): P
         // dwellSeconds is included for the local audit trail; the backend recomputes it.
         body: JSON.stringify({ logs: rows.map(toRouteLog) }),
       });
-      const payload = await response.json().catch(() => ({} as BatchResponse)) as BatchResponse;
 
       if (!response.ok || !payload.success) {
         await markFailed(rows.map((row) => row.client_id), payload.error || `Sync failed (${response.status}).`);
@@ -294,24 +296,30 @@ export async function getQueuedRouteLogStopIds(collectorId: string) {
 
 export function syncRouteLogQueue(context: RouteLogSyncContext) {
   if (!syncInFlight) {
-    syncInFlight = syncQueue(context).finally(() => { syncInFlight = null; });
+    syncInFlight = syncQueue(context).then(result => {
+      syncObservers.forEach(observer => {
+        if (observer.collectorId === context.collectorId) {
+          try { observer.onSync(result); } catch { /* UI observers must not fail an upload. */ }
+        }
+      });
+      return result;
+    }).finally(() => { syncInFlight = null; });
   }
 
   return syncInFlight;
 }
 
 export function subscribeToRouteLogSync(context: RouteLogSyncContext, onSync?: (result: RouteLogSyncResult) => void) {
-  const sync = async () => {
-    const result = await syncRouteLogQueue(context);
-    onSync?.(result);
-  };
+  const observer = onSync ? { collectorId: context.collectorId, onSync } : null;
+  if (observer) syncObservers.add(observer);
+  const sync = () => syncRouteLogQueue(context);
 
   const unsubscribe = NetInfo.addEventListener((state) => {
     if (state.isConnected && state.isInternetReachable !== false) {
-      void sync();
+      void sync().catch(() => {});
     }
   });
-  void sync();
+  void sync().catch(() => {});
 
-  return unsubscribe;
+  return () => { unsubscribe(); if (observer) syncObservers.delete(observer); };
 }

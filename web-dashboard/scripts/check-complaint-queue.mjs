@@ -3,7 +3,9 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { openBrowser } from './browser-check.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
-const reports = Array.from({length:60},(_,i)=>({_id:'report-'+i,photoUrl:'/swmo-resiklean-logo.svg',photoMetadata:{width:3060,height:4080,latitude:13.62313,longitude:123.17673,capturedAt:'2026-11-12T04:00:00Z'},barangay:'Abella',description:'Missed collection '+i+' with a very long subject '.repeat(5),status:'pending',createdAt:'2026-11-12T04:00:00Z',residentId:{name:'Richard',email:'richard@example.com'}}));
+const categoryValues = ['biodegradable','non-biodegradable','recyclable','hazardous',undefined];
+const categoryLabels = ['Biodegradable','Non-biodegradable','Recyclable','Hazardous','Not specified'];
+const reports = Array.from({length:60},(_,i)=>({_id:'report-'+i,wasteCategory:categoryValues[i%categoryValues.length],photoUrl:'/swmo-resiklean-logo.svg',photoMetadata:{width:3060,height:4080,latitude:13.62313,longitude:123.17673,capturedAt:'2026-11-12T04:00:00Z'},barangay:'Abella',description:'Missed collection '+i+' with a very long subject '.repeat(5),status:'pending',createdAt:'2026-11-12T04:00:00Z',residentId:{name:'Richard',email:'richard@example.com'}}));
 let sent=[];let failSend=false;
 const server = await createServer({ root, server: { host: '127.0.0.1', port: 0 }, define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/__shell-api'), 'import.meta.env.VITE_MAPBOX_ACCESS_TOKEN': JSON.stringify('') }, plugins: [{ name: 'shell-fixture',
   resolveId(id) { if (id === '/__shell.js') return '\0shell-fixture'; },
@@ -18,12 +20,20 @@ const server = await createServer({ root, server: { host: '127.0.0.1', port: 0 }
 let browser;
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 try {
- await server.listen();browser=await openBrowser();
+ await server.listen();
+ // Prepare Vite's HTML transform before starting the browser navigation timeout.
+ await fetch(server.resolvedUrls.local[0]+'__shell?view=complaints');
+ browser=await openBrowser();
  const errors=[];browser.on('Runtime.exceptionThrown',e=>errors.push(e.exceptionDetails.exception?.description||e.exceptionDetails.text));
  const wait=async exp=>{for(let n=0;n<300;n++){if(await browser.evaluate(exp))return;await pause(100);}throw Error('Timeout: '+exp+' '+errors.join(' '));};
  const click=selector=>browser.evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
  await browser.send('Page.navigate',{url:server.resolvedUrls.local[0]+'__shell?view=complaints'});
  await wait("!!document.querySelector('[data-page-link][aria-label=Complaints]')"); await click('[data-page-link][aria-label=Complaints]'); await wait("document.querySelectorAll('.cq-item').length===60");
+ for(let i=0;i<categoryLabels.length;i++) {
+  await browser.evaluate(`document.querySelectorAll('.cq-item')[${i}].click()`);
+  await wait(`Array.from(document.querySelectorAll('.cq-details strong')).some(el=>el.textContent===${JSON.stringify(categoryLabels[i])})`);
+  assert.ok(await browser.evaluate(`document.querySelectorAll('.cq-item')[${i}].textContent.includes(${JSON.stringify('Waste category: '+categoryLabels[i])})`));
+ }
  for(const [width,height] of [[1280,720],[1920,1080],[390,844]]) {
   await browser.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});await pause(250);
   await click('.cq-item');await wait("document.querySelectorAll('.cq-message').length===60");await pause(200);

@@ -1,3 +1,6 @@
+import { DisabledControls, LoadingTableBody } from './Skeleton.jsx';
+import TablePagination from './TablePagination.jsx';
+import useTablePagination from './useTablePagination.js';
 import { Button, Card, Modal } from '@heroui/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import AppSelect from './AppSelect.jsx';
@@ -56,17 +59,19 @@ function displayColor(value) {
   return legacyColors[value] || value || 'Not set';
 }
 
-function getColorSwatch(value) {
-  const color = displayColor(value).toLowerCase();
-  if (color.includes('white')) return '#ffffff';
-  if (color.includes('orange')) return '#f19046';
-  if (color.includes('blue')) return '#3d8edb';
-  if (color.includes('green')) return '#1d9c90';
-  if (color.includes('red')) return '#de5b50';
-  if (color.includes('yellow')) return '#f2c94c';
-  if (color.includes('black')) return '#26302b';
-  if (color.includes('gray') || color.includes('grey')) return '#94a09a';
-  return '#dce4df';
+function getColorSwatches(value) {
+  const palette = {
+    white: '#ffffff', orange: '#f19046', blue: '#3d8edb', green: '#1d9c90',
+    red: '#de5b50', yellow: '#f2c94c', black: '#26302b', gray: '#94a09a', grey: '#94a09a',
+    silver: '#b9c2c8', brown: '#956746', purple: '#8b5db7', pink: '#e887ad',
+  };
+  const names = displayColor(value).toLowerCase().match(/\b(?:white|orange|blue|green|red|yellow|black|gray|grey|silver|brown|purple|pink)\b/g) || [];
+  const swatches = [...new Set(names.map((name) => palette[name]))];
+  return swatches.length ? swatches : ['#dce4df'];
+}
+
+function TruckColorDots({ color }) {
+  return <span aria-hidden="true" className="truck-color-dots">{getColorSwatches(color).map((swatch) => <i className="truck-color-dot" key={swatch} style={{ backgroundColor: swatch }} />)}</span>;
 }
 
 export default function TruckManagementPanel({ token }) {
@@ -119,6 +124,8 @@ export default function TruckManagementPanel({ token }) {
         return sort.direction === 'asc' ? result : -result;
       });
   }, [availabilityFilter, query, sort, trucks]);
+
+  const pagination = useTablePagination(filteredTrucks, JSON.stringify([query, availabilityFilter, sort]));
 
   const liveCapacity = getCapacity(form);
 
@@ -216,58 +223,59 @@ export default function TruckManagementPanel({ token }) {
     setSort((current) => current.field === field ? { field, direction: current.direction === 'asc' ? 'desc' : 'asc' } : { field, direction: 'asc' });
   };
 
-  const renderSortHeader = (label, field) => <button className={`truck-sort-header ${sort.field === field ? 'is-sorted' : ''}`} onClick={() => toggleSort(field)} type="button">{label}<FleetIcon name="sort" size={13} /></button>;
+  const renderSortHeader = (label, field) => <Button isDisabled={isLoading} variant="tertiary" className={`truck-sort-header ${sort.field === field ? 'is-sorted' : ''}`} onPress={() => toggleSort(field)} type="button">{label}<FleetIcon name="sort" size={13} /></Button>;
 
   return <section className="truck-management-panel" aria-label="Truck management">
     <Card className="truck-directory-card">
-      <div className="truck-filter-row">
+      <DisabledControls disabled={isLoading}><div className="truck-filter-row">
         <label className="truck-search-control"><FleetIcon name="search" size={17} /><input aria-label="Search trucks" onChange={(event) => setQuery(event.target.value)} placeholder="Search truck no. or plate no." value={query} /></label>
         <select aria-label="Filter truck availability" onChange={(event) => setAvailabilityFilter(event.target.value)} value={availabilityFilter}><option value="all">All availability</option><option value="available">Available</option><option value="unavailable">Unavailable</option></select>
-        <Button className="primary-button truck-add-button" onPress={openCreateEditor} startContent={<FleetIcon name="plus" size={16} />}>Add truck</Button>
-      </div>
+        <Button className="primary-button truck-add-button" onPress={openCreateEditor}><FleetIcon name="plus" size={16} />Add truck</Button>
+      </div></DisabledControls>
 
-      {listError ? <p className="feedback error-feedback" role="alert">{listError}</p> : null}
+
       <div className="truck-table-scroll">
         <table className="truck-table">
           <thead><tr><th>{renderSortHeader('Truck no.', 'truckNumber')}</th><th>{renderSortHeader('Plate no.', 'plateNumber')}</th><th>Color</th><th>Length (m)</th><th>Width (m)</th><th>Height (m)</th><th>Capacity (cu.m)</th><th>Availability</th><th className="truck-actions-heading">Actions</th></tr></thead>
-          <tbody>
-            {isLoading ? <tr><td className="truck-table-message" colSpan="9">Loading fleet…</td></tr> : null}
-            {!isLoading && !listError && filteredTrucks.length === 0 ? <tr><td className="truck-table-message" colSpan="9">No trucks match the current filters.</td></tr> : null}
-            {!isLoading && filteredTrucks.map((truck) => {
+          <LoadingTableBody loading={isLoading} hasData={serverTrucks.length > 0} error={listError} onRetry={loadTrucks} columns={9} rows={pagination.controls.pageSize}>
+
+            {!listError && filteredTrucks.length === 0 ? <tr><td className="truck-table-message" colSpan="9">No trucks match the current filters.</td></tr> : null}
+            {pagination.rows.map((truck) => {
               const capacity = getCapacity(truck);
               return <tr key={truck.id}>
                 <td><span className="truck-number"><span className="truck-number-icon"><FleetIcon name="truck" size={15} /></span><strong>{truck.truckNumber}</strong></span></td>
                 <td className="truck-plate">{truck.plateNumber}</td>
-                <td><span className="truck-color"><i className="truck-color-dot" style={{ backgroundColor: getColorSwatch(truck.color) }} />{displayColor(truck.color)}</span></td>
+                <td><span className="truck-color"><TruckColorDots color={truck.color} />{displayColor(truck.color)}</span></td>
                 <td className="truck-dimension">{formatDimension(truck.length)}</td>
                 <td className="truck-dimension">{formatDimension(truck.width)}</td>
                 <td className="truck-dimension">{formatDimension(truck.height)}</td>
                 <td className="truck-capacity">{capacity ? capacity.toFixed(2) : '—'}</td>
                 <td><span className={`truck-availability availability-${truck.availability}`}>{truck.availability === 'unavailable' ? 'Unavailable' : 'Available'}</span></td>
-                <td><div className="truck-row-actions"><button aria-label={`View ${truck.truckNumber}`} className="truck-icon-button" onClick={() => setSelectedTruck(truck)} title="View details" type="button"><FleetIcon name="eye" size={17} /></button><button aria-label={`Edit ${truck.truckNumber}`} className="truck-icon-button" onClick={() => openEditEditor(truck)} title="Edit truck" type="button"><FleetIcon name="pencil" size={16} /></button><button aria-label={`Archive ${truck.truckNumber}`} className="truck-icon-button truck-archive-button" onClick={() => setArchiveTarget(truck)} title="Archive truck" type="button"><FleetIcon name="archive" size={16} /></button></div></td>
+                <td><div className="truck-row-actions"><Button variant="tertiary" aria-label={`View ${truck.truckNumber}`} className="truck-icon-button" onPress={() => setSelectedTruck(truck)} title="View details" type="button"><FleetIcon name="eye" size={17} /></Button><Button variant="tertiary" aria-label={`Edit ${truck.truckNumber}`} className="truck-icon-button" onPress={() => openEditEditor(truck)} title="Edit truck" type="button"><FleetIcon name="pencil" size={16} /></Button><Button variant="tertiary" aria-label={`Archive ${truck.truckNumber}`} className="truck-icon-button truck-archive-button" onPress={() => setArchiveTarget(truck)} title="Archive truck" type="button"><FleetIcon name="archive" size={16} /></Button></div></td>
               </tr>;
             })}
-          </tbody>
+          </LoadingTableBody>
         </table>
       </div>
-      <p className="truck-table-count">{isLoading ? 'Loading trucks…' : `${filteredTrucks.length} of ${trucks.length} active truck${trucks.length === 1 ? '' : 's'}`}</p>
+      <TablePagination label="Manage trucks" {...pagination.controls} disabled={isLoading} />
     </Card>
 
     <Modal.Backdrop className="modal-layer truck-editor-backdrop" isOpen={isEditorOpen} isDismissable onOpenChange={open => { if (!open) closeEditor(); }}><Modal.Container className="truck-editor-container" placement="center"><Modal.Dialog className="truck-editor-modal" aria-labelledby="truck-editor-title"><form onSubmit={saveTruck}>
-      <div className="modal-header"><div><p className="eyebrow">Fleet registry</p><h2 id="truck-editor-title">{editingId ? 'Edit truck' : 'Add truck'}</h2></div><button aria-label="Close truck form" onClick={closeEditor} type="button"><FleetIcon name="close" size={20} /></button></div>
+      <div className="modal-header"><div><p className="eyebrow">Fleet registry</p><h2 id="truck-editor-title">{editingId ? 'Edit truck' : 'Add truck'}</h2></div><Button variant="tertiary" aria-label="Close truck form" onPress={closeEditor} type="button"><FleetIcon name="close" size={20} /></Button></div>
       <div className="truck-editor-body">
         <div className="truck-editor-grid"><label>Truck no.<input autoCapitalize="characters" onChange={(event) => updateForm('truckNumber', event.target.value)} placeholder="TR-101" required value={form.truckNumber} /></label><label>Plate no.<input autoCapitalize="characters" onChange={(event) => updateForm('plateNumber', event.target.value)} placeholder="ABC-1234" required value={form.plateNumber} /></label></div>
         <div className="truck-editor-grid"><label>Color<input onChange={(event) => updateForm('color', event.target.value)} placeholder="e.g. Blue or White" required value={form.color} /></label><label>Availability<AppSelect aria-label="Truck availability" className="truck-availability-select" onChange={(availability) => updateForm('availability', availability)} options={[{ label: 'Available', value: 'available' }, { label: 'Unavailable', value: 'unavailable' }]} value={form.availability} /></label></div>
         <div className="truck-editor-grid truck-dimension-inputs"><label>Length (m)<input {...TRUCK_DIMENSION_LIMITS.length} onChange={(event) => updateForm('length', event.target.value)} placeholder="3.80" required step="0.01" type="number" value={form.length} /></label><label>Width (m)<input {...TRUCK_DIMENSION_LIMITS.width} onChange={(event) => updateForm('width', event.target.value)} placeholder="1.10" required step="0.01" type="number" value={form.width} /></label><label>Height (m)<input {...TRUCK_DIMENSION_LIMITS.height} onChange={(event) => updateForm('height', event.target.value)} placeholder="2.40" required step="0.01" type="number" value={form.height} /></label></div>
         <p>Load-space dimensions in metres: length 1–12, width 1–3, height 0.3–4.</p>
+
         {listError ? <p className="feedback error-feedback" role="alert">{listError}</p> : null}
         <div className="capacity-preview"><span>Capacity (cu.m)</span><strong>{liveCapacity ? liveCapacity.toFixed(2) : '0.00'}</strong><p>Calculated automatically from length × width × height. This value cannot be edited.</p></div>
       </div>
       <div className="modal-footer"><Button className="outline-button" isDisabled={isSaving} onPress={closeEditor} type="button" variant="secondary">Cancel</Button><Button className="primary-button" isDisabled={isSaving} type="submit">{isSaving ? 'Saving…' : editingId ? 'Save changes' : 'Add truck'}</Button></div>
     </form></Modal.Dialog></Modal.Container></Modal.Backdrop>
 
-    {selectedTruck ? <div className="modal-layer" onClick={() => setSelectedTruck(null)} role="presentation"><div aria-modal="true" className="truck-details-modal" onClick={(event) => event.stopPropagation()} role="dialog"><div className="modal-header"><div><p className="eyebrow">Fleet vehicle</p><h2>{selectedTruck.truckNumber}</h2></div><button aria-label="Close truck details" onClick={() => setSelectedTruck(null)} type="button"><FleetIcon name="close" size={20} /></button></div><div className="truck-details-grid"><div><span>Plate no.</span><strong>{selectedTruck.plateNumber}</strong></div><div><span>Color</span><strong className="truck-color"><i className="truck-color-dot" style={{ backgroundColor: getColorSwatch(selectedTruck.color) }} />{displayColor(selectedTruck.color)}</strong></div><div><span>Dimensions</span><strong>{formatDimensions(selectedTruck)} m</strong></div><div><span>Capacity</span><strong>{getCapacity(selectedTruck)?.toFixed(2) || '—'} cu.m</strong></div><div><span>Availability</span><strong><span className={`truck-availability availability-${selectedTruck.availability}`}>{selectedTruck.availability === 'unavailable' ? 'Unavailable' : 'Available'}</span></strong></div></div><div className="modal-footer"><Button className="outline-button" onPress={() => setSelectedTruck(null)} variant="secondary">Close</Button><Button className="primary-button" onPress={() => { setSelectedTruck(null); openEditEditor(selectedTruck); }}>Edit truck</Button></div></div></div> : null}
+    {selectedTruck ? <div className="modal-layer" onClick={() => setSelectedTruck(null)} role="presentation"><div aria-modal="true" className="truck-details-modal" onClick={(event) => event.stopPropagation()} role="dialog"><div className="modal-header"><div><p className="eyebrow">Fleet vehicle</p><h2>{selectedTruck.truckNumber}</h2></div><Button variant="tertiary" aria-label="Close truck details" onPress={() => setSelectedTruck(null)} type="button"><FleetIcon name="close" size={20} /></Button></div><div className="truck-details-grid"><div><span>Plate no.</span><strong>{selectedTruck.plateNumber}</strong></div><div><span>Color</span><strong className="truck-color"><TruckColorDots color={selectedTruck.color} />{displayColor(selectedTruck.color)}</strong></div><div><span>Dimensions</span><strong>{formatDimensions(selectedTruck)} m</strong></div><div><span>Capacity</span><strong>{getCapacity(selectedTruck)?.toFixed(2) || '—'} cu.m</strong></div><div><span>Availability</span><strong><span className={`truck-availability availability-${selectedTruck.availability}`}>{selectedTruck.availability === 'unavailable' ? 'Unavailable' : 'Available'}</span></strong></div></div><div className="modal-footer"><Button className="outline-button" onPress={() => setSelectedTruck(null)} variant="secondary">Close</Button><Button className="primary-button" onPress={() => { setSelectedTruck(null); openEditEditor(selectedTruck); }}>Edit truck</Button></div></div></div> : null}
 
-    {archiveTarget ? <div className="modal-layer" onClick={() => !isSaving && setArchiveTarget(null)} role="presentation"><div aria-describedby="archive-truck-description" aria-modal="true" className="truck-archive-modal" onClick={(event) => event.stopPropagation()} role="dialog"><div className="modal-header"><div><p className="eyebrow">Archive truck</p><h2>Archive {archiveTarget.truckNumber}?</h2></div><button aria-label="Close archive confirmation" disabled={isSaving} onClick={() => setArchiveTarget(null)} type="button"><FleetIcon name="close" size={20} /></button></div><p id="archive-truck-description">This removes the truck from the active fleet list. It is an archive action, not a permanent deletion.</p><div className="modal-footer"><Button className="outline-button" isDisabled={isSaving} onPress={() => setArchiveTarget(null)} variant="secondary">Cancel</Button><Button className="truck-archive-confirm" isDisabled={isSaving} onPress={confirmArchive}>{isSaving ? 'Archiving…' : 'Archive truck'}</Button></div></div></div> : null}
+    {archiveTarget ? <div className="modal-layer" onClick={() => !isSaving && setArchiveTarget(null)} role="presentation"><div aria-describedby="archive-truck-description" aria-modal="true" className="truck-archive-modal" onClick={(event) => event.stopPropagation()} role="dialog"><div className="modal-header"><div><p className="eyebrow">Archive truck</p><h2>Archive {archiveTarget.truckNumber}?</h2></div><Button variant="tertiary" aria-label="Close archive confirmation" isDisabled={isSaving} onPress={() => setArchiveTarget(null)} type="button"><FleetIcon name="close" size={20} /></Button></div><p id="archive-truck-description">This removes the truck from the active fleet list. It is an archive action, not a permanent deletion.</p><div className="modal-footer"><Button className="outline-button" isDisabled={isSaving} onPress={() => setArchiveTarget(null)} variant="secondary">Cancel</Button><Button className="truck-archive-confirm" isDisabled={isSaving} onPress={confirmArchive}>{isSaving ? 'Archiving…' : 'Archive truck'}</Button></div></div></div> : null}
   </section>;
 }

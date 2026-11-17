@@ -87,7 +87,7 @@ try {
   await browser.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 4, y: 4, button: 'left', clickCount: 1 });
   await waitFor("!document.querySelector('.route-editor-modal')");
   await click('.route-add-button');
-  assert.equal(await browser.evaluate('document.querySelector(".route-editor-form").textContent.includes("Assigned collector")'), false, 'Assignments are managed outside the route editor');
+  assert.equal(await browser.evaluate('document.querySelector(".route-editor-form").textContent.includes("Assigned driver")'), false, 'Assignments are managed outside the route editor');
   await type('san');
   await browser.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 4, y: 4, button: 'left', clickCount: 1 });
   await browser.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 4, y: 4, button: 'left', clickCount: 1 });

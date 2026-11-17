@@ -1,3 +1,5 @@
+import { SignupPrivacy, PRIVACY_REQUIRED_MESSAGE } from '@/components/signup-privacy';
+import { requestJson } from '@/lib/network-request';
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
 import { GoogleSignin, isSuccessResponse } from '@react-native-google-signin/google-signin';
 import { useEffect, useRef, useState } from 'react';
@@ -61,6 +63,7 @@ export default function SignupScreen() {
   };
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [step, setStep] = useState<SignupStep>(1);
   const [googleToken, setGoogleToken] = useState('');
   const [name, setName] = useState('');
@@ -80,6 +83,8 @@ export default function SignupScreen() {
   }, []);
 
   const handleGoogleSignup = async () => {
+    if (!privacyAccepted) { setError(PRIVACY_REQUIRED_MESSAGE); return; }
+    if (isSubmitting || isGoogleSubmitting) return;
     if (!API_URL) {
       setError('EXPO_PUBLIC_API_URL is not configured.');
       return;
@@ -107,12 +112,11 @@ export default function SignupScreen() {
         throw new Error(idToken ? 'EXPO_PUBLIC_API_URL is not configured.' : 'Google did not return an ID token.');
       }
 
-      const response = await fetch(`${API_URL.replace(/\/$/, '')}/auth/google`, {
+      const { response, payload: result } = await requestJson<RegisterResponse>(`${API_URL.replace(/\/$/, '')}/auth/google`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ idToken }),
       });
-      const result = (await response.json()) as RegisterResponse;
 
       if (!response.ok || !result.success || !result.data?.token || !result.data.user) {
         throw new Error(result.error || result.errors?.[0]?.msg || 'Unable to connect your Google account.');
@@ -130,6 +134,8 @@ export default function SignupScreen() {
   };
 
   const handleSignup = async () => {
+    if (!privacyAccepted) { setError(PRIVACY_REQUIRED_MESSAGE); return; }
+    if (isSubmitting || isGoogleSubmitting) return;
     if (!name.trim()) {
       setError('Please enter your full name.');
       return;
@@ -160,7 +166,7 @@ export default function SignupScreen() {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(`${API_URL.replace(/\/$/, '')}/auth/me`, {
+      const { response, payload: result } = await requestJson<RegisterResponse>(`${API_URL.replace(/\/$/, '')}/auth/me`, {
         method: 'PATCH',
         headers: {
           Authorization: `Bearer ${googleToken}`,
@@ -174,7 +180,6 @@ export default function SignupScreen() {
           barangay: location,
         }),
       });
-      const result = (await response.json()) as RegisterResponse;
 
       if (!response.ok || !result.success) {
         throw new Error(result.error || result.errors?.[0]?.msg || 'Unable to finish your profile.');
@@ -219,8 +224,9 @@ export default function SignupScreen() {
                   <Text style={styles.stepTitle}>Verify your email</Text>
                   <Text style={styles.stepDescription}>Use your Google account to create a secure ResiKlean login.</Text>
                 </View>
-                <Pressable accessibilityRole="button" disabled={isGoogleSubmitting} onPress={handleGoogleSignup}
-                  style={[styles.googleButton, isGoogleSubmitting && authStyles.disabled]}>
+                <SignupPrivacy accepted={privacyAccepted} disabled={isSubmitting || isGoogleSubmitting} onChange={(accepted) => { setPrivacyAccepted(accepted); if (accepted && error === PRIVACY_REQUIRED_MESSAGE) setError(''); }} />
+                <Pressable accessibilityRole="button" disabled={isGoogleSubmitting || !privacyAccepted} onPress={handleGoogleSignup}
+                  style={[styles.googleButton, (isGoogleSubmitting || !privacyAccepted) && authStyles.disabled]}>
                   {isGoogleSubmitting ? <ActivityIndicator color={C.ink} /> : <View style={authStyles.buttonContent}>
                     <GoogleLogo /><Text style={styles.googleButtonText}>Continue with Google</Text>
                   </View>}
@@ -256,11 +262,12 @@ export default function SignupScreen() {
               </View>
             )}
             </SignupStepTransition></View>
+            {step === 2 && <SignupPrivacy accepted={privacyAccepted} disabled={isSubmitting || isGoogleSubmitting} onChange={(accepted) => { setPrivacyAccepted(accepted); if (accepted && error === PRIVACY_REQUIRED_MESSAGE) setError(''); }} />}
             {generalError ? <Text accessibilityRole="alert" style={authStyles.error}>{generalError}</Text> : null}
           </View>
         <View testID="signup-footer" style={[authStyles.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-          {step === 2 ? <Pressable accessibilityRole="button" disabled={isSubmitting} onPress={handleSignup}
-            style={[authStyles.primaryButton, isSubmitting && authStyles.disabled]}>
+          {step === 2 ? <Pressable accessibilityRole="button" disabled={isSubmitting || !privacyAccepted} onPress={handleSignup}
+            style={[authStyles.primaryButton, (isSubmitting || !privacyAccepted) && authStyles.disabled]}>
             {isSubmitting ? <ActivityIndicator color="#ffffff" /> : <View style={authStyles.buttonContent}>
               <Text style={authStyles.buttonText}>Finish sign up</Text><Feather color="#ffffff" name="arrow-right" size={20} />
             </View>}

@@ -1,15 +1,20 @@
 // Local QA utility using the already-installed browser, not a new dependency.
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export async function openBrowser() {
-  const directory = await mkdtemp(path.join(tmpdir(), 'resiklean-login-'));
+  // Keep browser profiles and caches on the project drive, not Windows' system drive.
+  const projectDrive = path.parse(fileURLToPath(import.meta.url)).root;
+  const qaRoot = process.env.RESIKLEAN_QA_TEMP || (process.platform === 'win32' ? path.join(projectDrive, 'RESIKLEAN-QA-TEMP') : tmpdir());
+  await mkdir(qaRoot, { recursive: true });
+  const directory = await mkdtemp(path.join(qaRoot, 'resiklean-login-'));
   const child = spawn(process.env.QA_BROWSER || 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', [
     '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
     '--remote-debugging-port=0', `--user-data-dir=${directory}`, 'about:blank',
-  ], { windowsHide: true, stdio: 'ignore' });
+  ], { windowsHide: true, stdio: 'ignore', env: { ...process.env, TEMP: qaRoot, TMP: qaRoot, TMPDIR: qaRoot } });
   let failure;
   child.on('error', error => { failure = error; });
   let port;

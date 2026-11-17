@@ -30,6 +30,7 @@ export type PendingStaffCameraContext = {
 
 export type PendingResidentCameraContext = {
   type: 'resident';
+  wasteCategory?: string;
   category?: string;
   notes?: string;
   locationDetails?: string;

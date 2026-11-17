@@ -1,3 +1,9 @@
+import { DriverRouteLayers, DriverStopLayers } from '@/components/driver-map-layers';
+import { buildMapStops } from '@/lib/driver-map-presentation';
+import { useAppReducedMotion } from '@/hooks/use-app-reduced-motion';
+import { useNetworkRecovery } from '@/hooks/use-network-recovery';
+import { requestJson } from '@/lib/network-request';
+import { withTimeout } from '@/lib/async-timeout';
 import { WorkProfileEditor } from '@/components/work-profile-editor';
 import { ResidentAvatar } from '@/components/resident-avatar';
 import { ProfileSettingsRow } from '@/components/profile-settings-row';
@@ -12,7 +18,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, ActivityIndicator, AppState, Image, PanResponder, Platform, ScrollView, StyleSheet, View } from 'react-native';
 import { MotionPressable as Pressable, MotionModal as Modal, TabTransition, useSlidingTabPill, useClosingValue, RevealRow, useFirstLoadReveal, ToastMotion, MotionChevron } from '@/components/app-motion';
 import { io } from 'socket.io-client';
-import Svg, { Circle } from 'react-native-svg';
 import Mapbox from '@rnmapbox/maps';
 import { useRouter } from 'expo-router';
 import { AppText as Text } from '@/components/app-text';
@@ -23,9 +28,9 @@ import { deleteOfflineRouteMap, downloadOfflineRouteMap, getOfflineRouteMapStatu
 import { enableDriverGeofencing, getDriverGeofencingStatus, stopDriverGeofencing, updateDriverGeofences } from '@/lib/driver-geofencing';
 import { getQueuedRouteLogStopIds, getRouteLogQueueStats, subscribeToRouteLogSync, syncRouteLogQueue, type RouteLogSyncResult } from '@/lib/driver-route-log-queue';
 import { isRouteCompletionQueued, queueRouteCompletion, subscribeToRouteCompletionSync } from '@/lib/driver-route-completion';
-import { getRouteHistoryCache, saveRouteHistoryCache } from '@/lib/driver-route-history-cache';
-import { subscribeToDriverTrailSync, syncDriverTrailQueue } from '@/lib/driver-trail-queue';
-import { claimTripStartPrompt, getRouteMonitoringPreference, setRouteMonitoringConsent, pauseRouteMonitoringToday, processDriverRouteLocation, cacheAssignedRoute, clearCachedAssignedRoute, clearRouteProximityEvents, enableRouteProximityTracking, getCachedAssignedRoute, getRouteProximityEvents, getRouteProximityStatus, stopRouteProximityTracking, subscribeToRouteProximityStatus, type RoutePresenceEvent, type RoutePresenceStatus } from '@/lib/driver-route-proximity';
+import { getRouteHistoryCache, saveRouteHistoryCache, mergeRouteHistory } from '@/lib/driver-route-history-cache';
+import { getLocalDriverTrailHistory, subscribeToDriverTrailSync, syncDriverTrailQueue } from '@/lib/driver-trail-queue';
+import { claimTripStartPrompt, getRouteMonitoringPreference, setRouteMonitoringConsent, pauseRouteMonitoringToday, processDriverRouteLocation, cacheAssignedRoute, clearCachedAssignedRoute, clearRouteProximityEvents, enableRouteProximityTracking, getCachedAssignedRoute, getRouteProximityStatus, stopRouteProximityTracking, subscribeToRouteProximityStatus, type RoutePresenceStatus } from '@/lib/driver-route-proximity';
 import { clearSession, getSession, type AccountUser, type AuthSession } from '@/lib/session';
 import { queueCapacityLog, syncCapacityQueue } from '@/lib/driver-capacity-queue';
 import NetInfo from '@react-native-community/netinfo';
@@ -139,6 +144,8 @@ type RouteHistoryGroup = {
   sessionId?: string;
   routePath?: RoutePath;
   trailPath?: RoutePath;
+  lastLocation?: [number, number];
+  pendingSync?: boolean;
   stopLogs: RouteHistoryStopLog[];
 };
 
@@ -190,13 +197,6 @@ const INITIAL_MAP_CAMERA = {
   animationMode: 'none' as const,
   animationDuration: 0,
 };
-// Visual approach indicator only. Stop collection still uses the platform
-// geofence radius configured in driver-geofencing.ts (50 m).
-const STOP_NEAR_RADIUS_METERS = 100;
-const STOP_FLAG_POLE_HEIGHT_LATITUDE = 0.00035;
-const STOP_FLAG_WIDTH_LONGITUDE = 0.00055;
-const STOP_FLAG_HEIGHT_LATITUDE = 0.00018;
-
 if (MAPBOX_ACCESS_TOKEN) {
   Mapbox.setAccessToken(MAPBOX_ACCESS_TOKEN);
 }
@@ -261,17 +261,6 @@ function lastRouteCoordinate(feature: RouteLineFeature | null): [number, number]
   }
   const lastLine = feature.geometry.coordinates[feature.geometry.coordinates.length - 1];
   return lastLine?.[lastLine.length - 1] || null;
-}
-
-function distanceBetweenCoordinates(first: [number, number], second: [number, number]) {
-  const earthRadiusMeters = 6_371_000;
-  const firstLatitude = first[1] * (Math.PI / 180);
-  const secondLatitude = second[1] * (Math.PI / 180);
-  const latitudeDelta = (second[1] - first[1]) * (Math.PI / 180);
-  const longitudeDelta = (second[0] - first[0]) * (Math.PI / 180);
-  const haversine = Math.sin(latitudeDelta / 2) ** 2
-    + Math.cos(firstLatitude) * Math.cos(secondLatitude) * Math.sin(longitudeDelta / 2) ** 2;
-  return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
 }
 
 function formatTime(date?: string) {
@@ -381,30 +370,13 @@ function HistoryMapCamera({ center, zoom, group }: { center: [number, number] | 
   return <Mapbox.Camera defaultSettings={bounds ? { bounds } : { centerCoordinate: center ?? MAP_CENTER, zoomLevel: center ? zoom : 12 }} bounds={bounds} animationMode="none" animationDuration={0} />;
 }
 
-function ProgressRing({ percent }: { percent: number }) {
-  const size = 84;
-  const stroke = 8;
-  const radius = (size - stroke) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const clampedPercent = Math.min(100, Math.max(0, percent));
-  return (
-    <View style={styles.progressRing}>
-      <Svg height={size} width={size}>
-        <Circle cx={size / 2} cy={size / 2} fill="none" r={radius} stroke="rgba(255,255,255,0.25)" strokeWidth={stroke} />
-        <Circle cx={size / 2} cy={size / 2} fill="none" r={radius} rotation="-90" stroke="#ffffff" strokeDasharray={`${circumference} ${circumference}`} strokeDashoffset={circumference * (1 - clampedPercent / 100)} strokeLinecap="round" strokeWidth={stroke} transform={`rotate(-90 ${size / 2} ${size / 2})`} />
-      </Svg>
-      <Text style={styles.progressPercent}>{Math.round(clampedPercent)}%</Text>
-    </View>
-  );
-}
-
 function StreetRow({ street, last = false }: { street: Street; last?: boolean }) {
   const collected = street.status === 'Collected';
   const statusLabel = street.flaggedForReview ? 'Collected · Review' : street.status;
   return (
     <View style={styles.streetCard}>
       <View style={styles.timelineRail}>
-        {!last && <View style={styles.timelineLine} />}
+        {!last && <View style={[styles.timelineLine, collected && !street.flaggedForReview && styles.timelineLineCollected]} />}
         <View style={[styles.streetMarker, street.flaggedForReview ? styles.reviewMarker : collected ? styles.collectedMarker : styles.notCollectedMarker]}>
           {street.flaggedForReview ? <Feather name="flag" color="#5C3B00" size={12} /> : collected ? <Feather name="check" color="#ffffff" size={14} /> : null}
         </View>
@@ -428,6 +400,12 @@ function AccountDetail({ label, value }: { label: string; value: string }) {
 }
 
 export default function CollectorScreen() {
+  const networkRevision = useNetworkRecovery();
+  const reducedMotion = useAppReducedMotion();
+  const mapCamera = useRef<React.ElementRef<typeof Mapbox.Camera>>(null);
+  const expandStopCluster = useCallback((coordinate: [number, number], zoom: number) => {
+    mapCamera.current?.setCamera({ centerCoordinate: coordinate, zoomLevel: zoom, animationMode: reducedMotion ? 'none' : 'easeTo', animationDuration: reducedMotion ? 0 : 300 });
+  }, [reducedMotion]);
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<CollectorTab>('history');
@@ -447,7 +425,6 @@ export default function CollectorScreen() {
   const [isUpdatingGeofence, setIsUpdatingGeofence] = useState(false);
   const [geofencingMessage, setGeofencingMessage] = useState<string | null>(null);
   const [routePresence, setRoutePresence] = useState<RoutePresenceStatus>({ enabled: false, state: 'unknown' });
-  const [routePresenceEvents, setRoutePresenceEvents] = useState<RoutePresenceEvent[]>([]);
   const [offlineMap, setOfflineMap] = useState<OfflineRouteMapStatus>({ completedSizeBytes: 0, downloaded: false, downloading: false, percentage: 0 });
   const [isUpdatingOfflineMap, setIsUpdatingOfflineMap] = useState(false);
   const [offlineMapMessage, setOfflineMapMessage] = useState<string | null>(null);
@@ -480,6 +457,7 @@ export default function CollectorScreen() {
   const monitoringSuspendedRef = useRef(false);
   const monitoringRequestRef = useRef(0);
   const autoMonitoringAttemptsRef = useRef(new Set<string>());
+  const historyLoadRequestRef = useRef(0);
   const [autoMonitoringRevision, setAutoMonitoringRevision] = useState(0);
   
   const handleTruckEmptied = () => {
@@ -536,7 +514,7 @@ export default function CollectorScreen() {
     } catch {
       // The route-progress bar keeps the last known local queue state if SQLite is unavailable.
     }
-  }, []);
+  }, [collectorId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -618,15 +596,7 @@ export default function CollectorScreen() {
     try {
       const network = await NetInfo.fetch();
       if (network.isConnected === false || network.isInternetReachable === false) throw new Error('Offline');
-      const request = async (path: string) => {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
-        try {
-          const response = await fetch(`${API_URL}${path}`, { signal: controller.signal, headers: { Authorization: `Bearer ${token}` } });
-          const payload = await response.json().catch(() => ({ success: false, error: 'The server returned an invalid response.' }));
-          return {payload, response};
-        } finally { clearTimeout(timeout); }
-      };
+      const request = (path: string) => requestJson(`${API_URL}${path}`, { headers: { Authorization: `Bearer ${token}` } }, 10000);
 
       const [profileResult, routeResult, progressResult, capacityResult] = await Promise.all([
         request('/auth/me'),
@@ -655,6 +625,13 @@ export default function CollectorScreen() {
         setProgress(null);
         await clearCachedAssignedRoute(cachedCollectorId);
       } else if (routeResult.response.ok && routePayload.success && routePayload.data) {
+        const completionPending = cachedCollectorId && await isRouteCompletionQueued(routePayload.data._id, cachedCollectorId);
+        if (completionPending) {
+          setAssignedRoute(null);
+          setProgress(null);
+          setIsOffline(false);
+          return;
+        }
         setAssignedRoute(routePayload.data);
         if (cachedCollectorId) await cacheAssignedRoute(cachedCollectorId, routePayload.data);
         if (progressResult.response.ok && progressPayload.success && progressPayload.data) {
@@ -702,10 +679,9 @@ export default function CollectorScreen() {
     if (!API_URL) return;
 
     try {
-      const response = await fetch(`${API_URL}/collector/complaints`, {
+      const { response, payload } = await requestJson(`${API_URL}/collector/complaints`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const payload = await response.json().catch(() => ({ success: false, data: [] }));
       if (!response.ok || !payload.success) {
         // A missing route or an older deployed API should not prevent the
         // assigned route itself from rendering on the driver's map.
@@ -733,7 +709,7 @@ export default function CollectorScreen() {
     void loadComplaints(session.token);
     const refreshInterval = setInterval(() => { void loadComplaints(session.token); }, 30_000);
     return () => clearInterval(refreshInterval);
-  }, [assignedRoute?._id, loadComplaints, session?.token]);
+  }, [assignedRoute?._id, loadComplaints, session?.token, networkRevision]);
 
   useEffect(() => {
     if (!session?.token || !assignedRoute || !SOCKET_URL) return undefined;
@@ -746,7 +722,7 @@ export default function CollectorScreen() {
       socket.off('complaint:status-updated', refreshComplaints);
       socket.disconnect();
     };
-  }, [assignedRoute?._id, loadComplaints, session?.token]);
+  }, [assignedRoute?._id, loadComplaints, session?.token, networkRevision]);
 
   useEffect(() => {
     let isMounted = true;
@@ -757,7 +733,6 @@ export default function CollectorScreen() {
       }
       if (isMounted) {
         setSession(savedSession);
-        void loadDriverData(savedSession.token, savedSession.user._id || savedSession.user.id);
       }
     }).catch(() => router.replace('/login'));
     return () => { isMounted = false; };
@@ -765,11 +740,8 @@ export default function CollectorScreen() {
 
   useEffect(() => {
     if (!session?.token) return undefined;
-    const subscription = AppState.addEventListener('change', (state) => {
-      if (state === 'active') void loadDriverData(session.token, session.user._id || session.user.id);
-    });
-    return () => subscription.remove();
-  }, [loadDriverData, session?.token]);
+    void loadDriverData(session.token, session.user._id || session.user.id);
+  }, [loadDriverData, session?.token, networkRevision]);
 
   useEffect(() => {
     if (!assignedRoute || activeTab !== 'map' || Platform.OS === 'web') {
@@ -882,40 +854,7 @@ export default function CollectorScreen() {
   const geofenceStops = useMemo(() => mapStops
     .filter((stop) => !(progress?.logs || []).some((log) => log.stopId === stop._id && log.status === 'collected'))
     .map((stop) => ({ id: stop._id, latitude: stop.latitude, longitude: stop.longitude })), [mapStops, progress]);
-  const mapStopFeatures = useMemo(() => ({
-    type: 'FeatureCollection' as const,
-    features: mapStops.flatMap((stop) => {
-      const isCollected = completedStopIds.has(stop._id);
-      const needsReview = progress?.logs.some((log) => log.stopId === stop._id && log.flaggedForReview) || false;
-      const distanceToStop = driverLocation
-        ? distanceBetweenCoordinates([driverLocation.longitude, driverLocation.latitude], [stop.longitude, stop.latitude])
-        : null;
-      const isNear = distanceToStop !== null && distanceToStop <= STOP_NEAR_RADIUS_METERS;
-      const status = needsReview ? 'review' : isCollected ? 'collected' : isNear ? 'near' : 'pending';
-      const poleTop: [number, number] = [stop.longitude, stop.latitude + STOP_FLAG_POLE_HEIGHT_LATITUDE];
-      const flagTip: [number, number] = [stop.longitude + STOP_FLAG_WIDTH_LONGITUDE, stop.latitude + STOP_FLAG_POLE_HEIGHT_LATITUDE - STOP_FLAG_HEIGHT_LATITUDE / 2];
-      const flagBottom: [number, number] = [stop.longitude + STOP_FLAG_WIDTH_LONGITUDE, stop.latitude + STOP_FLAG_POLE_HEIGHT_LATITUDE - STOP_FLAG_HEIGHT_LATITUDE];
-
-      return [
-        {
-          type: 'Feature' as const,
-          properties: { status },
-          geometry: {
-            type: 'LineString' as const,
-            coordinates: [[stop.longitude, stop.latitude], poleTop] as [number, number][],
-          },
-        },
-        {
-          type: 'Feature' as const,
-          properties: { status },
-          geometry: {
-            type: 'Polygon' as const,
-            coordinates: [[poleTop, flagTip, flagBottom, poleTop]] as [number, number][][],
-          },
-        },
-      ];
-    }),
-  }), [completedStopIds, driverLocation, mapStops, progress]);
+  const mapStopFeatures = useMemo(() => buildMapStops(routeStops, progress?.logs || []), [routeStops, progress?.logs]);
   const todayStreets: Street[] = routeStops.map((stop) => {
     const log = progress?.logs.find((item) => item.stopId === stop._id && item.status === 'collected');
     return {
@@ -935,7 +874,6 @@ export default function CollectorScreen() {
   const totalStops = progress?.totalStops ?? routeStops.length;
   const pending = Math.max(0, progress?.remaining ?? totalStops - completedStopIds.size);
   const reviewCount = (progress?.logs || []).filter((log) => log.flaggedForReview).length;
-  const progressPercent = totalStops ? (completed / totalStops) * 100 : 0;
   const capacityCompletedStops = useMemo(
     () => new Set([...completedStopIds, ...queuedRouteStopIds]).size,
     [completedStopIds, queuedRouteStopIds],
@@ -978,6 +916,7 @@ export default function CollectorScreen() {
   const historyGroupLastLocation = useCallback((group: RouteHistoryGroup): [number, number] | null => {
     const trailLastLocation = lastRouteCoordinate(routeLineFeature(group.trailPath));
     if (trailLastLocation) return trailLastLocation;
+    if (group.lastLocation) return group.lastLocation;
     const routeLastLocation = lastRouteCoordinate(routeLineFeature(group.routePath));
     if (routeLastLocation) return routeLastLocation;
     if (group.stopLogs?.length) {
@@ -989,12 +928,12 @@ export default function CollectorScreen() {
 
 
   const submitRoute = async () => {
-    if (!session?.token || !assignedRoute) return;
+    if (!session?.token || !assignedRoute || isSubmittingRoute) return;
     setIsFinishRouteConfirmVisible(true);
   };
 
   const confirmRouteCompletion = async () => {
-    if (!session?.token || !assignedRoute) return;
+    if (!session?.token || !assignedRoute || isSubmittingRoute) return;
     const routeId = assignedRoute._id;
     const token = session.token;
     const effectiveCollectorId = collectorId || session.user._id || session.user.id || '';
@@ -1003,16 +942,14 @@ export default function CollectorScreen() {
     setRouteActionMessage(null);
 
     const completeOffline = async () => {
-      try {
-        await queueRouteCompletion(routeId, effectiveCollectorId);
-      } catch (qErr) {
-        console.warn('Could not queue route completion in SQLite:', qErr);
-      }
+      await queueRouteCompletion(routeId, effectiveCollectorId);
 
       try {
         const localHistoryGroup: RouteHistoryGroup = {
-          id: `offline:${routeId}:${new Date().toISOString()}`,
-          date: new Intl.DateTimeFormat('en-CA').format(new Date()),
+          id: `${monitoringDay()}|${routeId}`,
+          date: monitoringDay(),
+          routePath: assignedRoute.routePath,
+          pendingSync: true,
           routeId,
           routeName: assignedRoute.name,
           barangay: displayBarangay(assignedRoute.barangay),
@@ -1028,7 +965,8 @@ export default function CollectorScreen() {
           stopLogs: [],
         };
         const cachedHistory = effectiveCollectorId ? await getRouteHistoryCache<RouteHistoryGroup>(effectiveCollectorId).catch(() => []) : [];
-        const nextHistory = [localHistoryGroup, ...cachedHistory.filter((group) => group.id !== localHistoryGroup.id)];
+        const localTrails = effectiveCollectorId ? await getLocalDriverTrailHistory(effectiveCollectorId) : [];
+        const nextHistory = mergeRouteHistory<RouteHistoryGroup>([localHistoryGroup], mergeRouteHistory<RouteHistoryGroup>(cachedHistory, localTrails));
         setHistoryGroups(nextHistory);
         if (effectiveCollectorId) {
           await saveRouteHistoryCache(effectiveCollectorId, nextHistory).catch(() => {});
@@ -1048,7 +986,7 @@ export default function CollectorScreen() {
     };
 
     try {
-      await disableBackgroundGeofencing().catch(() => {});
+      await disableBackgroundGeofencing();
 
       const network = await NetInfo.fetch().catch(() => ({ isConnected: false, isInternetReachable: false }));
       if (!network.isConnected || network.isInternetReachable === false) {
@@ -1067,7 +1005,7 @@ export default function CollectorScreen() {
       }
 
       if (!API_URL) throw new Error('API URL is not configured.');
-      const res = await fetch(`${API_URL}/collector/route/complete`, {
+      const { response: res, payload: data } = await requestJson(`${API_URL}/collector/route/complete`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -1075,7 +1013,6 @@ export default function CollectorScreen() {
         },
         body: JSON.stringify({ routeId }),
       });
-      const data = await res.json().catch(() => ({}));
       if (!res.ok || !data.success) {
         throw new Error(data.error || 'Failed to finish the assigned route.');
       }
@@ -1091,11 +1028,13 @@ export default function CollectorScreen() {
         err.message.includes('network') ||
         err.message.includes('fetch') ||
         err.message.includes('timeout') ||
+        err.message.includes('timed out') ||
         err.message.includes('Failed to fetch')
       ));
 
       if (isNetworkErr) {
-        await completeOffline();
+        try { await completeOffline(); }
+        catch (saveError) { setRouteActionMessage({ kind: 'error', title: 'Could not save route', message: saveError instanceof Error ? saveError.message : 'Please try saving again.' }); }
       } else {
         setRouteActionMessage({
           kind: 'error',
@@ -1109,33 +1048,40 @@ export default function CollectorScreen() {
   };
 
   const loadRouteHistory = useCallback(async (token: string) => {
-    if (!API_URL) {
-      setHistoryLoadError('API URL is not configured.');
-      return;
-    }
+    if (!collectorId) return;
+    const requestId = ++historyLoadRequestRef.current;
     setHistoryLoading(true);
     setHistoryLoadError(null);
+    const controller = new AbortController();
+    let groups: RouteHistoryGroup[] = [];
+    const showHistory = (next: RouteHistoryGroup[]) => {
+      if (requestId !== historyLoadRequestRef.current) return;
+      setHistoryGroups(next);
+      setSelectedHistoryGroup(current => current ? next.find(group => group.routeId === current.routeId && group.date === current.date) || current : current);
+    };
     try {
-      const response = await fetch(`${API_URL}/collector/route-history?grouped=true`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const payload = (await response.json().catch(() => ({ success: false, error: 'Invalid server response' }))) as ApiResponse<{ groups?: RouteHistoryGroup[]; logs?: unknown[] }>;
-      if (!response.ok || !payload.success) {
-        setHistoryGroups([]);
-        setHistoryLoadError(payload.error || 'Unable to load collection history.');
-        return;
-      }
-      const groups = Array.isArray(payload.data?.groups) ? (payload.data.groups as RouteHistoryGroup[]) : [];
-      setHistoryGroups(groups);
-      setSelectedHistoryGroup(current => current ? groups.find(group => group.id === current.id) || current : current);
-      if (collectorId) void saveRouteHistoryCache(collectorId, groups);
+      const [cached, local] = await Promise.all([getRouteHistoryCache<RouteHistoryGroup>(collectorId), getLocalDriverTrailHistory(collectorId)]);
+      groups = mergeRouteHistory<RouteHistoryGroup>(cached.map(group => ({...group, pendingSync: false})), local);
+      showHistory(groups);
+      const network = await withTimeout(NetInfo.fetch());
+      if (!API_URL || network.isConnected === false || network.isInternetReachable === false) throw new Error('Offline');
+      const response = await withTimeout(fetch(`${API_URL}/collector/route-history?grouped=true`, {
+        signal: controller.signal, headers: { Authorization: `Bearer ${token}` },
+      }));
+      const payload = await withTimeout(response.json()) as ApiResponse<{ groups?: RouteHistoryGroup[] }>;
+      if (!response.ok || !payload.success) throw new Error(payload.error || 'Unable to load collection history.');
+      groups = mergeRouteHistory<RouteHistoryGroup>(Array.isArray(payload.data?.groups) ? payload.data.groups : [], groups);
+      showHistory(groups);
+      if (requestId !== historyLoadRequestRef.current) return;
+      await saveRouteHistoryCache(collectorId, groups);
       setHistoryLoadError(groups.length ? null : 'No past collections yet. After finishing your first collection, it will appear here.');
     } catch {
-      const cachedGroups = collectorId ? await getRouteHistoryCache<RouteHistoryGroup>(collectorId) : [];
-      setHistoryGroups(cachedGroups);
-      setHistoryLoadError(cachedGroups.length ? 'Offline: showing your last downloaded collection history.' : 'Unable to reach the server to load collection history.');
+      if (requestId !== historyLoadRequestRef.current) return;
+      showHistory(groups);
+      setHistoryLoadError(groups.length ? 'Showing trips saved on this phone. Pending records sync when online.' : 'No saved collection history is available on this phone yet.');
     } finally {
-      setHistoryLoading(false);
+      controller.abort();
+      if (requestId === historyLoadRequestRef.current) setHistoryLoading(false);
     }
   }, [collectorId]);
 
@@ -1161,25 +1107,22 @@ export default function CollectorScreen() {
     void loadRouteHistory(session.token);
     const interval = setInterval(() => { void loadRouteHistory(session.token); }, 60_000);
     return () => clearInterval(interval);
-  }, [loadRouteHistory, session?.token]);
+  }, [loadRouteHistory, session?.token, networkRevision]);
 
   const refreshRoutePresence = useCallback(async () => {
     if (!assignedRoute) {
       setRoutePresence({ enabled: false, state: 'unknown' });
-      setRoutePresenceEvents([]);
       setOfflineMap({ completedSizeBytes: 0, downloaded: false, downloading: false, percentage: 0 });
       return;
     }
 
     try {
-      const [status, events, mapStatus] = await Promise.all([
-        getRouteProximityStatus(),
-        getRouteProximityEvents(assignedRoute._id),
-        getOfflineRouteMapStatus(assignedRoute._id),
+      const routeId = assignedRoute._id;
+      const current = () => monitoringContextRef.current.routeId === routeId;
+      await Promise.allSettled([
+        withTimeout(getRouteProximityStatus()).then(status => { if (current()) setRoutePresence(status.routeId === routeId ? status : { enabled: false, state: 'unknown' }); }),
+        withTimeout(getOfflineRouteMapStatus(routeId)).then(mapStatus => { if (current()) setOfflineMap(mapStatus); }),
       ]);
-      setRoutePresence(status.routeId === assignedRoute._id ? status : { enabled: false, state: 'unknown' });
-      setRoutePresenceEvents(events);
-      setOfflineMap(mapStatus);
     } catch {
       // Route data remains usable even if a local map-pack status cannot be read.
     }
@@ -1191,7 +1134,6 @@ export default function CollectorScreen() {
       const routeId = assignedRoute?._id;
       if (!routeId || status.routeId !== routeId) return;
       setRoutePresence(status);
-      void getRouteProximityEvents(routeId).then(setRoutePresenceEvents).catch(() => undefined);
     });
     const refreshInterval = setInterval(() => { void refreshRoutePresence(); }, 20_000);
 
@@ -1294,7 +1236,7 @@ export default function CollectorScreen() {
       && monitoringContextRef.current.routeId === assignedRoute._id
       && monitoringContextRef.current.eligible;
     isTogglingMonitoringRef.current = true;
-    setIsUpdatingGeofence(true);
+    if (!automatic) setIsUpdatingGeofence(true);
     setGeofencingMessage(null);
     try {
       const preference = await getRouteMonitoringPreference(collectorId);
@@ -1319,6 +1261,7 @@ export default function CollectorScreen() {
           return;
         }
         newlyConsented = true;
+        setIsUpdatingGeofence(true);
       }
       if (!contextIsCurrent() || AppState.currentState !== 'active') return;
       // An explicit Start trip resumes today's paused detector. Automatic checks
@@ -1332,12 +1275,15 @@ export default function CollectorScreen() {
         await stopRouteProximityTracking({ forgetConfiguration: true });
         return;
       }
+      // GPS startup is complete. Optional stop zones/map-pack reads must not lock End trip.
+      setRoutePresence(previous => ({...previous, enabled: routeResult.enabled}));
+      setIsUpdatingGeofence(false);
       if (routeResult.enabled && API_URL && geofenceStops.length) {
         const stopResult = await enableDriverGeofencing({ apiUrl: API_URL, stops: geofenceStops });
         setIsGeofencingEnabled(stopResult.enabled);
         setGeofencingMessage(stopResult.enabled ? null : `Route detection is on. Stop zones: ${stopResult.message}`);
       } else {
-        await stopDriverGeofencing({ forgetConfiguration: true });
+        await withTimeout(stopDriverGeofencing({ forgetConfiguration: true }));
         setIsGeofencingEnabled(false);
         setGeofencingMessage(routeResult.enabled ? null : routeResult.message);
       }
@@ -1349,13 +1295,15 @@ export default function CollectorScreen() {
         void syncRouteLogQueue({ apiUrl: API_URL, token: session.token, collectorId }).then(applyQueueResult).catch(() => {});
         void syncDriverTrailQueue({ apiUrl: API_URL, token: session.token, collectorId }).catch(() => {});
       }
-      await refreshRoutePresence();
+      void refreshRoutePresence();
     } catch {
-      setGeofencingMessage('Unable to enable automatic monitoring. Check location permissions and try again.');
-      await refreshRoutePresence();
+      if (contextIsCurrent()) setGeofencingMessage('Monitoring setup did not finish. Check the trip status and location permissions before retrying.');
+      void refreshRoutePresence();
     } finally {
-      setIsUpdatingGeofence(false);
-      isTogglingMonitoringRef.current = false;
+      if (requestId === monitoringRequestRef.current) {
+        setIsUpdatingGeofence(false);
+        isTogglingMonitoringRef.current = false;
+      }
     }
   }, [API_URL, activeTab, automaticTripPromptEligible, editingProfile, applyQueueResult, assignedRoute, collectorId, geofenceStops, monitoringEligible, refreshRoutePresence, requestMonitoringConsent, session?.token]);
 
@@ -1366,18 +1314,33 @@ export default function CollectorScreen() {
     const stopRoute = stopRouteProximityTracking({ forgetConfiguration: true });
     setIsUpdatingGeofence(true);
     try {
-      await Promise.all([stopRoute, collectorId ? pauseRouteMonitoringToday(collectorId) : Promise.resolve(), stopDriverGeofencing({ forgetConfiguration: true })]);
+      await withTimeout(Promise.all([stopRoute, collectorId ? pauseRouteMonitoringToday(collectorId) : Promise.resolve(), stopDriverGeofencing({ forgetConfiguration: true })]));
       setRoutePresence({ enabled: false, state: 'unknown' });
       setIsGeofencingEnabled(false);
       setGeofencingMessage('Trip ended and saved on this device. Pending records sync when online. Tap Start trip for another trip.');
+      if (session?.token) void loadRouteHistory(session.token);
       if (API_URL && session?.token && collectorId) void syncDriverTrailQueue({apiUrl: API_URL, token: session.token, collectorId}).catch(() => {});
     } catch {
       setGeofencingMessage('Unable to fully stop monitoring. Check the location notification and try again.');
-      await refreshRoutePresence();
+      void refreshRoutePresence();
+      throw new Error('Trip monitoring could not be stopped. Please try again before finishing the route.');
     } finally {
+      isTogglingMonitoringRef.current = false;
       setIsUpdatingGeofence(false);
     }
-  }, [collectorId, refreshRoutePresence, respondToMonitoringConsent, session?.token]);
+  }, [collectorId, loadRouteHistory, refreshRoutePresence, respondToMonitoringConsent, session?.token]);
+
+  const endTrip = async () => {
+    if (isUpdatingGeofence || isSubmittingRoute) return;
+    try {
+      await disableBackgroundGeofencing();
+      // Ending GPS recording and closing the collection day remain separate choices.
+      // Keep route open leaves recording stopped, so a later trip can resume the route.
+      await submitRoute();
+    } catch (error) {
+      setRouteActionMessage({ kind: 'error', title: 'Could not end trip', message: error instanceof Error ? error.message : 'Please try ending the trip again.' });
+    }
+  };
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', state => {
@@ -1570,40 +1533,17 @@ export default function CollectorScreen() {
     <View style={styles.mapScreen}>
       <View style={styles.mapPlaceholder}>
         {MAPBOX_ACCESS_TOKEN ? (
-          <Mapbox.MapView scaleBarEnabled={false} style={styles.mapView} styleURL={Mapbox.StyleURL.Street}>
+          <Mapbox.MapView scaleBarEnabled={false} style={styles.mapView} styleURL={Mapbox.StyleURL.Street} logoEnabled attributionEnabled logoPosition={{ top: 8, left: 8 }} attributionPosition={{ top: 8, right: 8 }}>
             <Mapbox.Camera
+              ref={mapCamera}
               defaultSettings={INITIAL_MAP_CAMERA}
               centerCoordinate={cameraCenter}
               zoomLevel={driverLocation ? 15 : hasMapFocus ? 14 : 12}
               animationMode="easeTo"
               animationDuration={500}
             />
-            {mapRouteLine ? (
-              <Mapbox.ShapeSource id="assigned-route-path" shape={mapRouteLine}>
-                <Mapbox.LineLayer id="assigned-route-corridor" style={{ lineCap: 'round', lineColor: '#14A87D', lineJoin: 'round', lineOpacity: 0.18, lineWidth: 18 }} />
-                <Mapbox.LineLayer id="assigned-route-line" style={{ lineCap: 'round', lineColor: '#14A87D', lineJoin: 'round', lineOpacity: 0.9, lineWidth: 5 }} />
-              </Mapbox.ShapeSource>
-            ) : null}
-            {mapStopFeatures.features.length ? (
-              <Mapbox.ShapeSource id="assigned-route-stops" shape={mapStopFeatures}>
-                <Mapbox.LineLayer
-                  id="assigned-route-stop-flag-poles"
-                  style={{
-                    lineCap: 'round',
-                    lineColor: ['match', ['get', 'status'], 'near', '#13b981', 'collected', '#13b981', 'review', '#8d53ce', '#7f8b84'],
-                    lineWidth: 4,
-                  }}
-                />
-                <Mapbox.FillLayer
-                  id="assigned-route-stop-flag-banners"
-                  style={{
-                    fillColor: ['match', ['get', 'status'], 'near', '#13b981', 'collected', '#13b981', 'review', '#8d53ce', '#7f8b84'],
-                    fillOpacity: 1,
-                    fillOutlineColor: '#ffffff',
-                  }}
-                />
-              </Mapbox.ShapeSource>
-            ) : null}
+            {mapRouteLine ? <DriverRouteLayers shape={mapRouteLine} /> : null}
+            {mapStopFeatures.features.length ? <DriverStopLayers shape={mapStopFeatures} onExpandCluster={expandStopCluster} /> : null}
             {driverLocation ? (
               <Mapbox.PointAnnotation
                 coordinate={[driverLocation.longitude, driverLocation.latitude]}
@@ -1674,7 +1614,7 @@ export default function CollectorScreen() {
                 accessibilityRole="button"
                 accessibilityState={{ disabled: isUpdatingGeofence || (!routePresence.enabled && !monitoringEligible), busy: isUpdatingGeofence }}
                 disabled={isUpdatingGeofence || (!routePresence.enabled && !monitoringEligible)}
-                onPress={() => void (routePresence.enabled ? disableBackgroundGeofencing() : enableBackgroundGeofencing())}
+                onPress={() => void (routePresence.enabled ? endTrip() : enableBackgroundGeofencing())}
                 style={[styles.tripButton, routePresence.enabled && styles.tripEndButton, (isUpdatingGeofence || (!routePresence.enabled && !monitoringEligible)) && {opacity:0.5}]}
               >
                 <Text style={[styles.tripButtonText, routePresence.enabled && {color:'#086B42'}]}>{isUpdatingGeofence ? 'Please wait...' : routePresence.enabled ? 'End trip' : 'Start trip'}</Text>
@@ -1780,13 +1720,6 @@ export default function CollectorScreen() {
   const historyScreen = (
     <View style={styles.historyScreen}>
       <ScrollView contentContainerStyle={styles.historyScrollContent} showsVerticalScrollIndicator={false}>
-        <SkeletonRegion state={routeSkeleton} placeholder={<SkeletonBlock height={150} radius={24} />}>
-        <View style={styles.progressCard}>
-          <CollectorGradient />
-          <View style={styles.progressCopy}><Text style={styles.progressLabel}>COLLECTION PROGRESS</Text><Text style={styles.progressNumber}>{completed} <Text style={styles.progressTotal}>/ {totalStops} stops</Text></Text><Text style={styles.progressCaption}>{pending ? `${pending} stops remaining` : totalStops ? 'Route completed' : (assignedRoute ? (assignedRoute.isScheduledToday ? 'Starting soon' : 'Not scheduled today') : 'No route scheduled')}</Text></View>
-          <ProgressRing percent={progressPercent} />
-        </View>
-        </SkeletonRegion>
         {(assignedRoute || routeSkeleton.pending) && (
           <View style={styles.todayStopsSection}>
             <View style={styles.todayStopsHeading}>
@@ -1831,16 +1764,6 @@ export default function CollectorScreen() {
           </Pressable>
         )}
 
-        {assignedRoute && <View style={styles.routePresenceHistoryCard}>
-          <View style={styles.routePresenceHistoryHeading}>
-            <View style={styles.flexText}><Text style={styles.dateLabel}>ROUTE PRESENCE</Text><Text style={styles.routePresenceHistoryTitle}>Road-route entries and exits</Text></View>
-            <View style={[styles.routePresencePill, routePresence.state === 'on_route' ? styles.routePresencePillOn : routePresence.state === 'off_route' ? styles.routePresencePillOff : styles.routePresencePillUnknown]}><Text style={[styles.routePresencePillText, routePresence.state === 'on_route' ? styles.routePresencePillTextOn : routePresence.state === 'off_route' ? styles.routePresencePillTextOff : styles.routePresencePillTextUnknown]}>{!routePresence.enabled ? 'Off' : weakRouteSignal ? 'GPS weak' : awaitingEntry ? 'Waiting' : routePresence.state === 'on_route' ? 'On route' : routePresence.state === 'off_route' ? 'Off route' : 'Waiting'}</Text></View>
-          </View>
-          {routePresenceEvents.length ? routePresenceEvents.map((event) => <View key={event.id} style={styles.routePresenceEvent}>
-            <View style={[styles.routePresenceEventDot, event.eventType === 'entered' ? styles.routePresenceEventEntered : styles.routePresenceEventLeft]} />
-            <View style={styles.routePresenceEventTextWrap}><Text style={styles.routePresenceEventTitle}>{event.eventType === 'entered' ? 'Entered assigned route' : 'Left assigned route'}</Text><Text style={styles.routePresenceEventCaption}>{formatTime(event.occurredAt)} - {Math.round(event.distanceMeters)} m from route{event.accuracyMeters ? ` - GPS ±${Math.round(event.accuracyMeters)} m` : ''}</Text></View>
-          </View>) : <Text style={styles.routePresenceEmpty}>Enable route monitoring to record timestamped route-entry and route-exit events, even while offline.</Text>}
-        </View>}
         {assignedRoute && <View style={styles.offlineMapCard}>
           <View style={styles.offlineMapRow}>
             <View style={styles.detailIconBadge}><Feather name="download" size={20} color="#0A7F4F" /></View>
@@ -1864,7 +1787,7 @@ export default function CollectorScreen() {
               <View style={styles.historyCard}>
                 <View style={styles.historyCardMap}>
                   {MAPBOX_ACCESS_TOKEN ? (
-                    <Mapbox.MapView key={group.id} scaleBarEnabled={false} styleURL={Mapbox.StyleURL.Light} style={styles.historyMapPreview} logoEnabled attributionEnabled logoPosition={{ bottom: 4, left: 4 }} attributionPosition={{ top: 4, right: 4 }} scrollEnabled={false} pitchEnabled={false} rotateEnabled={false} zoomEnabled={false}>
+                    <Mapbox.MapView key={group.id} scaleBarEnabled={false} styleURL={Mapbox.StyleURL.Street} style={styles.historyMapPreview} logoEnabled attributionEnabled logoPosition={{ bottom: 4, left: 4 }} attributionPosition={{ top: 4, right: 4 }} scrollEnabled={false} pitchEnabled={false} rotateEnabled={false} zoomEnabled={false}>
                       <HistoryMapCamera group={group} center={historyGroupLastLocation(group)} zoom={15} />
                       {group.routePath ? (
                         <Mapbox.ShapeSource id={`h-rp-${group.id}`} shape={routeLineFeature(group.routePath) ?? undefined}>
@@ -1946,7 +1869,7 @@ export default function CollectorScreen() {
             <View style={styles.flexText}>
               <Text style={styles.collectorName}>{collectorName}</Text>
               <Text style={styles.collectorRole}>Driver · {barangay}</Text>
-              <View style={styles.profilePills}><View style={styles.collectorPill}><Text style={styles.collectorPillText}>Collector</Text></View><View style={styles.onShiftPill}><Text style={styles.onShiftText}>{displayShift(profile?.shift)}</Text></View></View>
+              <View style={styles.profilePills}><View style={styles.collectorPill}><Text style={styles.collectorPillText}>Driver</Text></View><View style={styles.onShiftPill}><Text style={styles.onShiftText}>{displayShift(profile?.shift)}</Text></View></View>
             </View>
           </View>
           <View style={styles.statsRow}>
@@ -1985,7 +1908,7 @@ export default function CollectorScreen() {
   );
 
   const renderHistoryTrailMap = () => (MAPBOX_ACCESS_TOKEN && selectedHistoryGroup ? (
-                      <Mapbox.MapView scaleBarEnabled={false} styleURL={Mapbox.StyleURL.Light} style={styles.segmentTrailMap} logoEnabled attributionEnabled scrollEnabled={isHistoryMapExpanded} pitchEnabled={false} rotateEnabled={false} zoomEnabled={isHistoryMapExpanded}>
+                      <Mapbox.MapView scaleBarEnabled={false} styleURL={Mapbox.StyleURL.Street} style={styles.segmentTrailMap} logoEnabled attributionEnabled scrollEnabled={isHistoryMapExpanded} pitchEnabled={false} rotateEnabled={false} zoomEnabled={isHistoryMapExpanded}>
                         <HistoryMapCamera group={selectedHistoryGroup} center={historyGroupLastLocation(selectedHistoryGroup)} zoom={16} />
                         {selectedHistoryGroup.routePath ? (
                           <Mapbox.ShapeSource id={`d-rp-${selectedHistoryGroup.id}`} shape={routeLineFeature(selectedHistoryGroup.routePath) ?? undefined}>
@@ -2029,7 +1952,7 @@ export default function CollectorScreen() {
   return (
     <SafeAreaView edges={['left', 'right']} style={styles.safeArea}>
       <StatusBar backgroundColor="#ffffff" style="dark" translucent={false} />
-      <View style={[styles.header, { paddingTop: insets.top }]}><View style={styles.brandHeader}><BrandMark height={48} width={150} /><View style={styles.headerCopy}><Text numberOfLines={1} adjustsFontSizeToFit style={styles.headerTitle}>{collectorName || 'Driver'}</Text><Text numberOfLines={1} adjustsFontSizeToFit style={styles.headerSubtitle}>Collector · Route Driver</Text></View></View></View>
+      <View style={[styles.header, { paddingTop: insets.top }]}><View style={styles.brandHeader}><BrandMark height={48} width={150} /><View style={styles.headerCopy}><Text numberOfLines={1} adjustsFontSizeToFit style={styles.headerTitle}>{collectorName || 'Driver'}</Text><Text numberOfLines={1} adjustsFontSizeToFit style={styles.headerSubtitle}>Route Driver</Text></View></View></View>
       <View style={styles.content}><TabTransition activeKey={activeTab}>{activeTab === 'map' ? mapScreen : activeTab === 'history' ? historyScreen : profileScreen}</TabTransition></View>
       <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
       <Modal animationType="slide" onRequestClose={() => isHistoryMapExpanded ? setIsHistoryMapExpanded(false) : setIsHistoryDetailVisible(false)} presentationStyle="fullScreen" visible={isHistoryDetailVisible}>
@@ -2039,7 +1962,7 @@ export default function CollectorScreen() {
               <Pressable accessibilityRole="button" accessibilityLabel="Back to route history report" onPress={() => setIsHistoryMapExpanded(false)} style={styles.offlineMapButton}><Feather name="arrow-left" size={20} color="#0A7F4F" /><Text>Back to report</Text></Pressable>
               <Text style={styles.historySectionLabel}>{selectedHistoryGroup?.routeName || 'Recorded trip'}</Text>
               <View style={{ flex: 1, borderRadius: 20, overflow: 'hidden' }}>{renderHistoryTrailMap()}</View>
-              <Text style={styles.segmentTrailCaption}>Pinch to zoom and drag to explore. Red: recorded travel. Dashed: assigned route.</Text>
+              <Text style={styles.segmentTrailCaption}>{selectedHistoryGroup?.pendingSync ? 'Saved on this phone; waiting to sync. ' : ''}{selectedHistoryGroup?.trailPath ? 'Red: recorded travel. ' : 'No GPS line was recorded for this trip. '}{selectedHistoryGroup?.routePath ? 'Dashed: assigned route. ' : 'No assigned route line is available. '}Pinch to zoom and drag to explore.</Text>
             </View> : null}
             <ScrollView style={isHistoryMapExpanded ? { display: 'none' } : undefined} scrollEnabled={!isHistoryMapExpanded} contentContainerStyle={[styles.historyDetailScroll, isHistoryMapExpanded && { flexGrow: 1 }]} showsVerticalScrollIndicator={false}>
             <View style={styles.historyDetailHeader}>
@@ -2058,7 +1981,7 @@ export default function CollectorScreen() {
                   <View style={[styles.segmentTrailMapWrap, isHistoryMapExpanded && { flex: 1 }]}>
                     {!isHistoryMapExpanded ? renderHistoryTrailMap() : null}
                   </View>
-                  {!selectedHistoryGroup?.trailPath ? <Text style={styles.segmentTrailCaption}>No recorded GPS trail is available for this trip yet. The dashed line is the assigned route, not the truck?s travel. Check connectivity and refresh after syncing.</Text> : null}
+                  {!selectedHistoryGroup?.trailPath ? <Text style={styles.segmentTrailCaption}>No recorded GPS trail is available for this trip yet. The dashed line is the assigned route, not the recorded travel. GPS recording needs at least two valid location readings.</Text> : null}
                   <View style={styles.segmentTrailLegend}>
                     <Text style={styles.historySectionLabel}>LEGEND</Text>
                     <View style={styles.legendRow}>
@@ -2102,7 +2025,7 @@ export default function CollectorScreen() {
                       <Text style={styles.detailValue}>{selectedHistoryGroup?.routeName || '—'}</Text>
                     </View>
                     <View style={styles.detailRow}>
-                      <Text style={styles.detailLabel}>Collector Name</Text>
+                      <Text style={styles.detailLabel}>Driver Name</Text>
                       <View>
                         <Text style={styles.detailValue}>{collectorName}</Text>
                         <Text style={styles.detailSubvalue}>{profile?.employeeId ? `${profile.employeeId} · SWMO Naga City` : 'SWMO Naga City'}</Text>
@@ -2163,7 +2086,7 @@ export default function CollectorScreen() {
                     </View>
                     <View style={styles.detailRow}>
                       <Text style={styles.detailLabel}>GENERATED BY</Text>
-                      <Text style={styles.detailValue}>Collector — {collectorName}</Text>
+                      <Text style={styles.detailValue}>Driver — {collectorName}</Text>
                     </View>
                     <View style={styles.detailRow}>
                       <Text style={styles.detailLabel}>EXPORTED</Text>
@@ -2262,8 +2185,8 @@ const styles = StyleSheet.create({
   placeholderValue: { color: '#5A6761', fontWeight: '500' },
   syncCopy: { flexGrow: 1, flexShrink: 1, flexBasis: 130, minWidth: 0 },
   syncCount: { color: '#5A6761', fontSize: 13, marginTop: 4 },
-  progressCopy: { flexGrow: 1, flexShrink: 1, flexBasis: 150, minWidth: 0 },
   timelineRail: { width: 22, alignItems: 'center' },
+  timelineLineCollected: { backgroundColor: '#0A7F4F' },
   timelineLine: { position: 'absolute', width: 2, top: 22, bottom: 0, backgroundColor: '#DCE4DF' },
   reviewText: { color: '#5C3B00', fontSize: 13, fontWeight: '600' },
   sectionHeading: { color: '#121A16', fontSize: 20, fontWeight: '700', marginBottom: 12 },
@@ -2395,34 +2318,8 @@ const styles = StyleSheet.create({
   areaName: { color: '#ffffff', fontSize: 19, fontWeight: '800' },
   streetSubtitle: { color: '#a3c9b3', fontSize: 9, marginTop: 3, maxWidth: 215 },
   historyScrollContent: { padding: 20, paddingBottom: 24 },
-  progressCard: { alignItems: 'center', backgroundColor: '#0D2E27', borderRadius: 24, overflow: 'hidden', flexDirection: 'row', flexWrap: 'wrap', gap: 16, justifyContent: 'space-between', padding: 20 },
-  progressLabel: { color: '#E3F4EB', fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  progressNumber: { color: '#ffffff', fontSize: 44, fontWeight: '700', marginTop: 8 },
-  progressTotal: { color: '#E3F4EB', fontSize: 18, fontWeight: '600' },
-  progressCaption: { color: '#E3F4EB', fontSize: 13, marginTop: 6 },
-  progressRing: { alignItems: 'center', height: 84, justifyContent: 'center', width: 84, flexShrink: 0 },
-  progressPercent: { color: '#ffffff', fontSize: 16, fontWeight: '700', position: 'absolute' },
-  routePresenceHistoryCard: { backgroundColor: '#F4F6F5', borderRadius: 20, borderWidth: 0, marginTop: 24, padding: 16, gap: 0 },
-  routePresenceHistoryHeading: { alignItems: 'flex-start', flexDirection: 'row', gap: 8 },
-  routePresenceHistoryTitle: { color: '#121A16', fontSize: 16, fontWeight: '700' },
-  routePresencePill: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5, maxWidth: '40%' },
-  routePresencePillOn: { backgroundColor: '#e8fbf1' },
-  routePresencePillOff: { backgroundColor: '#fff3df' },
-  routePresencePillUnknown: { backgroundColor: '#f0f3f1' },
-  routePresencePillText: { fontSize: 12, fontWeight: '600' },
-  routePresencePillTextOn: { color: '#086B42' },
-  routePresencePillTextOff: { color: '#5C3B00' },
-  routePresencePillTextUnknown: { color: '#5A6761' },
-  routePresenceEvent: { alignItems: 'flex-start', borderTopColor: '#eef3f0', borderTopWidth: 1, flexDirection: 'row', gap: 8, marginTop: 10, paddingTop: 10 },
-  routePresenceEventDot: { borderRadius: 4, height: 8, marginTop: 3, width: 8 },
-  routePresenceEventEntered: { backgroundColor: '#13b981' },
-  routePresenceEventLeft: { backgroundColor: '#e5a42f' },
-  routePresenceEventTextWrap: { flex: 1 },
-  routePresenceEventTitle: { color: '#121A16', fontSize: 14, fontWeight: '600' },
-  routePresenceEventCaption: { color: '#5A6761', fontSize: 12, marginTop: 3 },
-  routePresenceEmpty: { color: '#5A6761', fontSize: 14, marginTop: 12 },
   historyGroup: { marginTop: 24 },
-  todayStopsSection: { marginTop: 24 },
+  todayStopsSection: { marginTop: 0 },
   todayStopsHeading: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'space-between', marginBottom: 16 },
   todayStopsTitle: { color: '#121A16', fontSize: 20, fontWeight: '700' },
   todayStopsCount: { color: '#0A7F4F', fontSize: 16, fontWeight: '700' },

@@ -1,3 +1,4 @@
+import { requestJson } from './network-request';
 import NetInfo from '@react-native-community/netinfo';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as SQLite from 'expo-sqlite';
@@ -365,12 +366,11 @@ const syncQueue = async ({ apiUrl, token, staffId }: StaffQueueSyncContext): Pro
       formData.append('sidePhotoMetadata', photoMetadata(payload.sidePhoto));
       formData.append('backPhotoMetadata', photoMetadata(payload.backPhoto));
 
-      const response = await fetch(`${apiUrl.replace(/\/$/, '')}/staff/truckloads`, {
+      const { response, payload: result } = await requestJson(`${apiUrl.replace(/\/$/, '')}/staff/truckloads`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: formData,
-      });
-      const result = await response.json().catch(() => ({} as { error?: string }));
+      }, 45000);
 
       if (!response.ok || !(result as { success?: boolean }).success) {
         // If idempotent already exists on backend
@@ -406,8 +406,8 @@ export function subscribeToStaffTruckloadSync(
 ) {
   const sync = async () => onSync?.(await syncStaffTruckloadQueue(context));
   const unsubscribe = NetInfo.addEventListener((state) => {
-    if (state.isConnected && state.isInternetReachable !== false) void sync();
+    if (state.isConnected && state.isInternetReachable !== false) void sync().catch(() => {});
   });
-  void sync();
+  void sync().catch(() => {});
   return unsubscribe;
 }

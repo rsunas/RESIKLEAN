@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const wasteCategories = require('../utils/wasteCategories');
 const MissedReport = require('../models/MissedReport');
 const Route        = require('../models/Route');
 const CollectionLocation = require('../models/CollectionLocation');
@@ -195,10 +196,14 @@ const getSchedule = async (req, res) => {
 // Accepts optional photoMetadata from the mobile client (GPS, dimensions, etc.)
 const submitReport = async (req, res) => {
   try {
-    let { description, capturedAt, latitude, longitude, accuracy, width, height, photoMetadata: rawMetadata } = req.body;
+    let { description, wasteCategory, capturedAt, latitude, longitude, accuracy, width, height, photoMetadata: rawMetadata } = req.body;
     const { _id: residentId, barangay } = req.user;
 
     if (!barangay) return sendError(res, 'Your profile has no barangay set', 400);
+    // Omission stays compatible with older installed apps; supplied values must be valid.
+    if (wasteCategory !== undefined && !wasteCategories.includes(wasteCategory)) {
+      return sendError(res, 'Choose a valid waste category: biodegradable, non-biodegradable, recyclable, or hazardous.', 400);
+    }
 
     // If mobile sends metadata as a stringified JSON object
     if (rawMetadata) {
@@ -269,6 +274,7 @@ const submitReport = async (req, res) => {
       residentId,
       barangay,
       description: description || '',
+      wasteCategory,
       photoUrl,
       photoMetadata,
       aiVerified,

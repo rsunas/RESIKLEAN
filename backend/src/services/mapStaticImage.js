@@ -45,25 +45,28 @@ function pointFeature(coord, color, size, label) {
   };
 }
 
-async function getMapboxStaticImage({ coveredCoords, expectedCoords, entryCoord, exitCoord, bounds, width = 600, height = 360 }) {
+async function getMapboxStaticImage({ coveredCoords, expectedCoords, coveredSegments, expectedSegments, entryCoord, exitCoord, stopCoordinates = [], bounds, width = 600, height = 360 }) {
   if (!MAPBOX_TOKEN) throw new Error('MAPBOX_TOKEN_MISSING');
   const overlays = [];
-  if (Array.isArray(coveredCoords) && coveredCoords.length >= 2) {
-    const simplified = simplifyCoordinates(coveredCoords, 8);
-    overlays.push(lineToGeoJSONFeature(simplified, '#d42f54', 4));
-  }
-  if (Array.isArray(expectedCoords) && expectedCoords.length >= 2) {
-    const simplified = simplifyCoordinates(expectedCoords, 8);
-    overlays.push(lineToGeoJSONFeature(simplified, '#d42f54', 3, '4,4'));
-  }
+  (expectedSegments || [expectedCoords]).forEach(line => {
+    if (Array.isArray(line) && line.length >= 2) overlays.push(lineToGeoJSONFeature(simplifyCoordinates(line, 8), '#9ca9a2', 3, '4,4'));
+  });
+  (coveredSegments || [coveredCoords]).forEach(line => {
+    if (Array.isArray(line) && line.length >= 2) overlays.push(lineToGeoJSONFeature(simplifyCoordinates(line, 8), '#d42f54', 4));
+    else if (line?.length === 1) { const feature = pointFeature(line[0], '#d42f54', 'medium'); if (feature) overlays.push(feature); }
+  });
   if (entryCoord && entryCoord.length === 2) {
-    const feature = pointFeature(entryCoord, '#d42f54', 'large', 'Entry');
+    const feature = pointFeature(entryCoord, '#d42f54', 'large', 'Start');
     if (feature) overlays.push(feature);
   }
   if (exitCoord && exitCoord.length === 2) {
-    const feature = pointFeature(exitCoord, '#707070', 'large', 'Exit');
+    const feature = pointFeature(exitCoord, '#707070', 'large', 'Last GPS');
     if (feature) overlays.push(feature);
   }
+  stopCoordinates.forEach(coord => {
+    const feature = pointFeature(coord, '#07815f', 'medium');
+    if (feature) overlays.push(feature);
+  });
   const overlay = encodeURIComponent(JSON.stringify({ type: 'FeatureCollection', features: overlays }));
   let location = bounds && bounds.length === 4
     ? `[${bounds[0]},${bounds[1]},${bounds[2]},${bounds[3]}]`
@@ -99,14 +102,17 @@ function computeBounds(coordsList) {
 }
 
 async function getSegmentTrailImage(input = {}) {
-  const { coveredCoordinates, expectedCoordinates, entryCoord, exitCoord, width, height } = input;
-  const bounds = computeBounds([coveredCoordinates, expectedCoordinates]);
+  const { coveredCoordinates, expectedCoordinates, coveredSegments, expectedSegments, entryCoord, exitCoord, stopCoordinates = [], width, height } = input;
+  const bounds = computeBounds([coveredCoordinates, expectedCoordinates, stopCoordinates]);
   try {
     return await getMapboxStaticImage({
       coveredCoords: coveredCoordinates,
+      coveredSegments,
+      expectedSegments,
       expectedCoords: expectedCoordinates,
       entryCoord,
       exitCoord,
+      stopCoordinates,
       bounds,
       width,
       height,

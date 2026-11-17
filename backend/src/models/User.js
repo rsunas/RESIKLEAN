@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const bcrypt   = require('bcryptjs');
+const { isValidBirthday } = require('../utils/birthday');
 
 const ROLES = ['resident', 'collector', 'staff', 'admin'];
 
@@ -21,6 +22,8 @@ const userSchema = new mongoose.Schema(
     contact:    { type: String, trim: true },
     shift:      { type: String, enum: ['day', 'night'], default: 'day' },
     profilePhotoUrl: { type: String },
+    birthday: { type: String, select: false, validate: { validator: isValidBirthday, message: 'Enter a valid birthday, not a future date.' } },
+    identityPhoto: { type: new mongoose.Schema({ publicId: String, format: String }, { _id: false }), select: false },
     // Notifications
     pushTokens: [{
       token: { type: String, required: true },

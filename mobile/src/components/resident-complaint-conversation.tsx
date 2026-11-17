@@ -1,3 +1,4 @@
+import { wasteCategoryLabel } from '@/lib/waste-categories';
 import { ResidentAvatar } from './resident-avatar';
 import { useEffect, useRef, useState } from 'react';
 import { Keyboard, KeyboardAvoidingView, LayoutAnimation, Platform, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -7,7 +8,7 @@ import { MotionModal, MotionPressable as Pressable } from '@/components/app-moti
 import { SkeletonBlock, SkeletonRows } from '@/components/loading-skeleton';
 import { useAppReducedMotion } from '@/hooks/use-app-reduced-motion';
 
-type Report = { _id: string; status: string; createdAt: string; barangay: string; photoUrl?: string | null; aiVerified?: boolean; aiConfidence?: number };
+type Report = { wasteCategory?: string; _id: string; status: string; createdAt: string; barangay: string; photoUrl?: string | null; aiVerified?: boolean; aiConfidence?: number };
 type Message = { _id: string; body: string; createdAt: string; senderRole: string; senderId?: string | {name?: string} };
 type Props = { residentName?: string; residentPhoto?: string; report: Report; subject: string; body: string; bags: string; metadata: string; messages: Message[]; loading: boolean; sending: boolean; error: string; draft: string; setDraft: (value: string) => void; send: () => Promise<void>; onClose: () => void; bottomInset: number };
 export const reportStep = (status: string) => status === 'resolved' ? 2 : status === 'verified' || status === 'scheduled' ? 1 : 0;
@@ -69,6 +70,7 @@ export function ResidentComplaintConversation({residentName = 'Resident',residen
         <View style={s.detailDivider}/>
         <View style={s.detailCell}><MaterialCommunityIcons name="sack-outline" color="#0A7F4F" size={18}/><View style={s.detailCopy}><Text style={s.detailLabel}>Detected bag count</Text><Text numberOfLines={1} style={s.detailValue}>{bags}</Text></View></View>
       </View>
+      <View style={s.details}><Feather name="tag" color="#0A7F4F" size={18}/><View style={s.detailCopy}><Text style={s.detailLabel}>Waste category</Text><Text style={s.detailValue}>{wasteCategoryLabel(report.wasteCategory)}</Text></View></View>
       <Text style={s.date}>{date(report.createdAt)}</Text>
       <View style={[s.bubble,s.own,{width:'100%'}]}>
         <View style={{flexDirection:'row',alignItems:'center',gap:8,marginBottom:8}}><ResidentAvatar name={residentName} uri={residentPhoto} size={32}/><Text style={s.sender}>You</Text></View><Text style={s.messageSubject}>{subject}</Text>{body && body !== subject ? <Text style={s.messageBody}>{body}</Text> : null}

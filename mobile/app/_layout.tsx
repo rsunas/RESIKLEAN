@@ -17,6 +17,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useEffect, useRef } from 'react';
 import { AppMotionProvider, useAppReducedMotion } from '@/hooks/use-app-reduced-motion';
 import '@/lib/notifications';
+import { startNetworkRecovery } from '@/lib/network-recovery';
 import '@/lib/driver-geofencing';
 import '@/lib/driver-route-proximity';
 
@@ -76,6 +77,7 @@ function AppStack() {
 }
 
 export default function RootLayout() {
+  useEffect(startNetworkRecovery, []);
   const [fontsLoaded] = useFonts({
     'Roboto-Regular': Roboto_400Regular,
     'Roboto-Medium': Roboto_500Medium,

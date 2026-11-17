@@ -4,7 +4,6 @@ const User = require('../models/User');
 const Route = require('../models/Route');
 const RouteLog = require('../models/RouteLog');
 const RouteTrailSession = require('../models/RouteTrailSession');
-const RouteTrailPoint = require('../models/RouteTrailPoint');
 const MissedReport = require('../models/MissedReport');
 const TruckLoad = require('../models/TruckLoad');
 const Truck = require('../models/Truck');
@@ -12,10 +11,12 @@ const { validateTruckDimensions } = require('../utils/truckDimensions');
 const DailyCycleLog = require('../models/DailyCycleLog');
 const CapacityLog = require('../models/CapacityLog');
 const socketService = require('../services/socket.service');
-const { uploadPhoto } = require('../services/cloudinary.service');
+const { uploadPhoto, deletePhoto, getIdentityPhotoUrl } = require('../services/cloudinary.service');
+const { isValidBirthday } = require('../utils/birthday');
 const { sendSuccess, sendError } = require('../utils/response');
 const { buildRouteHistoryPayload, generateRouteHistoryPDF } = require('../services/pdf/routeHistoryReport');
 const { calculateProjection, STATUS_OK, STATUS_WARNING, STATUS_CRITICAL } = require('../utils/capacityProjection');
+const { getRouteHistoryTrail } = require('../services/routeHistoryTrail');
 const { getTonnageTrendData } = require('../services/tonnageService');
 const { generateTonnageTrendPDF } = require('../services/pdf/tonnageTrendReport');
 const { validateRoutePath, validateStops, getStopProximityWarnings } = require('../utils/routeValidation');
@@ -28,7 +29,7 @@ const getAllUsers = async (req, res) => {
     const filter = role ? { role } : {};
 
     const users = await User.find(filter)
-      .select('name email role employeeId contact phone shift profilePhotoUrl assignedRouteId createdAt')
+      .select('name email role contact phone shift profilePhotoUrl assignedRouteId createdAt')
       .sort({ createdAt: -1 })
       .lean();
 
@@ -39,45 +40,65 @@ const getAllUsers = async (req, res) => {
 };
 
 // ── POST /api/admin/users ─────────────────────────────────────────────────────
-// Creates a new collector or staff user.
-// Body: { name, email, password, role, employeeId?, contact?, shift? }
+// Account creation remains restricted to authenticated administrators by the router.
 const createUser = async (req, res) => {
+  const uploaded = [];
   try {
-    const { name, email, password, role, employeeId, contact, shift } = req.body;
-
-    if (!name || !email || !password || !role) {
+    const { name, email, password, role, employeeId, contact, shift, birthday } = req.body;
+    if (!name?.trim() || !email?.trim() || !password || !role) {
       return sendError(res, 'name, email, password, and role are required', 400);
     }
-
-    if (!['collector', 'staff'].includes(role)) {
-      return sendError(res, 'Admin can only create collector or staff accounts', 400);
+    if (!['collector', 'staff', 'admin'].includes(role)) {
+      return sendError(res, 'Choose Collector, Staff, or Admin', 400);
     }
-
-    const existingUser = await User.findOne({ email });
-    if (existingUser) return sendError(res, 'Email is already taken', 400);
-
-    let profilePhotoUrl;
-    if (req.file) {
-      const uploadedPhoto = await uploadPhoto(req.file.buffer, 'resiklean/profiles');
-      profilePhotoUrl = uploadedPhoto.url;
+    if (typeof password !== 'string' || password.length < 6) return sendError(res, 'Password must be at least 6 characters', 400);
+    if (!isValidBirthday(birthday)) return sendError(res, 'Enter a valid birthday between 1900 and today.', 400);
+    const normalizedEmail = email.trim().toLowerCase();
+    if (await User.findOne({ email: normalizedEmail })) return sendError(res, 'Email is already taken', 400);
+    let profilePhotoUrl, identityPhoto;
+    const avatar = req.files?.avatar?.[0] || req.file;
+    const idPhoto = req.files?.idPhoto?.[0];
+    if (avatar) {
+      const photo = await uploadPhoto(avatar.buffer, 'resiklean/profiles');
+      uploaded.push({ publicId: photo.publicId, type: 'upload' });
+      profilePhotoUrl = photo.url;
     }
-
+    if (idPhoto) {
+      const photo = await uploadPhoto(idPhoto.buffer, 'resiklean/identity', { type: 'authenticated' });
+      uploaded.push({ publicId: photo.publicId, type: 'authenticated' });
+      identityPhoto = { publicId: photo.publicId, format: photo.format };
+    }
     const user = await User.create({
-      name, email, password, role,
-      employeeId: employeeId || undefined,
-      contact: contact || undefined,
-      shift: shift || undefined,
-      profilePhotoUrl,
+      name: name.trim(), email: normalizedEmail, password, role,
+      employeeId: employeeId || undefined, contact: contact || undefined,
+      shift: shift || undefined, birthday: birthday || undefined, profilePhotoUrl, identityPhoto,
     });
-
-    // Convert to object and remove password for response
     const userResponse = user.toObject();
     delete userResponse.password;
-
+    delete userResponse.employeeId;
+    delete userResponse.identityPhoto;
+    delete userResponse.birthday;
     sendSuccess(res, userResponse, 201);
   } catch (err) {
-    sendError(res, err.message, 500);
+    await Promise.allSettled(uploaded.map(photo => deletePhoto(photo.publicId, { type: photo.type })));
+    sendError(res, err.code === 11000 ? 'Email is already taken' : err.message, err.code === 11000 || err.name === 'ValidationError' ? 400 : 500);
   }
+};
+
+const getUserIdentity = async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    if (!mongoose.isValidObjectId(req.params.userId)) return sendError(res, 'Invalid account ID', 400);
+    const user = await User.findById(req.params.userId).select('name +birthday +identityPhoto').lean();
+    if (!user) return sendError(res, 'Account not found', 404);
+    const hasIdPhoto = Boolean(user.identityPhoto?.publicId);
+    if (req.query.reveal === 'true') {
+      return sendSuccess(res, { idPhotoUrl: hasIdPhoto ? getIdentityPhotoUrl(user.identityPhoto) : null });
+    }
+    const cycle = await DailyCycleLog.findOne({ driverId: user._id, shiftStatus: 'active' })
+      .sort({ shiftStart: -1 }).populate('truckId', 'truckNumber plateNumber').lean();
+    sendSuccess(res, { birthday: user.birthday || null, hasIdPhoto, assignedTruck: cycle?.truckId || null });
+  } catch (err) { sendError(res, err.message, 500); }
 };
 
 // ── GET /api/admin/routes ─────────────────────────────────────────────────────
@@ -627,7 +648,7 @@ const createCycleLog = async (req, res) => {
       truckId,
       shiftStatus: 'active',
       driverId: { $ne: driverId },
-    }).populate('driverId', 'name employeeId').lean();
+    }).populate('driverId', 'name').lean();
     if (truckInUse) {
       return sendError(res, `This truck is already assigned to ${truckInUse.driverId?.name || 'another driver'}.`, 409);
     }
@@ -637,7 +658,7 @@ const createCycleLog = async (req, res) => {
     const previousCycle = await DailyCycleLog.findOne({ driverId, shiftStatus: 'active' }).sort({ shiftStart: -1 });
     if (previousCycle && String(previousCycle.truckId) === String(truckId)) {
       const existing = await DailyCycleLog.findById(previousCycle._id)
-        .populate('driverId', 'name employeeId')
+        .populate('driverId', 'name')
         .populate('truckId', 'plateNumber truckNumber color')
         .lean();
       return sendSuccess(res, existing);
@@ -656,7 +677,7 @@ const createCycleLog = async (req, res) => {
 
     // Populate driver and truck info before responding
     const populated = await DailyCycleLog.findById(cycle._id)
-      .populate('driverId', 'name employeeId')
+      .populate('driverId', 'name')
       .populate('truckId', 'plateNumber truckNumber color')
       .lean();
 
@@ -674,7 +695,7 @@ const getCycleLogs = async (req, res) => {
     const filter = status ? { shiftStatus: status } : {};
 
     const logs = await DailyCycleLog.find(filter)
-      .populate('driverId', 'name employeeId')
+      .populate('driverId', 'name')
       .populate('truckId', 'plateNumber')
       .sort({ createdAt: -1 })
       .lean();
@@ -741,7 +762,7 @@ const buildSegmentStatus = (logs, route) => {
 // ?status=(collected|flagged|partial|notcollected), ?page=, ?limit=
 const getAllRouteHistory = async (req, res) => {
   try {
-    const { collectorId, routeId, barangay, from, to, status, page = 1, limit = 25 } = req.query;
+    const { collectorId, routeId, barangay, from, to, status, q = '', page = 1, limit = 25 } = req.query;
     const fromDate = normalizeFilterDate(from);
     const toDate = normalizeFilterDate(to);
 
@@ -770,7 +791,7 @@ const getAllRouteHistory = async (req, res) => {
     }
 
     const logs = await RouteLog.find(logFilters)
-      .populate('collectorId', 'name employeeId email')
+      .populate('collectorId', 'name email')
       .sort({ eventDate: -1, collectedAt: -1 })
       .lean();
 
@@ -794,7 +815,6 @@ const getAllRouteHistory = async (req, res) => {
           id: key,
           collectorId: log.collectorId?._id || log.collectorId,
           collectorName: log.collectorId?.name || 'Unassigned',
-          collectorEmployeeId: log.collectorId?.employeeId || '',
           routeId: log.routeId,
           routeName: route?.name || 'Unknown route',
           barangay: route?.barangay || [],
@@ -820,7 +840,6 @@ const getAllRouteHistory = async (req, res) => {
           id: key,
           collectorId: session.collectorId,
           collectorName: 'Unassigned',
-          collectorEmployeeId: '',
           routeId: session.routeId,
           routeName: route.name || session.routeName || 'Unknown route',
           barangay: route.barangay || [],
@@ -843,15 +862,14 @@ const getAllRouteHistory = async (req, res) => {
       const avgDwell = sortedLogs.length ? +(sortedLogs.reduce((s, l) => s + (l.dwellSeconds || 0), 0) / sortedLogs.length).toFixed(1) : 0;
       const collected = sortedLogs.filter((l) => l.status === 'collected').length;
       const cycle = await findCycleForCollector(group.collectorId, group.eventDate);
-      let collector = group.collectorName === 'Unassigned' ? null : { name: group.collectorName, employeeId: group.collectorEmployeeId };
-      if (!collector) collector = await User.findById(group.collectorId).select('name employeeId').lean();
+      let collector = group.collectorName === 'Unassigned' ? null : { name: group.collectorName };
+      if (!collector) collector = await User.findById(group.collectorId).select('name').lean();
       const segmentStatus = buildSegmentStatus(sortedLogs, { stops: Array(group.totalStops).fill({}) });
       const rowStatus = flaggedCount > 0 ? 'flagged' : collected >= group.totalStops && group.totalStops > 0 ? 'collected' : collected > 0 ? 'partial' : 'notcollected';
       return {
         id: group.id,
         collectorId: group.collectorId,
         collector: collector?.name || group.collectorName,
-        collectorEmployeeId: collector?.employeeId || group.collectorEmployeeId,
         routeId: group.routeId,
         routeName: group.routeName,
         area: Array.isArray(group.barangay) ? group.barangay.filter(Boolean).join(', ') : group.barangay,
@@ -877,7 +895,8 @@ const getAllRouteHistory = async (req, res) => {
       };
     }));
 
-    const filtered = status ? rows.filter((r) => r.rowStatus === status) : rows;
+    const query = String(q).trim().toLowerCase();
+    const filtered = rows.filter(row => (!status || row.rowStatus === status) && (!query || [row.area, row.street, row.routeName, row.collector, row.truck?.plateNumber, row.truck?.truckNumber, row.truck?.color].some(value => String(value || '').toLowerCase().includes(query))));
     const pageNum = Math.max(1, Number(page) || 1);
     const pageLimit = Math.min(100, Math.max(1, Number(limit) || 25));
     const total = filtered.length;
@@ -915,25 +934,16 @@ const getRouteHistoryDetail = async (req, res) => {
     if (!key) return sendError(res, 'Invalid route history record identifier', 400);
     const { collectorId, routeId, eventDate } = key;
 
-    const [route, collector, logs, sessions] = await Promise.all([
+    const [route, collector, logs, trailData] = await Promise.all([
       Route.findById(routeId).lean(),
-      User.findById(collectorId).select('name employeeId email barangay location').lean(),
+      User.findById(collectorId).select('name email barangay location').lean(),
       RouteLog.find({ collectorId, routeId, eventDate }).sort({ collectedAt: 1 }).lean(),
-      RouteTrailSession.find({ collectorId, routeId }).sort({ startedAt: -1 }).limit(2).lean(),
+      getRouteHistoryTrail(collectorId, routeId, eventDate),
     ]);
 
     if (!route) return sendError(res, 'Route not found', 404);
 
-    const session = sessions.find((s) => {
-      const d = new Date(`${eventDate}T12:00:00.000+08:00`);
-      const sStart = new Date(s.startedAt);
-      const oneDay = 24 * 60 * 60 * 1000;
-      return Math.abs(sStart.getTime() - d.getTime()) < oneDay;
-    }) || sessions[0] || null;
-
-    const trailPoints = session
-      ? await RouteTrailPoint.find({ clientSessionId: session.clientSessionId, collectorId }).sort({ recordedAt: 1 }).lean()
-      : [];
+    const { sessions, session, trailPoints } = trailData;
 
     const cycle = await findCycleForCollector(collectorId, eventDate);
     const payload = buildRouteHistoryPayload({
@@ -941,6 +951,7 @@ const getRouteHistoryDetail = async (req, res) => {
       collector,
       cycle,
       session,
+      sessions,
       logs,
       trailPoints,
       eventDate,
@@ -949,10 +960,12 @@ const getRouteHistoryDetail = async (req, res) => {
     sendSuccess(res, {
       ...payload,
       id: req.params.id,
+      eventDate,
       route,
       collector,
       cycle,
       session,
+      sessions,
       logs,
       trailPoints,
     });
@@ -969,28 +982,19 @@ const exportRouteHistoryPDF = async (req, res) => {
     if (!key) return sendError(res, 'Invalid route history record identifier', 400);
     const { collectorId, routeId, eventDate } = key;
 
-    const [route, collector, logs, sessions] = await Promise.all([
+    const [route, collector, logs, trailData] = await Promise.all([
       Route.findById(routeId).lean(),
-      User.findById(collectorId).select('name employeeId email barangay location').lean(),
+      User.findById(collectorId).select('name email barangay location').lean(),
       RouteLog.find({ collectorId, routeId, eventDate }).sort({ collectedAt: 1 }).lean(),
-      RouteTrailSession.find({ collectorId, routeId }).sort({ startedAt: -1 }).limit(2).lean(),
+      getRouteHistoryTrail(collectorId, routeId, eventDate),
     ]);
 
     if (!route) return sendError(res, 'Route not found', 404);
 
-    const session = sessions.find((s) => {
-      const d = new Date(`${eventDate}T12:00:00.000+08:00`);
-      const sStart = new Date(s.startedAt);
-      const oneDay = 24 * 60 * 60 * 1000;
-      return Math.abs(sStart.getTime() - d.getTime()) < oneDay;
-    }) || sessions[0] || null;
-
-    const trailPoints = session
-      ? await RouteTrailPoint.find({ clientSessionId: session.clientSessionId, collectorId }).sort({ recordedAt: 1 }).lean()
-      : [];
+    const { sessions, session, trailPoints } = trailData;
 
     const cycle = await findCycleForCollector(collectorId, eventDate);
-    const payload = buildRouteHistoryPayload({ route, collector, cycle, session, logs, trailPoints, eventDate }, { adminUser: req.user });
+    const payload = buildRouteHistoryPayload({ route, collector, cycle, session, sessions, logs, trailPoints, eventDate }, { adminUser: req.user });
 
     const doc = new PDFDocument({ size: 'LETTER', margin: 46, bufferPages: true });
     const filename = `Route-History-Report-${payload.documentReference.referenceId}.pdf`;
@@ -1017,7 +1021,7 @@ const getActiveCyclesMonitoring = async (req, res) => {
   try {
     // Get all active cycles
     const activeCycles = await DailyCycleLog.find({ shiftStatus: 'active' })
-      .populate('driverId', 'name employeeId')
+      .populate('driverId', 'name')
       .populate('truckId', 'plateNumber truckNumber capacity')
       .lean();
 
@@ -1135,6 +1139,7 @@ const exportTonnageTrendPDF = async (req, res) => {
 module.exports = {
   getAllUsers,
   createUser,
+  getUserIdentity,
   getAllRoutes,
   createRoute,
   updateRoute,

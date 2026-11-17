@@ -326,7 +326,7 @@ const processPresence = async (location: Location.LocationObject, expected?: { c
   // Record the explicitly started trip independently of route entry.
   // GPS quality checks still reject stale, inaccurate, mocked and jumping fixes.
   if (result.accepted && config.collectorId) {
-    await startDriverTrailSession({ collectorId: config.collectorId, routeId: config.routeId, routeName: config.routeName });
+    await startDriverTrailSession({ collectorId: config.collectorId, routeId: config.routeId, routeName: config.routeName, routePath: config.routePath });
     await recordDriverTrailLocation(location, config.collectorId);
   }
   emitStatus({ ...(await getStoredStatus()), enabled: true, signal: result.signal, hasEntered: result.filter.hasEntered });
@@ -429,7 +429,7 @@ export async function getRouteProximityStatus(): Promise<RoutePresenceStatus> {
   const signal = !status.lastCheckedAt || Date.now() - Date.parse(status.lastCheckedAt) > ROUTE_MAX_FIX_AGE_MS ? 'stale' : detection.signal;
   // Status reads never restart tracking. Foreground auto-arm checks consent,
   // today's pause, permissions and the current assignment before doing that.
-  return { ...status, enabled, signal, hasEntered: detection.filter.hasEntered };
+  return { ...status, routeId: config?.routeId ?? status.routeId, routeName: config?.routeName ?? status.routeName, enabled, signal, hasEntered: detection.filter.hasEntered };
 }
 
 export async function getRouteProximityEvents(routeId: string, limit = 6): Promise<RoutePresenceEvent[]> {

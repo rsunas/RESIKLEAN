@@ -1,3 +1,6 @@
+import { DisabledControls, LoadingTableBody } from './Skeleton.jsx';
+import TablePagination from './TablePagination.jsx';
+import useTablePagination from './useTablePagination.js';
 import { Button, Card } from '@heroui/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import AppSelect from './AppSelect.jsx';
@@ -57,7 +60,7 @@ export default function RouteAssignmentPanel({ token }) {
         routesResponse.json(), usersResponse.json(), trucksResponse.json(), cyclesResponse.json(),
       ]);
       if (!routesResponse.ok || !routesResult.success) throw new Error(routesResult.error || 'Unable to load routes.');
-      if (!usersResponse.ok || !usersResult.success) throw new Error(usersResult.error || 'Unable to load collectors.');
+      if (!usersResponse.ok || !usersResult.success) throw new Error(usersResult.error || 'Unable to load drivers.');
       if (!trucksResponse.ok || !trucksResult.success) throw new Error(trucksResult.error || 'Unable to load registered trucks.');
       if (!cyclesResponse.ok || !cyclesResult.success) throw new Error(cyclesResult.error || 'Unable to load truck assignments.');
 
@@ -89,6 +92,8 @@ export default function RouteAssignmentPanel({ token }) {
     const matchesQuery = !query.trim() || [collector.name, collector.email].some((value) => String(value || '').toLowerCase().includes(query.trim().toLowerCase()));
     return matchesQuery && (assignmentFilter === 'all' || (assignmentFilter === 'assigned' ? assigned : !assigned));
   }), [assignmentFilter, collectors, cycles, query, routes]);
+
+  const pagination = useTablePagination(visibleCollectors, JSON.stringify([query, assignmentFilter]));
 
   const saveAssignments = async (collector) => {
     const nextRouteId = routeSelections[collector._id];
@@ -133,29 +138,30 @@ export default function RouteAssignmentPanel({ token }) {
   };
 
   return <Card className="route-assignment-card">
-    <div className="route-assignment-toolbar"><p>{isLoading ? 'Loading routes, drivers, and trucks...' : `${assignedCount} of ${collectors.length} drivers assigned`}</p><label className="truck-search-control"><span className="control-search-icon" aria-hidden="true">⌕</span><input aria-label="Search collectors" onChange={(event) => setQuery(event.target.value)} placeholder="Search collectors..." value={query} /></label><AppSelect aria-label="Filter assignments" onChange={setAssignmentFilter} options={[{ label: 'All assignments', value: 'all' }, { label: 'Assigned', value: 'assigned' }, { label: 'Unassigned', value: 'unassigned' }]} value={assignmentFilter} /></div>
+    <DisabledControls disabled={isLoading}><div className="route-assignment-toolbar"><p>{isLoading ? 'Loading routes, drivers, and trucks...' : `${assignedCount} of ${collectors.length} drivers assigned`}</p><label className="truck-search-control"><span className="control-search-icon" aria-hidden="true">⌕</span><input aria-label="Search drivers" onChange={(event) => setQuery(event.target.value)} placeholder="Search drivers..." value={query} /></label><AppSelect aria-label="Filter assignments" onChange={setAssignmentFilter} options={[{ label: 'All assignments', value: 'all' }, { label: 'Assigned', value: 'assigned' }, { label: 'Unassigned', value: 'unassigned' }]} value={assignmentFilter} /></div></DisabledControls>
     {success ? <p className="feedback success-feedback" role="status">{success}</p> : null}
-    {error ? <p className="feedback error-feedback" role="alert">{error}</p> : null}
+
     <div className="table-scroll">
       <table className="standard-data-table route-assignment-table">
         <thead><tr><th>Driver</th><th>Assigned route</th><th>Assign truck</th><th>Schedule</th><th>Action</th></tr></thead>
-        <tbody>
-          {isLoading ? <tr><td className="route-assignment-message" colSpan="5">Loading current assignments...</td></tr> : null}
-          {!isLoading && !error && collectors.length === 0 ? <tr><td className="route-assignment-message" colSpan="5">No collectors are available to assign yet.</td></tr> : null}
-          {!isLoading && visibleCollectors.map((collector) => {
+        <LoadingTableBody loading={isLoading} hasData={collectors.length > 0} error={error} onRetry={loadAssignments} columns={5} rows={pagination.controls.pageSize}>
+
+          {!error && collectors.length === 0 ? <tr><td className="route-assignment-message" colSpan="5">No drivers are available to assign yet.</td></tr> : null}
+          {pagination.rows.map((collector) => {
             const selectedRoute = routes.find((route) => route._id === routeSelections[collector._id]);
             const assignedCycle = cycles.find((cycle) => cycleDriverId(cycle) === collector._id);
             const hasExistingAssignment = Boolean(selectedRoute || assignedCycle);
             return <tr key={collector._id}>
-              <td><strong>{collector.name || 'Unnamed driver'}</strong><span className="route-stop-count">{collector.email || 'Collector'}</span></td>
+              <td><strong>{collector.name || 'Unnamed driver'}</strong><span className="route-stop-count">{collector.email || 'Driver'}</span></td>
               <td><AppSelect aria-label={`Assign a route to ${collector.name || 'this driver'}`} className="route-assignment-select" onChange={(routeId) => setRouteSelections((current) => ({ ...current, [collector._id]: routeId === 'unassigned' ? '' : routeId }))} options={[{ label: 'Unassigned', value: 'unassigned' }, ...routes.filter((route) => route.isActive !== false || route._id === routeSelections[collector._id]).sort((a, b) => routeLabel(a).localeCompare(routeLabel(b), undefined, { numeric: true, sensitivity: 'base' })).map((route) => ({ label: `${routeLabel(route)}${route.isActive === false ? ' (Archived)' : ''}`, value: route._id }))]} value={routeSelections[collector._id] || 'unassigned'} /></td>
               <td><AppSelect aria-label={`Assign a truck to ${collector.name || 'this driver'}`} className="route-assignment-select" onChange={(truckId) => setTruckSelections((current) => ({ ...current, [collector._id]: truckId === 'unassigned' ? '' : truckId }))} options={[{ label: 'Unassigned', value: 'unassigned' }, ...trucks.map((truck) => ({ label: truckLabel(truck), value: truck._id }))]} value={truckSelections[collector._id] || 'unassigned'} /></td>
               <td>{selectedRoute ? routeSchedule(selectedRoute) : '—'}</td>
               <td><Button className="reassign-button" isDisabled={(!routeSelections[collector._id] && !truckSelections[collector._id] && !hasExistingAssignment) || isSaving === collector._id} onPress={() => saveAssignments(collector)} variant="secondary">{isSaving === collector._id ? 'Saving...' : hasExistingAssignment ? 'Update' : 'Assign'}</Button></td>
             </tr>;
           })}
-        </tbody>
+        </LoadingTableBody>
       </table>
     </div>
+    <TablePagination label="Driver assignments" {...pagination.controls} disabled={isLoading} />
   </Card>;
 }

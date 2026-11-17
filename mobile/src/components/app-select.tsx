@@ -1,6 +1,6 @@
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
 import { useState, type ComponentProps } from 'react';
-import { ScrollView, StyleSheet, Text as NativeText, View, useWindowDimensions } from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, TextInput, Text as NativeText, View, useWindowDimensions } from 'react-native';
 import { MotionModal as Modal, MotionPressable as Pressable } from '@/components/app-motion';
 import { AppText as Text } from '@/components/app-text';
 import { AuthColors as C } from '@/constants/theme';
@@ -12,7 +12,8 @@ export type AppSelectOption = {
 };
 
 type AppSelectProps = {
-  appearance?: 'default' | 'staff' | 'auth';
+  appearance?: 'default' | 'staff' | 'auth' | 'staff-filter';
+  searchable?: boolean;
   invalid?: boolean;
   disabled?: boolean;
   leadingIcon?: ComponentProps<typeof Feather>['name'];
@@ -23,11 +24,13 @@ type AppSelectProps = {
   value: string;
 };
 
-export function AppSelect({ appearance = 'default', invalid = false, disabled = false, leadingIcon, label, onChange, options, placeholder = 'Select one', value }: AppSelectProps) {
+export function AppSelect({ searchable = false, appearance = 'default', invalid = false, disabled = false, leadingIcon, label, onChange, options, placeholder = 'Select one', value }: AppSelectProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const matches = options.filter(option => !searchable || `${option.label} ${option.description || ''}`.toLowerCase().includes(search.trim().toLowerCase()));
   const [focused, setFocused] = useState(false);
   const { fontScale } = useWindowDimensions();
-  const TriggerText = appearance === 'auth' ? NativeText : Text;
+  const TriggerText = appearance === 'auth' || appearance === 'staff-filter' ? NativeText : Text;
   const selectedOption = options.find((option) => option.value === value);
 
   const selectOption = (option: AppSelectOption) => {
@@ -37,7 +40,7 @@ export function AppSelect({ appearance = 'default', invalid = false, disabled = 
 
   return (
     <View style={[styles.container, appearance === 'staff' && styles.staffContainer]}>
-      {label ? <Text style={[styles.label, appearance === 'staff' && styles.staffLabel]}>{label}</Text> : null}
+      {label ? <Text style={[styles.label, appearance === 'staff' && styles.staffLabel, appearance === 'staff-filter' && styles.filterLabel]}>{label}</Text> : null}
 
       <Pressable
         accessibilityLabel={[label, selectedOption?.label ?? placeholder].filter(Boolean).join(', ')}
@@ -46,14 +49,14 @@ export function AppSelect({ appearance = 'default', invalid = false, disabled = 
         disabled={disabled}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
-        onPress={() => setIsOpen(true)}
-        style={({ pressed }) => [styles.trigger, appearance === 'staff' && styles.staffTrigger, pressed && styles.triggerPressed, appearance === 'auth' && styles.authTrigger, appearance === 'auth' && { minHeight: Math.max(56, 16 * fontScale * 1.4 + 20) }, appearance === 'auth' && (focused || isOpen) && styles.authFocus, appearance === 'auth' && invalid && styles.authInvalid, disabled && styles.disabled]}>
+        onPress={() => { setSearch(''); setIsOpen(true); }}
+        style={({ pressed }) => [styles.trigger, appearance === 'staff' && styles.staffTrigger, pressed && styles.triggerPressed, appearance === 'auth' && styles.authTrigger, appearance === 'auth' && { minHeight: Math.max(56, 16 * fontScale * 1.4 + 20) }, appearance === 'auth' && (focused || isOpen) && styles.authFocus, appearance === 'auth' && invalid && styles.authInvalid, appearance === 'staff-filter' && styles.filterTrigger, appearance === 'staff-filter' && { minHeight: Math.max(52, 15 * fontScale * 1.4 + 24) }, disabled && styles.disabled]}>
         {leadingIcon ? (
-          <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none" style={[styles.leadingIcon, appearance === 'auth' && styles.authLeadingIcon]}>
-            <Feather name={leadingIcon} size={20} color={appearance === 'auth' ? C.muted : '#0A7F4F'} />
+          <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none" style={[styles.leadingIcon, appearance === 'auth' && styles.authLeadingIcon, appearance === 'staff-filter' && styles.filterLeadingIcon]}>
+            <Feather name={leadingIcon} size={20} color={appearance === 'staff-filter' ? '#5A6761' : appearance === 'auth' ? C.muted : '#0A7F4F'} />
           </View>
         ) : null}
-        <TriggerText ellipsizeMode="tail" numberOfLines={appearance !== 'default' ? 1 : undefined} style={[styles.triggerText, !selectedOption && styles.placeholder, appearance === 'staff' && styles.staffText, appearance === 'auth' && styles.authText, appearance === 'auth' && !selectedOption && styles.authPlaceholder]}>
+        <TriggerText ellipsizeMode="tail" numberOfLines={appearance !== 'default' ? 1 : undefined} style={[styles.triggerText, !selectedOption && styles.placeholder, appearance === 'staff' && styles.staffText, appearance === 'auth' && styles.authText, appearance === 'auth' && !selectedOption && styles.authPlaceholder, appearance === 'staff-filter' && styles.filterText]}>
           {selectedOption?.label ?? placeholder}
         </TriggerText>
         <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none" style={[styles.chevron, isOpen && styles.chevronOpen]}>
@@ -67,7 +70,7 @@ export function AppSelect({ appearance = 'default', invalid = false, disabled = 
         statusBarTranslucent
         transparent
         visible={isOpen}>
-        <View style={styles.modalRoot}>
+        <KeyboardAvoidingView enabled={searchable} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalRoot}>
           <Pressable accessibilityRole="button" accessibilityLabel="Close options" onPress={() => setIsOpen(false)} style={styles.backdrop} />
           <View style={styles.modalCard}>
             <View style={styles.modalHeader}>
@@ -76,8 +79,10 @@ export function AppSelect({ appearance = 'default', invalid = false, disabled = 
                 <Text style={styles.closeText}>×</Text>
               </Pressable>
             </View>
-            <ScrollView contentContainerStyle={styles.options} showsVerticalScrollIndicator={false}>
-              {options.map((option) => {
+            {searchable ? <TextInput accessibilityLabel={`Search ${label ?? 'options'}`} placeholder="Search options..." placeholderTextColor="#5A6761" value={search} onChangeText={setSearch} autoCorrect={false} style={styles.optionSearch}/> : null}
+            <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.options} showsVerticalScrollIndicator={false}>
+              {!matches.length ? <Text style={styles.optionEmpty}>No matching options</Text> : null}
+              {matches.map((option) => {
                 const isSelected = option.value === value;
                 return (
                   <Pressable
@@ -95,13 +100,19 @@ export function AppSelect({ appearance = 'default', invalid = false, disabled = 
               })}
             </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  filterLabel: { color: '#35463F', fontSize: 14, fontWeight: '600', marginBottom: 8 },
+  filterTrigger: { backgroundColor: '#F1F5F3', borderWidth: 0, borderRadius: 16, height: 'auto', minHeight: 52, paddingLeft: 48, paddingRight: 16, paddingVertical: 12 },
+  filterLeadingIcon: { position: 'absolute', left: 16, marginRight: 0 },
+  filterText: { color: '#121A16', fontSize: 15, fontWeight: '500' },
+  optionSearch: { margin: 12, paddingHorizontal: 16, paddingVertical: 12, minHeight: 48, borderRadius: 14, backgroundColor: '#F1F5F3', color: '#121A16', fontSize: 15 },
+  optionEmpty: { padding: 16, color: '#5A6761', fontSize: 15 },
   authTrigger: { backgroundColor: C.field, borderColor: 'transparent', borderWidth: 2, borderRadius: 16, height: 'auto', minHeight: 56, paddingLeft: 16, paddingRight: 16, paddingVertical: 12 },
   authText: { color: C.ink, fontSize: 16 },
   authLeadingIcon: { marginRight: 14 },

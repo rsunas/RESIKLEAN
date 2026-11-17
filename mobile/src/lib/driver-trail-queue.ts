@@ -1,3 +1,4 @@
+import { withTimeout } from './async-timeout';
 import NetInfo from '@react-native-community/netinfo';
 import * as Crypto from 'expo-crypto';
 import * as SQLite from 'expo-sqlite';
@@ -138,6 +139,9 @@ const getDatabase = () => {
       if (!columns.some((column) => column.name === 'sync_version')) {
         await database.execAsync('ALTER TABLE driver_trail_sessions ADD COLUMN sync_version INTEGER NOT NULL DEFAULT 0');
       }
+      if (!columns.some((column) => column.name === 'route_path_json')) {
+        await database.execAsync('ALTER TABLE driver_trail_sessions ADD COLUMN route_path_json TEXT');
+      }
       return database;
     });
   }
@@ -179,7 +183,7 @@ const getStats = async (collectorId: string): Promise<DriverTrailQueueStats> => 
   };
 };
 
-export async function startDriverTrailSession({ collectorId, routeId, routeName }: { collectorId: string; routeId: string; routeName: string }) {
+export async function startDriverTrailSession({ collectorId, routeId, routeName, routePath }: { collectorId: string; routeId: string; routeName: string; routePath?: {type: 'LineString' | 'MultiLineString'; coordinates: unknown} | null }) {
   const database = await getDatabase();
   const existing = await database.getFirstAsync<{ client_session_id: string }>(
     `SELECT client_session_id FROM driver_trail_sessions
@@ -188,7 +192,10 @@ export async function startDriverTrailSession({ collectorId, routeId, routeName 
     collectorId,
     routeId,
   );
-  if (existing) return existing.client_session_id;
+  if (existing) {
+    if (routePath) await database.runAsync('UPDATE driver_trail_sessions SET route_path_json = COALESCE(route_path_json, ?) WHERE client_session_id = ?', JSON.stringify(routePath), existing.client_session_id);
+    return existing.client_session_id;
+  }
 
   // A device can monitor only one assigned route at a time. Completing an old
   // session keeps its points available for sync while preventing mixed trails.
@@ -203,13 +210,14 @@ export async function startDriverTrailSession({ collectorId, routeId, routeName 
   const clientSessionId = Crypto.randomUUID();
   await database.runAsync(
     `INSERT INTO driver_trail_sessions
-       (client_session_id, collector_id, route_id, route_name, started_at, status)
-     VALUES (?, ?, ?, ?, ?, 'active')`,
+       (client_session_id, collector_id, route_id, route_name, started_at, status, route_path_json)
+     VALUES (?, ?, ?, ?, ?, 'active', ?)`,
     clientSessionId,
     collectorId,
     routeId,
     routeName,
     new Date().toISOString(),
+    routePath ? JSON.stringify(routePath) : null,
   );
   return clientSessionId;
 }
@@ -266,6 +274,31 @@ export async function finishDriverTrailSession() {
      WHERE status = 'active'`,
     new Date().toISOString(),
   );
+}
+
+/** Read saved trips directly: history must not depend on upload succeeding. */
+export async function getLocalDriverTrailHistory(collectorId: string) {
+  const database = await getDatabase();
+  const sessions = await database.getAllAsync<TrailSessionRow & {route_path_json: string | null; synced_at: string | null}>(
+    "SELECT * FROM driver_trail_sessions WHERE collector_id = ? AND status = 'completed' ORDER BY started_at DESC LIMIT 100", collectorId,
+  );
+  return Promise.all(sessions.map(async session => {
+    const points = await database.getAllAsync<TrailPointRow>(
+      'SELECT * FROM driver_trail_points WHERE client_session_id = ? AND collector_id = ? ORDER BY recorded_at ASC', session.client_session_id, collectorId,
+    );
+    const coordinates = points.filter(p => validCoordinate(p.latitude, p.longitude)).map(p => [p.longitude, p.latitude] as [number, number]);
+    let routePath: {type: 'LineString' | 'MultiLineString'; coordinates: unknown} | undefined;
+    try { routePath = session.route_path_json ? JSON.parse(session.route_path_json) : undefined; } catch { /* Older records may not have a route snapshot. */ }
+    const date = new Date(Date.parse(session.started_at) + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    return {
+      id: `${date}|${session.route_id}`, date, routeId: session.route_id, routeName: session.route_name,
+      barangay: '', totalStops: 0, collected: 0, flagged: 0, distanceMi: 0, greeneryPct: null,
+      elevationGainFt: 0, elevationLossFt: 0, sessionId: session.client_session_id,
+      sessionStartedAt: session.started_at, sessionEndedAt: session.ended_at || undefined,
+      routePath, trailPath: coordinates.length >= 2 ? {type: 'LineString' as const, coordinates} : undefined,
+      lastLocation: coordinates.at(-1), pendingSync: !session.synced_at, stopLogs: [],
+    };
+  }));
 }
 
 const getPendingSessions = async (collectorId: string) => {
@@ -340,7 +373,7 @@ const syncQueue = async ({ apiUrl, token, collectorId }: DriverTrailSyncContext)
   const before = await getStats(collectorId);
   if (!before.pendingSessions) return { ...before, syncedSessions: 0, syncedPoints: 0 };
 
-  const network = await NetInfo.fetch();
+  const network = await withTimeout(NetInfo.fetch()).catch(() => ({isConnected: false, isInternetReachable: false}));
   if (!network.isConnected || network.isInternetReachable === false) {
     return { ...before, syncedSessions: 0, syncedPoints: 0 };
   }
@@ -351,13 +384,15 @@ const syncQueue = async ({ apiUrl, token, collectorId }: DriverTrailSyncContext)
     const { sessions, payload: sessionsPayload } = await getPendingSessions(collectorId);
     if (!sessions.length) return { ...(await getStats(collectorId)), syncedSessions, syncedPoints };
 
+    const controller = new AbortController();
     try {
-      const response = await fetch(`${apiUrl.replace(/\/$/, '')}/collector/trails/batch`, {
+      const response = await withTimeout(fetch(`${apiUrl.replace(/\/$/, '')}/collector/trails/batch`, {
         method: 'POST',
+        signal: controller.signal,
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessions: sessionsPayload }),
-      });
-      const result = await response.json().catch(() => ({} as TrailBatchResponse)) as TrailBatchResponse;
+      }));
+      const result = await withTimeout(response.json()).catch(() => ({} as TrailBatchResponse)) as TrailBatchResponse;
       if (!response.ok || !result.success) {
         await markFailed(sessions.map((session) => session.client_session_id), result.error || `Trail sync failed (${response.status}).`);
         return { ...(await getStats(collectorId)), syncedSessions, syncedPoints };
@@ -377,7 +412,7 @@ const syncQueue = async ({ apiUrl, token, collectorId }: DriverTrailSyncContext)
     } catch {
       await markFailed(sessions.map((session) => session.client_session_id), 'Waiting for a network connection.');
       return { ...(await getStats(collectorId)), syncedSessions, syncedPoints };
-    }
+    } finally { controller.abort(); }
   }
 };
 
@@ -393,8 +428,8 @@ export function syncDriverTrailQueue(context: DriverTrailSyncContext) {
 export function subscribeToDriverTrailSync(context: DriverTrailSyncContext, onSync?: (result: DriverTrailSyncResult) => void) {
   const sync = async () => onSync?.(await syncDriverTrailQueue(context));
   const unsubscribe = NetInfo.addEventListener((state) => {
-    if (state.isConnected && state.isInternetReachable !== false) void sync();
+    if (state.isConnected && state.isInternetReachable !== false) void sync().catch(() => {});
   });
-  void sync();
+  void sync().catch(() => {});
   return unsubscribe;
 }

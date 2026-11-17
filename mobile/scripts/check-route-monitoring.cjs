@@ -17,6 +17,7 @@ function load(name, dependencies) {
   return module.exports;
 }
 const filter = load('route-presence-filter', {});
+const {withTimeout} = load('async-timeout', {});
 let now = Date.UTC(2026, 10, 10, 0, 0, 0);
 const realNow = Date.now;
 Date.now = () => now;
@@ -110,7 +111,7 @@ function screenFixture(consent = null, pausedDay = null, accept = true) {
   const consentPrompt = { request: async () => { prompts++; return accept; } };
   const context = {
     activeTab: 'map', automaticTripPromptEligible: true, editingProfile: false, claimTripStartPrompt: async () => { if(claimed)return false; claimed=true;return true; },
-    useCallback: fn => fn, isTogglingMonitoringRef: { current: false }, monitoringSuspendedRef: { current: false }, monitoringRequestRef: { current: 0 },
+    withTimeout, loadRouteHistory: async () => {}, useCallback: fn => fn, isTogglingMonitoringRef: { current: false }, monitoringSuspendedRef: { current: false }, monitoringRequestRef: { current: 0 },
     monitoringContextRef: { current: { collectorId: config.collectorId, routeId: config.routeId, eligible: true } },
     collectorId: config.collectorId, assignedRoute: { _id: config.routeId, name: config.routeName, routePath: config.routePath }, mapRouteLine: {}, monitoringEligible: true,
     setIsUpdatingGeofence() {}, setGeofencingMessage() {}, setRoutePresence() {}, setIsGeofencingEnabled() {},
@@ -211,6 +212,24 @@ test('manual trip start accepts assigned routes outside schedule, after an earli
   assert.equal(evaluateScreen('automaticTripPromptEligible',{...context,monitoringEligible:true}),true);
   assert.equal(evaluateScreen('automaticTripPromptEligible',{...context,monitoringEligible:true,scheduledWeekday:3}),false);
   assert.ok(screenDeclarations.get('confirmRouteCompletion').includes('await disableBackgroundGeofencing()'));
+});
+
+test('hung map status refresh cannot keep Start trip busy', async () => {
+  const screen = screenFixture(); let busy = false;
+  screen.context.setIsUpdatingGeofence = value => { busy = value; };
+  screen.context.refreshRoutePresence = () => new Promise(() => {});
+  await withTimeout(evaluateScreen('enableBackgroundGeofencing', screen.context)(), 200);
+  assert.equal(busy, false); assert.equal(screen.context.isTogglingMonitoringRef.current, false);
+});
+test('background maintenance never shows a blocking Please wait button', async () => {
+  const screen = screenFixture(true); const busy = [];
+  screen.context.setIsUpdatingGeofence = value => busy.push(value);
+  await evaluateScreen('enableBackgroundGeofencing', screen.context)({automatic:true});
+  assert.ok(!busy.includes(true));
+});
+test('active trip identity is available before the first GPS fix', async () => {
+  reset();await service.enableRouteProximityTracking(config);
+  const status=await service.getRouteProximityStatus();assert.equal(status.enabled,true);assert.equal(status.routeId,config.routeId);
 });
 
 test('three good fixes over ten seconds, then one entry event', async () => {

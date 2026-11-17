@@ -1,0 +1,7 @@
+.rh-trail-map-frame { position: relative; height: 320px; overflow: hidden; border-radius: 10px; background: #eef3f0; }
+.rh-trail-map { position: absolute; inset: 0; }
+.rh-trail-map-fallback { position: absolute; inset: 0; background: #eef3f0; }
+.rh-trail-map-fallback .rh-trail-diagram { height: 100%; }
+.rh-trail-marker { width: 14px; height: 14px; border-radius: 50%; background: #c53030; border: 2px solid white; box-shadow: 0 1px 4px #0003; }
+.rh-trail-marker span { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); white-space: nowrap; background: white; color: #9b2222; font-size: 11px; padding: 3px 6px; border-radius: 5px; box-shadow: 0 1px 4px #0002; }
+@media (max-width: 640px) { .rh-trail-map-frame { height: 280px; } }

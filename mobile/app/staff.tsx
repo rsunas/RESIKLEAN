@@ -1,3 +1,5 @@
+import { useNetworkRecovery } from '@/hooks/use-network-recovery';
+import { requestJson } from '@/lib/network-request';
 import { WorkProfileEditor } from '@/components/work-profile-editor';
 import { ResidentAvatar } from '@/components/resident-avatar';
 import { StaffSearchSelect, StaffSlopeInput, StaffHistoryFilters, filterStaffHistory, historyText, validSlope } from '@/components/staff-controls';
@@ -387,6 +389,7 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: Tab; onChange: (
 }
 
 export default function StaffScreen() {
+  const networkRevision = useNetworkRecovery();
   const router = useRouter();
   const { fontScale } = useWindowDimensions();
   const cameraBusyRef = useRef(false);
@@ -471,10 +474,9 @@ export default function StaffScreen() {
         const session = await getSession();
         if (!session?.token) return;
 
-        const response = await fetch(`${API_URL}/trucks`, {
+        const { response, payload: result } = await requestJson(`${API_URL}/trucks`, {
           headers: { Authorization: `Bearer ${session.token}` },
         });
-        const result = await response.json();
         if (response.ok && result.success && Array.isArray(result.data?.trucks)) {
           const registeredTrucks = ((result.data?.trucks || []) as TruckResponse[]).map((truck) => ({
             plate: truck.plateNumber,
@@ -501,7 +503,7 @@ export default function StaffScreen() {
 
     void loadTrucks();
     return () => { cancelled = true; };
-  }, []);
+  }, [networkRevision]);
 
   // 2. Areas: SQLite cache first, then server fetch
   useEffect(() => {
@@ -521,10 +523,9 @@ export default function StaffScreen() {
         const session = await getSession();
         if (!session?.token) return;
 
-        const response = await fetch(`${API_URL}/staff/areas`, {
+        const { response, payload: result } = await requestJson(`${API_URL}/staff/areas`, {
           headers: { Authorization: `Bearer ${session.token}` },
         });
-        const result = await response.json();
         if (response.ok && result.success) {
           const availableAreas = [...(((result.data || {}) as AreasResponse).areas || [])]
             .filter((item) => item?._id && item.barangay)
@@ -545,7 +546,7 @@ export default function StaffScreen() {
 
     void loadAreas();
     return () => { cancelled = true; };
-  }, []);
+  }, [networkRevision]);
 
   // 3. Drivers: SQLite cache first, then server fetch
   useEffect(() => {
@@ -564,10 +565,9 @@ export default function StaffScreen() {
         const session = await getSession();
         if (!session?.token) return;
 
-        const response = await fetch(`${API_URL}/staff/drivers`, {
+        const { response, payload: result } = await requestJson(`${API_URL}/staff/drivers`, {
           headers: { Authorization: `Bearer ${session.token}` },
         });
-        const result = await response.json();
         if (response.ok && result.success) {
           const availableDrivers = [...(((result.data || {}) as DriversResponse).drivers || [])]
             .map((item) => item.name)
@@ -588,7 +588,7 @@ export default function StaffScreen() {
 
     void loadDrivers();
     return () => { cancelled = true; };
-  }, []);
+  }, [networkRevision]);
 
   // Helper to refresh history and merge with pending offline queue
   const refreshHistory = async (token: string, staffName: string) => {
@@ -625,10 +625,9 @@ export default function StaffScreen() {
     }
 
     try {
-      const response = await fetch(`${API_URL}/staff/truckloads`, {
+      const { response, payload: result } = await requestJson(`${API_URL}/staff/truckloads`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const result = await response.json();
       if (response.ok && result.success) {
         const loads = (result.data?.loads || []) as TruckLoadResponse[];
         const mappedServer = loads.map((load) => mapTruckLoad(load, staffName));
@@ -773,16 +772,13 @@ export default function StaffScreen() {
 
       try {
         const headers = { Authorization: `Bearer ${session.token}` };
-        const [profileResponse, historyResponse] = await Promise.all([
-          fetch(`${API_URL}/auth/me`, { headers }),
-          fetch(`${API_URL}/staff/truckloads`, { headers }),
-        ]);
-        const [profileResult, historyResult] = await Promise.all([
-          profileResponse.json().catch(() => ({})),
-          historyResponse.json().catch(() => ({})),
+        const [{ response: profileResponse, payload: profileResult }, { response: historyResponse, payload: historyResult }] = await Promise.all([
+          requestJson(`${API_URL}/auth/me`, { headers }),
+          requestJson(`${API_URL}/staff/truckloads`, { headers }),
         ]);
 
         if (!cancelled) {
+          setIsOffline(false);
           if (profileResponse.ok && profileResult.success && profileResult.data) {
             setProfile(profileResult.data);
             if (staffId) void saveStaffCache(`profile:${staffId}`, profileResult.data);
@@ -842,7 +838,7 @@ export default function StaffScreen() {
 
     void loadStaffData();
     return () => { cancelled = true; };
-  }, []);
+  }, [networkRevision]);
 
   const handleManualSync = async () => {
     if (isSyncing) return;
@@ -1140,17 +1136,17 @@ export default function StaffScreen() {
       formData.append('backPhotoMetadata', auditPhotoMetadata(backPhoto));
 
       let response: Response;
+      let result: { success?: boolean; error?: string; data?: TruckLoadResponse };
       try {
-        response = await fetch(`${API_URL}/staff/truckloads`, {
+        ({ response, payload: result } = await requestJson(`${API_URL}/staff/truckloads`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${session.token}` },
           body: formData,
-        });
+        }, 45000));
       } catch {
         await queueSubmission('Connection lost. Measurement saved locally and will sync automatically.');
         return;
       }
-      const result = await response.json().catch(() => ({} as { error?: string }));
       if (!response.ok || !result.success) {
         if (response.status >= 500) {
           await queueSubmission('Server unavailable. Measurement saved locally and will sync automatically.');
@@ -1343,7 +1339,7 @@ export default function StaffScreen() {
     <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.historyScrollContent} showsVerticalScrollIndicator={false}>
       <View style={styles.historyTitleRow}>
         <Text style={styles.historyPageTitle}>Submission history</Text>
-        <Text style={styles.recordCount}>{historyLoading ? 'Loading…' : `${history.length} ${history.length === 1 ? 'record' : 'records'}`}</Text>
+        <Text style={styles.recordCount}>{historyLoading ? 'Loading…' : `${visibleHistory.length < history.length ? `${visibleHistory.length} of ` : ''}${history.length} ${history.length === 1 ? 'record' : 'records'}`}</Text>
       </View>
 
       {pendingSync > 0 && (
@@ -1378,7 +1374,6 @@ export default function StaffScreen() {
       )}
 
       <StaffHistoryFilters value={historyFilters} rows={history} onChange={(...values) => setHistoryFilters(values)} />
-      <Text style={styles.helperText}>{visibleHistory.length} of {history.length} records</Text>
       <SkeletonRegion state={historySkeleton} placeholder={<SkeletonRows kind="staff" count={4} />}>
       {historyError ? <Text accessibilityRole="alert" style={styles.dataError}>{historyError}</Text> : null}
       {!historyError && history.length === 0 ? (
@@ -1388,7 +1383,10 @@ export default function StaffScreen() {
           <Text style={styles.emptyHistoryText}>Your completed truckload submissions will appear here after you submit one.</Text>
         </Card>
       ) : null}
-      {history.length > 0 && !visibleHistory.length ? <Text style={styles.emptyHistoryText}>No submissions match your search or filters.</Text> : null}
+      {history.length > 0 && !visibleHistory.length ? <View style={styles.emptyHistoryCard}>
+        <Text style={styles.emptyHistoryText}>No records match these filters</Text>
+        <Pressable accessibilityRole="button" onPress={() => setHistoryFilters(['', '', '', '', ''])} style={styles.clearHistoryFilters}><Text style={styles.clearHistoryFiltersText}>Clear filters</Text></Pressable>
+      </View> : null}
       {visibleHistory.map((submission, index) => (
         <RevealRow key={submission.id} animate={revealHistory} index={index}>
         <Pressable
@@ -1621,6 +1619,8 @@ const styles = StyleSheet.create({
   navLabel: { color: '#5A6761', fontSize: 11, fontWeight: '500', textAlign: 'center' },
   navLabelActive: { color: '#086B42', fontWeight: '700' },
   navIndicator: { backgroundColor: '#07815f', borderRadius: 3, height: 4, marginTop: 1, width: 4 },
+  clearHistoryFilters: { minHeight: 44, paddingHorizontal: 18, paddingVertical: 12, borderRadius: 12, backgroundColor: '#E3F4EB', marginTop: 16 },
+  clearHistoryFiltersText: { color: '#086B42', fontSize: 14, fontWeight: '600' },
   historyScrollContent: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 32 },
   historyPageTitle: { color: '#121A16', fontSize: 28, fontWeight: '700' },
   historyTitleRow: { marginBottom: 16 },

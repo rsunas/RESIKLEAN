@@ -8,7 +8,10 @@ const isStyle=(style,target)=>style===target||(Array.isArray(style)&&style.some(
 const View=props=>{const tag=['header','trackerWrap','composer','sheet','details','own'].find(key=>isStyle(props.style,styles[key]));return React.createElement(RN.View,{...props,dataSet:tag?{qa:tag}:undefined});};
 const Text=({style,...props})=>{const flat=RN.StyleSheet.flatten(style)||{};return React.createElement(RN.Text,{...props,style:[style,{fontSize:(flat.fontSize||14)*scale,...(flat.lineHeight?{lineHeight:flat.lineHeight*scale}:{})}]});};
 const Icon=()=>null;
+const categoryExports={};
+new Function('exports',ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src/lib/waste-categories.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS}}).outputText)(categoryExports);
 const mocks={
+ '@/lib/waste-categories':categoryExports,
  './resident-avatar':{ResidentAvatar:()=>null},
  react:{...React,useState:initial=>{const i=cursor++;return [i===0?keyboard:i===2?photoExpanded:i===3?pendingState:initial,value=>changes.push({i,value})];},useRef:()=>({current:{scrollToEnd(){scrolls++;}}}),useEffect:effect=>effects.push(effect)},
  'react-native':{...RN,View,Text,KeyboardAvoidingView:View,Keyboard:{addListener:(name,callback)=>{events[name]=callback;return {remove(){}};}},LayoutAnimation:{Types:{easeInEaseOut:'ease'},configureNext(){animations++;}}},
@@ -25,6 +28,9 @@ for(const [status,step] of [['pending',0],['verified',1],['scheduled',1],['resol
 const report={_id:'r',status:'resolved',createdAt:'2026-10-18T07:30:00Z',barangay:'A long barangay location name',photoUrl:'fixture',aiVerified:true};
 const props={report,subject:'Long complaint subject '.repeat(4),body:'Original report note',bags:'0 bags',metadata:'Captured Oct 18, 2026 · GPS 13.62313, 123.17673 · 3060 x 4080px · 641 KB',messages:Array.from({length:40},(_,i)=>({_id:String(i),body:'Long conversation message '.repeat(12),senderRole:i%2?'admin':'resident',createdAt:report.createdAt})),loading:false,sending:false,error:'',draft:'',setDraft(){},send:async()=>{sendCalls++;},onClose(){},bottomInset:0};
 function tree(){cursor=0;effects=[];return exportsObject.ResidentComplaintConversation(props);}
+for(const option of categoryExports.WASTE_CATEGORY_OPTIONS){report.wasteCategory=option.value;assert.ok(renderToStaticMarkup(tree()).includes(option.label));}
+delete report.wasteCategory;assert.ok(renderToStaticMarkup(tree()).includes('Not specified'));
+report.wasteCategory='non-biodegradable';
 const initial=tree();assert.equal(initial.props.children[0].props.style,styles.header);assert.ok(isStyle(initial.props.children[1].props.style,styles.trackerWrap));assert.equal(initial.props.children[2].type,RN.ScrollView);assert.ok(isStyle(initial.props.children[3].props.style,styles.composer));
 effects.forEach(effect=>effect());assert.ok(scrolls>0,'Scrolls on open/live change');events.keyboardDidShow();assert.ok(changes.some(change=>change.i===0&&change.value===true));assert.equal(animations,1);
 reduced=true;tree();effects.forEach(effect=>effect());events.keyboardDidHide();assert.equal(animations,1,'No reduced-motion animation');

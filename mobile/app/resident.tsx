@@ -1,3 +1,7 @@
+import { AppSelect } from '@/components/app-select';
+import { WASTE_CATEGORY_OPTIONS, wasteCategoryLabel } from '@/lib/waste-categories';
+import { useNetworkRecovery } from '@/hooks/use-network-recovery';
+import { requestJson } from '@/lib/network-request';
 import { ResidentProfileEditor } from '@/components/resident-profile-editor';
 import { ResidentAvatar } from '@/components/resident-avatar';
 import { ResidentComplaintConversation } from '@/components/resident-complaint-conversation';
@@ -47,6 +51,7 @@ type ResidentReference = {
 };
 
 type ApiReport = {
+  wasteCategory?: string;
   _id: string;
   residentId?: string | ResidentReference;
   barangay: string;
@@ -494,6 +499,7 @@ function ReportList({ reports, onSelect, showPhoto, animate = false }: { reports
             <View style={styles.complaintCopy}>
               <Text numberOfLines={1} style={styles.complaintSubject}>{getReportSubject(report)}</Text>
               <Text numberOfLines={1} style={styles.complaintPreview}>{formatDate(report.createdAt, { month: 'short', day: 'numeric', year: 'numeric' })} · {getReportBody(report)}</Text>
+              <Text style={styles.complaintPreview}>Waste category: {wasteCategoryLabel(report.wasteCategory)}</Text>
               <View style={styles.complaintMeta}><StatusPill status={report.status} /></View>
             </View>
             <Feather color="#5A6761" name="chevron-right" size={20} />
@@ -506,6 +512,7 @@ function ReportList({ reports, onSelect, showPhoto, animate = false }: { reports
 }
 
 export default function ResidentScreen() {
+  const networkRevision = useNetworkRecovery();
   const router = useRouter();
   const { tab } = useLocalSearchParams<{ tab?: string }>();
   const insets = useSafeAreaInsets();
@@ -533,6 +540,7 @@ export default function ResidentScreen() {
     message?: string;
   }>({ status: 'idle' });
   const [reportSubject, setReportSubject] = useState('');
+  const [wasteCategory, setWasteCategory] = useState('');
   const [description, setDescription] = useState('');
   const [isCreatingReport, setIsCreatingReport] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -580,10 +588,9 @@ export default function ResidentScreen() {
     }
 
     try {
-      const response = await fetch(`${API_URL}/resident/schedule`, {
+      const { response, payload: result } = await requestJson<ApiResponse<ScheduleData | LegacyScheduleData>>(`${API_URL}/resident/schedule`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const result = (await response.json()) as ApiResponse<ScheduleData | LegacyScheduleData>;
       if (!response.ok || !result.success) throw new Error(result.error || 'Unable to load your collection schedule.');
       const scheduleData = normalizeScheduleData(result.data || null, residentLocation);
       setSchedule(scheduleData);
@@ -606,8 +613,7 @@ export default function ResidentScreen() {
     setIsLoadingReports(true);
     setReportError('');
     try {
-      const response = await fetch(`${API_URL}/resident/reports`, { headers: { Authorization: `Bearer ${token}` } });
-      const result = (await response.json()) as ApiResponse<ApiReport[]>;
+      const { response, payload: result } = await requestJson<ApiResponse<ApiReport[]>>(`${API_URL}/resident/reports`, { headers: { Authorization: `Bearer ${token}` } });
       if (!response.ok || !result.success) throw new Error(result.error || 'Unable to load your reports.');
       setPastReports(result.data || []);
     } catch (error) {
@@ -634,7 +640,7 @@ export default function ResidentScreen() {
   useEffect(() => {
     if (session?.token) void loadReports(session.token);
     if (session?.token) void loadSchedule(session.token, session.user.location || session.user.barangay);
-  }, [loadReports, loadSchedule, session?.token, session?.user.barangay, session?.user.location]);
+  }, [loadReports, loadSchedule, session?.token, session?.user.barangay, session?.user.location, networkRevision]);
 
   // Pre-warm camera permission so the OS dialog never interrupts the camera launch.
   useEffect(() => {
@@ -652,6 +658,7 @@ export default function ResidentScreen() {
       try {
         const savedContext = await getPendingCameraContext();
         if (savedContext?.type === 'resident') {
+          if (savedContext.wasteCategory) setWasteCategory(savedContext.wasteCategory);
           if (savedContext.category) setReportSubject(savedContext.category);
           if (savedContext.notes) setDescription(savedContext.notes);
           setIsCreatingReport(true);
@@ -705,11 +712,10 @@ export default function ResidentScreen() {
     let cancelled = false;
     setIsLoadingMessages(true);
     setMessageError('');
-    fetch(`${API_URL}/resident/reports/${encodeURIComponent(reportId)}/messages`, {
+    requestJson<ApiResponse<ApiReportMessage[]>>(`${API_URL}/resident/reports/${encodeURIComponent(reportId)}/messages`, {
       headers: { Authorization: `Bearer ${session.token}` },
     })
-      .then(async (response) => {
-        const result = (await response.json()) as ApiResponse<ApiReportMessage[]>;
+      .then(({ response, payload: result }) => {
         if (!response.ok || !result.success) throw new Error(result.error || 'Unable to load conversation.');
         if (!cancelled) setReportMessages(result.data || []);
       })
@@ -721,7 +727,7 @@ export default function ResidentScreen() {
       });
 
     return () => { cancelled = true; };
-  }, [selectedReport?._id, session?.token]);
+  }, [selectedReport?._id, session?.token, networkRevision]);
 
   useEffect(() => {
     if (tab === 'schedule') setActiveTab('schedule');
@@ -747,7 +753,7 @@ export default function ResidentScreen() {
     const socket = io(SOCKET_URL, { auth: { token } });
     socketRef.current = socket;
 
-    const handleConnect = () => setSocketStatus('connected');
+    const handleConnect = () => { setSocketStatus('connected'); void loadReports(token); };
     const handleDisconnect = () => setSocketStatus('disconnected');
     const handleConnectError = () => setSocketStatus('disconnected');
     const handleComplaintEvent = (payload: ComplaintSocketPayload) => {
@@ -798,7 +804,7 @@ export default function ResidentScreen() {
       socket.disconnect();
       if (socketRef.current === socket) socketRef.current = null;
     };
-  }, [loadReports, session?.token, session?.user._id, session?.user.id]);
+  }, [loadReports, session?.token, session?.user._id, session?.user.id, networkRevision]);
 
   useEffect(() => {
     setProfileName(session?.user.name || '');
@@ -923,6 +929,7 @@ export default function ResidentScreen() {
       await savePendingCameraContext({
         type: 'resident',
         category: reportSubject,
+        wasteCategory,
         notes: description,
       });
 
@@ -1155,6 +1162,10 @@ export default function ResidentScreen() {
       setReportMessage('Add a subject for your complaint.');
       return;
     }
+    if (!WASTE_CATEGORY_OPTIONS.some(option => option.value === wasteCategory)) {
+      setReportMessage('Select a waste category for your complaint.');
+      return;
+    }
     if (!description.trim()) {
       setReportMessage('Write a message describing the issue.');
       return;
@@ -1172,6 +1183,7 @@ export default function ResidentScreen() {
     setReportMessage('');
     try {
       const formData = new FormData();
+      formData.append('wasteCategory', wasteCategory);
       formData.append('description', `${reportSubject.trim()}\n\n${description.trim()}`);
       formData.append('photo', {
         uri: selectedPhoto.uri,
@@ -1198,6 +1210,7 @@ export default function ResidentScreen() {
       setPhotoMetadata(null);
       setAiDetection({ status: 'idle' });
       setReportSubject('');
+      setWasteCategory('');
       setDescription('');
       setIsCreatingReport(false);
       setReportMessage('Complaint sent. SWMO will reply here.');
@@ -1405,6 +1418,8 @@ export default function ResidentScreen() {
       <ScrollView contentContainerStyle={styles.newComplaintContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <Text style={styles.fieldLabel}>Subject</Text>
         <TextInput onChangeText={setReportSubject} accessibilityLabel="Subject" placeholder="e.g. Missed collection on Gen. Luna St." placeholderTextColor="#5A6761" style={styles.newComplaintInput} value={reportSubject} />
+        <Text style={styles.fieldLabel}>Waste category</Text>
+        <AppSelect appearance="auth" leadingIcon="tag" placeholder="Select waste category" value={wasteCategory} onChange={setWasteCategory} options={WASTE_CATEGORY_OPTIONS} disabled={isSubmitting} />
         <Text style={styles.fieldLabel}>Message</Text>
         <TextInput multiline onChangeText={setDescription} accessibilityLabel="Message" placeholder="Describe the issue — street, number of bags, how long it has been there..." placeholderTextColor="#5A6761" style={[styles.newComplaintInput, styles.newComplaintMessageInput]} value={description} />
         <Text style={styles.fieldLabel}>Photo proof</Text>
@@ -1424,7 +1439,7 @@ export default function ResidentScreen() {
           <Text style={styles.complaintsTitle}>Complaints</Text>
           <Text style={styles.complaintsSubtitle}>Direct line to SWMO Support</Text>
         </View>
-        <Pressable accessibilityLabel="New complaint" accessibilityRole="button" onPress={() => { setReportSubject(''); setDescription(''); setSelectedPhoto(null); setPhotoMetadata(null); setAiDetection({ status: 'idle' }); setReportMessage(''); setIsCreatingReport(true); }} style={styles.complaintPlusButton}>
+        <Pressable accessibilityLabel="New complaint" accessibilityRole="button" onPress={() => { setReportSubject(''); setWasteCategory(''); setDescription(''); setSelectedPhoto(null); setPhotoMetadata(null); setAiDetection({ status: 'idle' }); setReportMessage(''); setIsCreatingReport(true); }} style={styles.complaintPlusButton}>
           <Feather color="#ffffff" name="plus" size={24} />
         </Pressable>
       </View>

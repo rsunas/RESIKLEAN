@@ -1,3 +1,4 @@
+const { trailSegments, routeSegments } = require('../routeHistoryTrail');
 const path = require('path');
 const fs = require('fs');
 const { getSegmentTrailImage } = require('../mapStaticImage');
@@ -57,340 +58,239 @@ function barangayCode(barangay) {
   return first || 'ARE';
 }
 
-function areaFromStop(stopName, barangay) {
-  const stop = stopName || '';
-  const brgy = Array.isArray(barangay) ? barangay.join(', ') : String(barangay || '');
-  const area = `${stop}${brgy ? `, ${brgy}` : ''}`;
-  return area || 'Naga City';
-}
-
-function drawTwoPartRule(doc, x, y, width) {
-  doc.save();
-  doc.lineWidth(3).strokeColor(COLORS.tealLight).moveTo(x, y).lineTo(x + width, y).stroke();
-  doc.lineWidth(1).strokeColor(COLORS.rule).moveTo(x, y + 2).lineTo(x + width, y + 2).stroke();
-  doc.restore();
-}
-
-function drawTable(doc, x, y, width, rows, { labelWidth, colHeader, accent } = {}) {
-  const valueX = x + (labelWidth || 140);
-  const valueWidth = width - (labelWidth || 140);
-  const padY = 11;
-  let cursorY = y;
-  doc.save();
-  if (colHeader) {
-    doc.fillColor(COLORS.tealDark).font('Helvetica-Bold').fontSize(10);
-    doc.text(colHeader.toUpperCase(), x, cursorY);
-    cursorY += 18;
+// All report text is measured before drawing. Never let PDFKit auto-break an
+// absolute-positioned cell: that was producing pages containing single labels.
+function reportLayout(doc) {
+  const margin = 46;
+  const width = doc.page.width - margin * 2;
+  const bottom = () => doc.page.height - 52;
+  let y = 0;
+  let page = 0;
+  function text(value, x, top, cellWidth, size = 10, bold = false, color = COLORS.dark) {
+    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(size).fillColor(color);
+    doc.text(String(value ?? ''), x, top, { width: cellWidth, height: size + 4, lineBreak: false });
   }
-  rows.forEach(([label, value, opts = {}]) => {
-    doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9).text(label, x, cursorY);
-    const valueColor = opts.color || COLORS.dark;
-    const valueBold = opts.bold ? 'Helvetica-Bold' : 'Helvetica';
-    const valueSize = opts.size || 11;
-    
-    const lines = Array.isArray(value) ? value : [value];
-    
-    let currentY = cursorY;
-    lines.forEach((line) => {
-      if (typeof line === 'object' && line.label) {
-        doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9);
-        const height = doc.heightOfString(line.label, { width: valueWidth - 8, align: 'left' });
-        doc.text(line.label, valueX, currentY, { width: valueWidth - 8, align: 'left' });
-        currentY += height + 2;
-      } else {
-        doc.fillColor(valueColor).font(valueBold).fontSize(valueSize);
-        const height = doc.heightOfString(line, { width: valueWidth - 8, align: 'left' });
-        doc.text(line, valueX, currentY, { width: valueWidth - 8, align: 'left' });
-        currentY += height + 4;
+  function lines(value, cellWidth, size = 10, bold = false) {
+    doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(size);
+    const result = [];
+    for (const paragraph of String(value ?? '').split('\n')) {
+      let line = '';
+      for (const word of paragraph.split(/\s+/).filter(Boolean)) {
+        if (line && doc.widthOfString(`${line} ${word}`) > cellWidth) {
+          result.push(line); line = '';
+        }
+        // Split even a very long unbroken route name/reference without clipping.
+        for (const char of (line ? ` ${word}` : word)) {
+          if (line && doc.widthOfString(line + char) > cellWidth) {
+            result.push(line); line = '';
+          }
+          line += char;
+        }
       }
-    });
-    
-    const rowHeight = Math.max(currentY - cursorY, 16);
-    
-    doc.moveTo(x, cursorY + rowHeight + 4).lineTo(x + width, cursorY + rowHeight + 4).strokeColor(COLORS.tableBorder).lineWidth(0.5).stroke();
-    if (accent && opts.highlight) {
-      doc.fillColor(accent).rect(x - 2, cursorY - 2, 3, rowHeight + 6).fill();
+      result.push(line);
     }
-    cursorY += rowHeight + 12;
+    return result;
+  }
+  function newPage() {
+    if (page) doc.addPage();
+    page += 1;
+    if (page === 1 && fs.existsSync(LOGO_PATH)) {
+      doc.image(LOGO_PATH, margin, 32, { fit: [148, 40] });
+    } else text('ResiKlean / SWMO', margin, 42, width / 2, 14, true, COLORS.tealDark);
+    text('Route history report', margin + width / 2, 40, width / 2, 20, true);
+    text(page === 1 ? 'Recorded travel and stop events' : 'Continued', margin + width / 2, 65, width / 2, 9, false, COLORS.grey);
+    doc.strokeColor(COLORS.tealDark).lineWidth(1).moveTo(margin, 84).lineTo(margin + width, 84).stroke();
+    // Footer remains in the reserved margin, without changing page margins.
+    text(`Page ${page}  |  Asia/Manila (UTC+08:00)`, margin, doc.page.height - 32, width, 8, false, COLORS.grey);
+    y = 98;
+  }
+  function ensure(height) { if (y + height > bottom()) newPage(); }
+  function paragraph(value, { size = 9, color = COLORS.grey, bold = false, gap = 8 } = {}) {
+    for (const line of lines(value, width, size, bold)) {
+      ensure(size + 4); text(line, margin, y, width, size, bold, color); y += size + 4;
+    }
+    y += gap;
+  }
+  function heading(title, followingHeight = 40) {
+    ensure(25 + followingHeight);
+    text(title, margin, y, width, 11, true, COLORS.tealDark); y += 25;
+  }
+  function table(headers, fractions, rows) {
+    const widths = fractions.map(f => f * width);
+    const header = (nextHeight = 27) => {
+      ensure(25 + nextHeight);
+      doc.rect(margin, y, width, 25).fill(COLORS.tealBg);
+      let x = margin;
+      headers.forEach((label, i) => { text(label, x + 7, y + 7, widths[i] - 14, 9, true); x += widths[i]; });
+      y += 25;
+    };
+    const firstHeight = rows.length ? Math.max(...rows[0].map((value, i) => lines(value, widths[i] - 14, 9).length)) * 13 + 14 : 27;
+    header(Math.min(firstHeight, bottom() - 123));
+    for (const row of rows) {
+      const cells = row.map((value, i) => lines(value, widths[i] - 14, 9));
+      let offset = 0;
+      const count = Math.max(...cells.map(cell => cell.length));
+      while (offset < count) {
+        const remainingHeight = (count - offset) * 13 + 14;
+        // Keep normal rows whole. Extra-long cells continue under repeated headers.
+        if (y + Math.min(remainingHeight, bottom() - 123) > bottom()) { newPage(); header(); }
+        const take = Math.min(count - offset, Math.floor((bottom() - y - 14) / 13));
+        if (take < 1) { newPage(); header(); continue; }
+        let x = margin;
+        cells.forEach((cell, i) => {
+          cell.slice(offset, offset + take).forEach((line, n) => text(line, x + 7, y + 7 + n * 13, widths[i] - 14, 9));
+          x += widths[i];
+        });
+        y += take * 13 + 14;
+        doc.strokeColor(COLORS.tableBorder).lineWidth(0.5).moveTo(margin, y).lineTo(margin + width, y).stroke();
+        offset += take;
+        if (offset < count) { newPage(); header(); }
+      }
+    }
+    y += 14;
+  }
+  newPage();
+  return { margin, width, text, lines, ensure, paragraph, heading, table,
+    get y() { return y; }, set y(value) { y = value; } };
+}
+
+const validCoordinate = c => Array.isArray(c) && Number.isFinite(c[0]) && Number.isFinite(c[1]) && Math.abs(c[0]) <= 180 && Math.abs(c[1]) <= 90;
+const recordedTime = value => value && Number.isFinite(new Date(value).getTime()) ? manilaDateTime(value) : 'Not recorded';
+
+function drawTrailDiagram(doc, box, trail, stops) {
+  const expected = trail.expectedSegments || [];
+  const covered = trail.coveredSegments || [];
+  const coords = [...expected.flat(), ...covered.flat(), ...stops.map(s => s.coordinate)].filter(validCoordinate);
+  doc.save();
+  doc.rect(box.x, box.y, box.width, box.height).fill('#f4faf7');
+  if (!coords.length) {
+    doc.fillColor(COLORS.grey).font('Helvetica').fontSize(10).text('No route geometry or GPS coordinates recorded.', box.x + 20, box.y + box.height / 2, { width: box.width - 40, lineBreak: false });
+    doc.restore(); return;
+  }
+  // Mercator coordinates preserve the shape of the actual uploaded route.
+  const mercator = c => [c[0] * Math.PI / 180, Math.log(Math.tan(Math.PI / 4 + Math.max(-85, Math.min(85, c[1])) * Math.PI / 360))];
+  const projected = coords.map(mercator);
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  projected.forEach(([x, y]) => { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); });
+  const dx = maxX - minX, dy = maxY - minY;
+  const scale = Math.min((box.width - 56) / (dx || 0.000001), (box.height - 56) / (dy || 0.000001));
+  const project = c => { const [x, y] = mercator(c); return [box.x + box.width / 2 + (x - (minX + maxX) / 2) * scale, box.y + box.height / 2 - (y - (minY + maxY) / 2) * scale]; };
+  const path = (line, color, dashed) => {
+    const points = line.filter(validCoordinate).map(project);
+    if (!points.length) return;
+    doc.strokeColor(color).fillColor(color).lineWidth(dashed ? 2 : 2.5).lineJoin('round').lineCap('round');
+    if (dashed) doc.dash(4, { space: 3 }); else doc.undash();
+    if (points.length === 1) doc.circle(...points[0], 3).fill();
+    else { doc.moveTo(...points[0]); points.slice(1).forEach(p => doc.lineTo(...p)); doc.stroke(); }
+    doc.undash();
+  };
+  expected.forEach(line => path(line, COLORS.greyLight, true));
+  covered.forEach(line => path(line, COLORS.redSoft, false));
+  stops.forEach(stop => {
+    if (!validCoordinate(stop.coordinate)) return;
+    const [x, y] = project(stop.coordinate);
+    doc.circle(x, y, 7).fillAndStroke('#ffffff', COLORS.tealDark);
+    doc.fillColor(COLORS.tealDark).font('Helvetica-Bold').fontSize(7).text(String(stop.number), x - 7, y - 2.5, { width: 14, align: 'center', lineBreak: false });
+  });
+  [[trail.entryCoord, 'Start', COLORS.redSoft], [trail.exitCoord, 'Last GPS', COLORS.dark]].forEach(([c, label, color]) => {
+    if (!validCoordinate(c)) return;
+    const [x, y] = project(c);
+    doc.circle(x, y, 4).fillAndStroke(color, '#ffffff');
+    doc.fillColor(color).font('Helvetica-Bold').fontSize(8).text(label, Math.min(x + 7, box.x + box.width - 48), y - (label === 'Start' ? 15 : -6), { width: 48, lineBreak: false });
   });
   doc.restore();
-  return cursorY;
-}
-
-function drawLegend(doc, x, y, width, data) {
-  const entry = data.entryTime ? manilaTime(data.entryTime) : 'Not logged';
-  const exit = data.exitTime ? manilaTime(data.exitTime) : 'Not recorded';
-  const dwell = data.dwellNote || 'No exit event recorded';
-  doc.save();
-  doc.fillColor(COLORS.tealDark).font('Helvetica-Bold').fontSize(10).text('LEGEND', x, y);
-  let cursorY = y + 18;
-  const swatchX = x;
-  const textX = x + 38;
-  const swatchWidth = 28;
-  doc.lineWidth(3).strokeColor(COLORS.redSoft).moveTo(swatchX, cursorY + 4).lineTo(swatchX + swatchWidth, cursorY + 4).stroke();
-  doc.fillColor(COLORS.dark).font('Helvetica').fontSize(10).text('Truck path — covered', textX, cursorY);
-  cursorY += 20;
-  doc.save();
-  doc.lineWidth(3).strokeColor(COLORS.redSoft).dash(3, 3, { space: 3 }).moveTo(swatchX, cursorY + 4).lineTo(swatchX + swatchWidth, cursorY + 4).stroke();
-  doc.undash();
-  doc.restore();
-  doc.fillColor(COLORS.dark).font('Helvetica').fontSize(10).text('Expected path — not covered', textX, cursorY);
-  cursorY += 26;
-  doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9).text('Entry time:', x, cursorY);
-  doc.fillColor(COLORS.redSoft).font('Helvetica-Bold').fontSize(10).text(`Entry: ${entry}`, x + 70, cursorY);
-  cursorY += 18;
-  doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9).text('Exit:', x, cursorY);
-  doc.fillColor(data.exitTime ? COLORS.dark : COLORS.red).font(data.exitTime ? 'Helvetica' : 'Helvetica-Bold').fontSize(10).text(data.exitTime ? exit : `Exit: ${exit}`, x + 70, cursorY);
-  cursorY += 18;
-  doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9).text('Dwell:', x, cursorY);
-  doc.fillColor(COLORS.dark).font('Helvetica').fontSize(10).text(dwell, x + 70, cursorY, { width: width - 70 });
-  doc.restore();
-  return cursorY + 20;
 }
 
 async function generateRouteHistoryPDF(doc, data) {
-  const pageWidth = doc.page.width;
-  const margin = 46;
-  const contentWidth = pageWidth - margin * 2;
-
-  doc.info.Title = `Route History Report — ${data.documentReference?.referenceId || 'ResiKlean'}`;
-  doc.info.Author = 'ResiKlean — Naga City SWMO';
-  doc.info.Producer = 'ResiKlean Solid Waste Management System';
-
-  let logoOk = false;
-  try {
-    if (fs.existsSync(LOGO_PATH)) logoOk = true;
-  } catch {}
-
-  // ── Header block ──────────────────────────────────────────────────────
-  let cursorY = margin + 6;
-  if (logoOk) {
-    doc.image(LOGO_PATH, margin, cursorY, { height: 46 });
-  } else {
-    doc.save();
-    doc.fillColor(COLORS.tealDark).roundedRect(margin, cursorY, 50, 46, 8).fill();
-    doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(18).text('R', margin + 18, cursorY + 13);
-    doc.restore();
-    
-    const brandX = margin + 62;
-    doc.fillColor(COLORS.tealDark).font('Helvetica-Bold').fontSize(22).text('ResiKlean', brandX, cursorY + 6);
-    doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9).text('SOLID WASTE MANAGEMENT SYSTEM', brandX, cursorY + 28, { characterSpacing: 0.5 });
-  }
-
-  doc.fillColor(COLORS.greyLight).font('Helvetica').fontSize(10).text('NAGA CITY SOLID WASTE MANAGEMENT OFFICE', margin, cursorY + 6, { width: contentWidth, align: 'right' });
-  doc.fillColor(COLORS.dark).font('Helvetica-Bold').fontSize(26).text('Route History Report', margin, cursorY + 24, { width: contentWidth, align: 'right' });
-  doc.fillColor(COLORS.grey).font('Helvetica-Oblique').fontSize(10).text('Single-Record Export · Geofence-Verified', margin, cursorY + 44, { width: contentWidth, align: 'right' });
-
-  cursorY = margin + 82;
-  drawTwoPartRule(doc, margin, cursorY, contentWidth);
-  cursorY += 14;
-
-  // ── Record Summary + Document Reference ───────────────────────────────
-  const summary = data.recordSummary || {};
   const reference = data.documentReference || {};
-  const segmentStatus = summary.segmentStatus || 'Unknown';
-  const isFlagged = /flag|not collect/i.test(segmentStatus);
-
-  const leftWidth = Math.floor(contentWidth * 0.58);
-  const rightWidth = contentWidth - leftWidth - 20;
-
-  const summaryRows = [
-    ['Street Segment', summary.streetSegment || 'Unrecorded segment'],
-    ['Collector Name', [summary.collectorName || 'Unassigned collector', summary.collectorSubtitle || 'SWMO Naga City']],
-    ['Truck Assigned', summary.truckAssigned || 'No truck recorded for this shift'],
-    ['Shift Start / End', [summary.shiftStart || '—', { label: 'Shift End' }, summary.shiftEnd || '—']],
-    ['Geofence Entry', summary.geofenceEntry || 'Not logged'],
-    ['Geofence Exit', summary.geofenceExit || 'Not logged — no exit event recorded', { color: COLORS.red, bold: !summary.geofenceExit }],
-    ['Segment Status', segmentStatus, { color: isFlagged ? COLORS.red : COLORS.tealDark, bold: true, size: 12, highlight: true }],
-  ];
-  const refRows = [
-    ['REFERENCE ID', reference.referenceId || 'RH-UNASSIGNED', { bold: true }],
-    ['REPORT DATE', reference.reportDate || manilaDateShort(new Date())],
-    ['AREA', reference.area || 'Naga City'],
-    ['STATUS', reference.status || segmentStatus, { color: isFlagged ? COLORS.red : COLORS.tealDark, bold: true }],
-    ['GENERATED BY', reference.generatedBy || 'Admin — SWMO Naga City'],
-    ['EXPORTED', reference.exportedAt || manilaDateTime(new Date())],
-  ];
-
-  const leftBottom = drawTable(doc, margin, cursorY, leftWidth, summaryRows, { colHeader: 'RECORD SUMMARY', accent: COLORS.tealDark });
-  drawTable(doc, margin + leftWidth + 20, cursorY, rightWidth, refRows, { colHeader: 'DOCUMENT REFERENCE', labelWidth: 98 });
-
-  cursorY = Math.max(leftBottom, cursorY + refRows.length * 18 + 34) + 8;
-
-  drawTwoPartRule(doc, margin, cursorY, contentWidth);
-  cursorY += 16;
-
-  // ── Segment Trail ─────────────────────────────────────────────────────
-  
-  // Temporarily remove the bottom margin so our absolute-positioned map/legend 
-  // elements don't trigger accidental page breaks when they get near the bottom.
-  const originalBottomMargin = doc.page.margins.bottom;
-  doc.page.margins.bottom = 0;
-  
-  doc.fillColor(COLORS.tealDark).font('Helvetica-Bold').fontSize(11).text('SEGMENT TRAIL', margin, cursorY);
-  cursorY += 18;
-
-  const trailBox = { x: margin, y: cursorY, width: Math.floor(contentWidth * 0.62), height: 260 };
-  const legendBox = { x: trailBox.x + trailBox.width + 20, y: cursorY, width: contentWidth - trailBox.width - 20 };
-
-  doc.save();
-  doc.strokeColor(COLORS.tableBorder).lineWidth(1).roundedRect(trailBox.x, trailBox.y, trailBox.width, trailBox.height, 6).stroke();
-  doc.restore();
-
+  const summary = data.recordSummary || {};
   const trail = data.trail || {};
-  let trailBuffer = null;
-  try {
-    trailBuffer = await getSegmentTrailImage({
-      coveredCoordinates: trail.coveredCoordinates || [],
-      expectedCoordinates: trail.expectedCoordinates || [],
-      entryCoord: trail.entryCoord,
-      exitCoord: trail.exitCoord,
-      width: Math.min(900, trailBox.width * 1.5),
-      height: Math.min(520, trailBox.height * 1.5),
-    });
-  } catch {}
+  const stops = [...(data.stops || [])].sort((a, b) => (a.order || 0) - (b.order || 0)).map((stop, i) => ({ ...stop, number: i + 1, coordinate: [stop.longitude, stop.latitude] }));
+  doc.info.Title = `Route History Report - ${reference.referenceId || 'ResiKlean'}`;
+  doc.info.Author = 'ResiKlean - Naga City SWMO';
+  const layout = reportLayout(doc);
+  const { margin, width } = layout;
+  layout.paragraph(`${reference.reportDate || 'Date not recorded'} | ${reference.referenceId || 'Reference not recorded'}`);
+  layout.table(['Record', 'Details'], [0.23, 0.77], [
+    ['Assigned route', summary.routeName || 'Route name not recorded'],
+    ['Driver / truck', `${summary.collectorName || 'Unassigned'} / ${[].concat(summary.truckAssigned || 'No truck recorded').join(' - ')}`],
+    ['Area', reference.area || 'Not recorded'],
+    ['Shift', `${summary.shiftStart || 'Not recorded'} to ${summary.shiftEnd || 'Not recorded'}`],
+    ['Stop status', `${summary.segmentStatus || 'Unknown'} | ${stops.length} assigned stops`],
+  ]);
 
-  const imagePad = 8;
-  if (trailBuffer) {
+  async function mapSection(title, mapTrail, mapStops, height) {
+    // Reserve the entire map, legend and caption; move it together if needed.
+    layout.heading(title, height + 65);
+    const box = { x: margin, y: layout.y, width, height };
+    let image = null;
     try {
-      doc.image(trailBuffer, trailBox.x + imagePad, trailBox.y + imagePad, {
-        width: trailBox.width - imagePad * 2,
-        height: trailBox.height - imagePad * 2,
-      });
-    } catch {
-      trailBuffer = null;
-    }
+      image = await getSegmentTrailImage({ ...mapTrail, stopCoordinates: mapStops.map(s => s.coordinate).filter(validCoordinate), width: Math.round(width * 1.5), height: height * 1.5 });
+      if (image) doc.image(image, box.x, box.y, { width, height });
+    } catch { image = null; }
+    if (!image) drawTrailDiagram(doc, box, mapTrail, mapStops);
+    layout.y += height + 10;
+    layout.paragraph('Red: recorded GPS travel. Grey dashed: assigned route. Green markers: assigned stops.', { size: 8, gap: 3 });
+    layout.paragraph(image ? 'Map shows uploaded locations; stop markers do not confirm a visit.' : 'Geographic diagram (street map unavailable). Numbered stops match the table below.', { size: 8, gap: 3 });
   }
+  await mapSection('ASSIGNED ROUTE, RECORDED TRAIL AND STOPS', trail, stops, 230);
+  layout.paragraph(`GPS travel recorded: ${recordedTime(trail.firstRecordedAt)} to ${recordedTime(trail.lastRecordedAt)}. ${trail.pointCount || 0} uploaded GPS points.`, { size: 9 });
+  layout.paragraph('GPS travel can include roads outside the assigned route. Lines connect uploaded points within each recorded segment; they do not prove collection or fill gaps between trips.', { size: 8 });
+  if (!trail.expectedCoordinates?.length) layout.paragraph('Assigned route geometry is not available; listed stops are still included below.');
+  if (!trail.coveredCoordinates?.length) layout.paragraph('No uploaded GPS trail for this record. No travelled path is inferred from the assigned route.');
+  const missingCoordinates = stops.filter(s => !validCoordinate(s.coordinate)).length;
+  if (missingCoordinates) layout.paragraph(`${missingCoordinates} stop(s) have no coordinates and appear in the table only.`);
 
-  if (!trailBuffer) {
-    doc.save();
-    doc.fillColor('#f4faf7').rect(trailBox.x + 4, trailBox.y + 4, trailBox.width - 8, trailBox.height - 8).fill();
-    // Grid lines
-    doc.strokeColor('#dde7e0').lineWidth(0.5);
-    for (let gx = 1; gx <= 4; gx += 1) {
-      const gxPos = trailBox.x + 4 + (gx / 5) * (trailBox.width - 8);
-      doc.moveTo(gxPos, trailBox.y + 8).lineTo(gxPos, trailBox.y + trailBox.height - 12).stroke();
-    }
-    for (let gy = 1; gy <= 3; gy += 1) {
-      const gyPos = trailBox.y + 8 + (gy / 4) * (trailBox.height - 20);
-      doc.moveTo(trailBox.x + 10, gyPos).lineTo(trailBox.x + trailBox.width - 12, gyPos).stroke();
-    }
-
-    const allCoords = [...(trail.expectedCoordinates || []), ...(trail.coveredCoordinates || [])]
-      .filter((c) => c && Number.isFinite(c[0]) && Number.isFinite(c[1]));
-
-    if (allCoords.length > 0) {
-      const pad = 24;
-      const drawArea = { x: trailBox.x + pad, y: trailBox.y + pad, w: trailBox.width - pad * 2, h: trailBox.height - pad * 2 - 20 };
-      
-      let minLng = Infinity, minLat = Infinity, maxLng = -Infinity, maxLat = -Infinity;
-      allCoords.forEach(c => {
-        if (c[0] < minLng) minLng = c[0];
-        if (c[1] < minLat) minLat = c[1];
-        if (c[0] > maxLng) maxLng = c[0];
-        if (c[1] > maxLat) maxLat = c[1];
-      });
-      
-      const lngDiff = maxLng - minLng || 0.0001;
-      const latDiff = maxLat - minLat || 0.0001;
-      const aspectData = lngDiff / latDiff;
-      const aspectBox = drawArea.w / drawArea.h;
-      
-      let scaleX, scaleY;
-      if (aspectData > aspectBox) {
-        scaleX = drawArea.w / lngDiff;
-        scaleY = (drawArea.w / aspectData) / latDiff;
-      } else {
-        scaleY = drawArea.h / latDiff;
-        scaleX = (drawArea.h * aspectData) / lngDiff;
-      }
-      
-      const offsetX = drawArea.x + (drawArea.w - (lngDiff * scaleX)) / 2;
-      const offsetY = drawArea.y + (drawArea.h - (latDiff * scaleY)) / 2;
-      
-      const project = (c) => ({
-        x: offsetX + (c[0] - minLng) * scaleX,
-        y: offsetY + (latDiff * scaleY) - ((c[1] - minLat) * scaleY)
-      });
-
-      doc.save();
-      doc.rect(trailBox.x, trailBox.y, trailBox.width, trailBox.height).clip();
-      
-      const drawPath = (coords, color, width, dash) => {
-        if (!coords || !Array.isArray(coords)) return;
-        const validCoords = coords.filter((c) => c && Number.isFinite(c[0]) && Number.isFinite(c[1]));
-        if (validCoords.length < 2) return;
-        
-        doc.lineWidth(width).strokeColor(color).lineJoin('round').lineCap('round');
-        if (dash) doc.dash(dash[0], { space: dash[1] });
-        else doc.undash();
-        
-        const start = project(validCoords[0]);
-        doc.moveTo(start.x, start.y);
-        for (let i = 1; i < validCoords.length; i++) {
-          const pt = project(validCoords[i]);
-          doc.lineTo(pt.x, pt.y);
-        }
-        doc.stroke();
-        doc.undash();
-      };
-      
-      drawPath(trail.expectedCoordinates, COLORS.greyLight, 3, [4, 4]);
-      drawPath(trail.coveredCoordinates, COLORS.redSoft, 4);
-      
-      if (trail.entryCoord) {
-        const pt = project(trail.entryCoord);
-        doc.fillColor(COLORS.redSoft).circle(pt.x, pt.y, 6).fill();
-        doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(7).text('•', pt.x - 1.5, pt.y - 3.5);
-        doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9).text('Entry', pt.x - 12, pt.y - 16);
-      }
-      if (trail.exitCoord) {
-        const pt = project(trail.exitCoord);
-        doc.fillColor('#888888').circle(pt.x, pt.y, 6).fill();
-        doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9).text('Exit', pt.x - 8, pt.y - 16);
-      }
-      doc.restore();
-    } else {
-      const lineY = trailBox.y + trailBox.height / 2;
-      const entryPoint = { x: trailBox.x + 40, y: lineY };
-      const exitPoint = { x: trailBox.x + trailBox.width - 60, y: lineY };
-      doc.lineWidth(4).strokeColor(COLORS.redSoft).lineCap('round').moveTo(entryPoint.x, entryPoint.y).lineTo(exitPoint.x, exitPoint.y).stroke();
-      doc.dash(4, 4);
-      doc.lineWidth(3).moveTo(exitPoint.x, exitPoint.y).lineTo(trailBox.x + trailBox.width - 30, exitPoint.y).stroke();
-      doc.undash();
-      doc.fillColor(COLORS.redSoft).circle(entryPoint.x, entryPoint.y, 7).fill();
-      doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(8).text('•', entryPoint.x - 2, entryPoint.y - 4);
-      doc.fillColor('#888888').circle(exitPoint.x, exitPoint.y, 7).fill();
-      doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9).text('Entry', entryPoint.x - 12, entryPoint.y - 18);
-      doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9).text('Not logged', exitPoint.x - 12, exitPoint.y - 18);
-    }
-    
-    doc.fillColor(COLORS.greyLight).font('Helvetica').fontSize(9).text('N ↑', trailBox.x + trailBox.width - 24, trailBox.y + trailBox.height - 24);
-
-    let label = summary.streetSegment || 'Segment';
-    if (label.length > 55) label = label.substring(0, 52) + '...';
-    doc.fillColor(COLORS.tealDark).font('Helvetica-Bold').fontSize(10).text(
-      label,
-      trailBox.x + 10,
-      trailBox.y + trailBox.height - 18,
-      { width: trailBox.width - 20, align: 'center', lineBreak: false, height: 12 }
-    );
-    doc.restore();
+  // Keep short trails readable even when the planned route is much larger or distant.
+  const span = coords => {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    coords.filter(validCoordinate).forEach(([x, y]) => { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); });
+    return Math.max(maxX - minX, maxY - minY, 0);
+  };
+  if (trail.coveredCoordinates?.length && span(trail.coveredCoordinates) < span([...(trail.expectedCoordinates || []), ...trail.coveredCoordinates, ...stops.map(s => s.coordinate)]) * 0.3) {
+    await mapSection('RECORDED TRAIL - CLOSE VIEW', { ...trail, expectedCoordinates: [], expectedSegments: [] }, [], 180);
   }
-
-  drawLegend(doc, legendBox.x, legendBox.y, legendBox.width, {
-    entryTime: trail.entryTime || summary.geofenceEntry,
-    exitTime: trail.exitTime || summary.geofenceExit,
-    dwellNote: summary.dwellNote || (isFlagged ? 'No exit event — segment flagged' : 'Segment exited after dwell'),
-  });
-
-  const caption = trailBuffer
-    ? 'Fig. 1 — Segment traced via on-device geofencing. Red solid line: truck path. Dashed: uncovered portion.'
-    : 'Fig. 1 — Segment traced via on-device geofencing. Rendered as diagram when map service is unavailable.';
-  doc.fillColor(COLORS.grey).font('Helvetica').fontSize(9).text(caption, trailBox.x, trailBox.y + trailBox.height + 8, { width: trailBox.width });
-
-  doc.page.margins.bottom = originalBottomMargin;
+  layout.heading('RECORDED TRIPS', 140);
+  layout.paragraph('Trip start/end are device trip events. GPS first/last are uploaded locations; neither is a verified stop entry or exit.');
+  const trips = data.recordedTrips || [];
+  if (trips.length) layout.table(['Trip', 'Trip start / end', 'GPS first / last', 'Points'], [0.08, 0.39, 0.43, 0.10], trips.map((trip, i) => [
+    String(i + 1), `${recordedTime(trip.startedAt)}\n${recordedTime(trip.endedAt)}`, `${recordedTime(trip.firstRecordedAt)}\n${recordedTime(trip.lastRecordedAt)}`, String(trip.pointCount),
+  ]));
+  else layout.paragraph('No trip session or timestamped GPS events recorded.');
+  layout.heading('STOPS AND RECORDED PASSAGE TIMES', 115);
+  layout.paragraph('Entry and exit below are recorded stop-geofence events, in Manila time. "Not recorded" means there is no event confirming passage. Expected schedules are not used as actual times.');
+  const logs = data.logs || [];
+  const seen = new Set();
+  const rows = [];
+  function stopRow(stop, log) {
+    const status = !log ? 'No visit recorded' : log.flaggedForReview ? 'Flagged for review' : !log.exitedAt ? 'Exit not recorded' : 'Collected';
+    return [stop ? `${stop.number}. ${stop.name || 'Unnamed stop'}` : 'Unlisted / removed stop', recordedTime(log?.collectedAt), recordedTime(log?.exitedAt), `${status}${Number.isFinite(log?.dwellSeconds) ? `\nDwell: ${log.dwellSeconds}s` : ''}`];
+  }
+  for (const stop of stops) {
+    const matches = logs.filter(log => stop._id != null && String(log.stopId) === String(stop._id));
+    if (!matches.length) rows.push(stopRow(stop));
+    matches.forEach(log => { seen.add(log); rows.push(stopRow(stop, log)); });
+  }
+  logs.filter(log => !seen.has(log)).forEach(log => rows.push(stopRow(null, log)));
+  if (rows.length) layout.table(['Stop', 'Recorded entry', 'Recorded exit', 'Outcome'], [0.35, 0.22, 0.22, 0.21], rows);
+  else layout.paragraph('No assigned stops or stop events recorded.');
+  layout.paragraph(`Generated by ${reference.generatedBy || 'Admin'} | Exported ${reference.exportedAt || recordedTime(new Date())}`, { size: 8 });
   doc.end();
+}
+
+function buildRecordedTrips(input) {
+  const groups = new Map();
+  const sessions = Array.isArray(input.sessions) ? input.sessions : (input.session ? [input.session] : []);
+  sessions.forEach(session => groups.set(session.clientSessionId || 'legacy', { ...session, points: [] }));
+  (input.trailPoints || []).forEach(point => {
+    const key = point.clientSessionId || 'legacy';
+    if (!groups.has(key)) groups.set(key, { points: [] });
+    if (validCoordinate([point.longitude, point.latitude])) groups.get(key).points.push(point);
+  });
+  return [...groups.values()].map(trip => {
+    const times = trip.points.map(p => p.recordedAt).filter(value => value && Number.isFinite(new Date(value).getTime())).sort((a, b) => new Date(a) - new Date(b));
+    return { startedAt: trip.startedAt || null, endedAt: trip.endedAt || null, firstRecordedAt: times[0] || null, lastRecordedAt: times.at(-1) || null, pointCount: trip.points.length };
+  });
 }
 
 function buildRouteHistoryPayload(input, { adminUser, referenceCounter = 1 }) {
@@ -413,12 +313,13 @@ function buildRouteHistoryPayload(input, { adminUser, referenceCounter = 1 }) {
   const flaggedCount = logs.filter((l) => l.flaggedForReview).length;
   const collected = logs.filter((l) => l.status === 'collected').length;
   const totalStops = route.stops?.length || 0;
-  const trailTimestamps = (Array.isArray(input.trailPoints) ? input.trailPoints : [])
+  const orderedPoints = (Array.isArray(input.trailPoints) ? input.trailPoints : [])
+    .filter(point => validCoordinate([point.longitude, point.latitude]))
+    .sort((a, b) => new Date(a.recordedAt) - new Date(b.recordedAt));
+  const trailTimestamps = orderedPoints
     .map((point) => point.recordedAt)
-    .filter(Boolean)
+    .filter(value => value && Number.isFinite(new Date(value).getTime()))
     .sort((a, b) => new Date(a) - new Date(b));
-  const firstTrailAt = trailTimestamps[0] || session.startedAt || null;
-  const lastTrailAt = trailTimestamps[trailTimestamps.length - 1] || session.endedAt || null;
   const missingExit = logs.length > 0 && (logs.some((l) => l.flaggedForReview) || !lastLog.exitedAt);
   const statusText = totalStops > 0 && collected >= totalStops && flaggedCount === 0 && !missingExit
     ? 'Collected'
@@ -438,12 +339,12 @@ function buildRouteHistoryPayload(input, { adminUser, referenceCounter = 1 }) {
   const geofenceEntry = firstCollectedAt ? `${manilaTime(firstCollectedAt)}` : 'Not logged';
   const geofenceExit = lastExitedAt ? `${manilaTime(lastExitedAt)}` : 'Not logged — no exit event recorded';
   const collectorName = collector.name || 'Unassigned';
-  const collectorSubtitle = [collector.employeeId, collector.location || 'SWMO Naga City'].filter(Boolean).join(' · ');
+  const collectorSubtitle = collector.location || 'SWMO Naga City';
   const truckAssigned = truck.truckNumber || truck.plateNumber
     ? [`${truck.truckNumber || 'Truck'}${truck.plateNumber ? `  ${truck.plateNumber}` : ''}${truck.color ? ` · ${truck.color}` : ''}`, `Plate No. ${truck.plateNumber || 'Unregistered'}`]
     : 'No truck recorded';
   const shiftStartValue = cycle.shiftStart || session.startedAt || firstCollectedAt;
-  const shiftEndValue = cycle.shiftEnd || session.endedAt || lastExitedAt || lastTrailAt;
+  const shiftEndValue = cycle.shiftEnd || session.endedAt;
   const shiftStart = shiftStartValue ? `${manilaTime(shiftStartValue)}, ${manilaDateShort(shiftStartValue)}` : '—';
   const shiftEnd = shiftEndValue ? `${manilaTime(shiftEndValue)}, ${manilaDateShort(shiftEndValue)}` : '—';
   const dwellNote = flaggedCount > 0
@@ -455,17 +356,12 @@ function buildRouteHistoryPayload(input, { adminUser, referenceCounter = 1 }) {
       : `All stops exited within SWMO dwell thresholds`;
 
   const trail = input.trail || {};
-  const coveredCoordinates = trail.coveredCoordinates || input.trailPoints
-    ?.filter((p) => Number.isFinite(p.longitude) && Number.isFinite(p.latitude))
-    .map((p) => [Number(p.longitude), Number(p.latitude)]) || [];
-  const expectedCoordinates = route.routePath && route.routePath.type === 'LineString' && Array.isArray(route.routePath.coordinates)
-    ? route.routePath.coordinates
-    : route.routePath && route.routePath.type === 'MultiLineString' && Array.isArray(route.routePath.coordinates)
-      ? route.routePath.coordinates.flat(1)
-      : [];
-  const trailPoints = coveredCoordinates;
-  const entryCoord = trailPoints[0] || null;
-  const exitCoord = trailPoints[trailPoints.length - 1] || null;
+  const coveredSegments = Array.isArray(input.trailPoints) ? trailSegments(input.trailPoints) : (trail.coveredSegments || (trail.coveredCoordinates?.length ? [trail.coveredCoordinates] : []));
+  const expectedSegments = routeSegments(route.routePath);
+  const coveredCoordinates = coveredSegments.flat();
+  const expectedCoordinates = expectedSegments.flat();
+  const entryCoord = orderedPoints.length ? [orderedPoints[0].longitude, orderedPoints[0].latitude] : (coveredCoordinates[0] || null);
+  const exitCoord = orderedPoints.length ? [orderedPoints.at(-1).longitude, orderedPoints.at(-1).latitude] : (coveredCoordinates.at(-1) || null);
 
   const reportDate = manilaDateShort(eventDate.length === 10 && /^\d/.test(eventDate) ? new Date(`${eventDate}T00:00:00`) : new Date());
   const exportedAt = manilaDateTime(new Date());
@@ -473,6 +369,7 @@ function buildRouteHistoryPayload(input, { adminUser, referenceCounter = 1 }) {
 
   return {
     recordSummary: {
+      routeName: route.name || 'Unnamed route',
       streetSegment,
       collectorName,
       collectorSubtitle,
@@ -493,13 +390,19 @@ function buildRouteHistoryPayload(input, { adminUser, referenceCounter = 1 }) {
       exportedAt,
     },
     trail: {
+      coveredSegments,
+      expectedSegments,
       coveredCoordinates,
       expectedCoordinates,
       entryCoord,
       exitCoord,
+      firstRecordedAt: trailTimestamps[0] || null,
+      lastRecordedAt: trailTimestamps.at(-1) || null,
+      pointCount: coveredCoordinates.length,
       entryTime: firstCollectedAt,
       exitTime: lastExitedAt,
     },
+    recordedTrips: buildRecordedTrips(input),
     logs,
     stops: route.stops || [],
     session,

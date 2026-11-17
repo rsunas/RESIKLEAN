@@ -1,3 +1,4 @@
+import { requestJson } from './network-request';
 import NetInfo from '@react-native-community/netinfo';
 import * as SQLite from 'expo-sqlite';
 
@@ -42,6 +43,7 @@ export async function queueRouteCompletion(routeId: string, collectorId: string)
     );
   } catch (err) {
     console.warn('Failed to queue route completion in SQLite:', err);
+    throw new Error('Unable to save route completion on this phone. Free some storage and try again.');
   }
 }
 
@@ -93,12 +95,11 @@ export async function syncRouteCompletions(apiUrl: string, token: string, collec
   const db = await getDatabase();
   for (const item of pending) {
     try {
-      const response = await fetch(`${apiUrl.replace(/\/$/, '')}/collector/route/complete`, {
+      const { response, payload } = await requestJson(`${apiUrl.replace(/\/$/, '')}/collector/route/complete`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ routeId: item.routeId }),
       });
-      const payload = await response.json().catch(() => ({}));
       if (response.ok && payload.success) {
         await db.runAsync(
           `DELETE FROM driver_route_completions WHERE route_id = ? AND collector_id = ?`,
@@ -134,8 +135,8 @@ export function subscribeToRouteCompletionSync(apiUrl: string, token: string, co
     }
   };
   const subscription = NetInfo.addEventListener((state) => {
-    if (state.isConnected && state.isInternetReachable !== false) void sync();
+    if (state.isConnected && state.isInternetReachable !== false) void sync().catch(() => {});
   });
-  void sync();
+  void sync().catch(() => {});
   return subscription;
 }
