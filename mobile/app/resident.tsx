@@ -30,6 +30,7 @@ import { MotionPressable as Pressable, MotionModal as Modal, TabTransition, useS
 import { SignOutConfirmModal } from '@/components/sign-out-confirm-modal';
 import { PrivacyPolicyModal } from '@/components/signup-privacy';
 import { ResidentSettingsModal } from '@/components/resident-settings-modal';
+import { SegregationGuide } from '@/components/segregation-guide';
 import { SkeletonBlock, SkeletonRegion, SkeletonRows, useSkeletonVisible } from '@/components/loading-skeleton';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Card } from 'heroui-native';
@@ -1359,6 +1360,8 @@ export default function ResidentScreen() {
         {weeklyCollections.length ? weeklyCollections.map((collection, index) => <RevealRow key={collection.date} animate={revealSchedule} index={index}><View style={styles.weeklyRow}><Text style={styles.rowDay}>{collection.dayName}</Text><WastePill type={toWasteLabel(collection.wasteType)} /></View></RevealRow>) : !scheduleError ? <Text style={styles.emptyScheduleText}>No collections scheduled this week.</Text> : null}
         </SkeletonRegion>
       </View>
+
+      <SegregationGuide collections={weeklyCollections} />
 
       <HomeSectionLabel label="My recent reports" onViewAll={() => setActiveTab('report')} />
       {isLoadingReports && pastReports.length > 0 ? <ActivityIndicator accessibilityLabel="Loading" color="#0A7F4F" /> : null}

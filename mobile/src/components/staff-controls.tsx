@@ -74,7 +74,7 @@ export function StaffHistoryFilters({rows, value, onChange}: {rows: RecordRow[];
       </View> : null)}
       <Pressable accessibilityRole="button" onPress={() => update(query, ['', '', '', ''])} style={styles.clearAll}><Text style={styles.clearAllText}>Clear all</Text></Pressable>
     </ScrollView> : null}
-    <MotionModal visible={open} transparent statusBarTranslucent animationType="slide" onRequestClose={dismiss}>
+    <MotionModal visible={open} transparent statusBarTranslucent animationType="fade" onRequestClose={dismiss}>
       <View style={styles.sheetRoot}>
         <Pressable accessibilityRole="button" accessibilityLabel="Close filters without applying" onPress={dismiss} style={styles.sheetBackdrop}/>
         <View accessibilityViewIsModal onAccessibilityEscape={dismiss} style={[styles.sheet, {maxHeight:height - insets.top - 16, paddingBottom:Math.max(24,insets.bottom)}]}>
