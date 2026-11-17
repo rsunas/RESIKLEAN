@@ -28,13 +28,14 @@ import { BrandMark } from '@/components/brand-mark';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { deleteOfflineRouteMap, downloadOfflineRouteMap, getOfflineRouteMapStatus, type OfflineRouteMapStatus } from '@/lib/driver-offline-map';
 import { enableDriverGeofencing, getDriverGeofencingStatus, stopDriverGeofencing, updateDriverGeofences } from '@/lib/driver-geofencing';
-import { getQueuedRouteLogStopIds, getRouteLogQueueStats, subscribeToRouteLogSync, syncRouteLogQueue, type RouteLogSyncResult } from '@/lib/driver-route-log-queue';
+import { getQueuedRouteLogs, getRouteLogQueueStats, subscribeToRouteLogSync, syncRouteLogQueue, type RouteLogSyncResult } from '@/lib/driver-route-log-queue';
 import { isRouteCompletionQueued, queueRouteCompletion, subscribeToRouteCompletionSync } from '@/lib/driver-route-completion';
 import { getRouteHistoryCache, saveRouteHistoryCache, mergeRouteHistory } from '@/lib/driver-route-history-cache';
 import { getLocalDriverTrailHistory, subscribeToDriverTrailSync, syncDriverTrailQueue } from '@/lib/driver-trail-queue';
 import { claimTripStartPrompt, getRouteMonitoringPreference, setRouteMonitoringConsent, pauseRouteMonitoringToday, processDriverRouteLocation, cacheAssignedRoute, clearCachedAssignedRoute, clearRouteProximityEvents, enableRouteProximityTracking, getCachedAssignedRoute, getRouteProximityStatus, stopRouteProximityTracking, subscribeToRouteProximityStatus, type RoutePresenceStatus } from '@/lib/driver-route-proximity';
 import { clearSession, getSession, type AccountUser, type AuthSession } from '@/lib/session';
-import { queueCapacityLog, syncCapacityQueue } from '@/lib/driver-capacity-queue';
+import { queueCapacityLog, syncCapacityQueue, getLocalCapacityReset, type CapacityContext } from '@/lib/driver-capacity-queue';
+import { countLoadedStops, truckCapacityTonnes, TONNES_PER_STOP, type CapacityStop } from '@/lib/driver-capacity';
 import NetInfo from '@react-native-community/netinfo';
 import { monitoringDay } from '@/lib/route-presence-filter';
 import {
@@ -44,8 +45,6 @@ import {
 } from '@/lib/camera-recovery';
 import { optimizeProofPhoto, proofCameraOptions } from '@/lib/proof-photo';
 
-const TONNES_PER_STOP = 0.1;
-const TRUCK_DENSITY = 0.294;
 
 type CollectorTab = 'map' | 'history' | 'profile';
 
@@ -86,7 +85,8 @@ type DriverRoute = {
   schedule: number[];
   stops: RouteStop[];
   routePath?: RoutePath;
-  assignedTruck?: { plateNumber?: string; truckNumber?: string; color?: string; length?: number; width?: number; height?: number } | null;
+  assignedTruck?: { _id?: string; plateNumber?: string; truckNumber?: string; color?: string; length?: number; width?: number; height?: number } | null;
+  capacityCycle?: { id: string; shiftStart: string } | null;
   isScheduledToday?: boolean;
   isCompletedToday?: boolean;
 };
@@ -109,6 +109,8 @@ type RouteProgress = {
 };
 
 type CapacityLog = {
+  cycleLogId?: string;
+  truckId?: string;
   type?: 'reset' | 'log';
   fillLevelPct: number;
   loggedAt: string;
@@ -436,6 +438,7 @@ export default function CollectorScreen() {
   const [pendingRouteLogs, setPendingRouteLogs] = useState(0);
   const [failedRouteLogs, setFailedRouteLogs] = useState(0);
   const [queuedRouteStopIds, setQueuedRouteStopIds] = useState<string[]>([]);
+  const [queuedCapacityStops, setQueuedCapacityStops] = useState<CapacityStop[]>([]);
   const [complaints, setComplaints] = useState<ComplaintMarker[]>([]);
   const [selectedComplaint, setSelectedComplaint] = useState<ComplaintMarker | null>(null);
   const closingComplaint = useClosingValue(selectedComplaint);
@@ -457,6 +460,12 @@ export default function CollectorScreen() {
   
   const [isEmptiedUndoing, setIsEmptiedUndoing] = useState(false);
   const [localResetTimestamp, setLocalResetTimestamp] = useState<number>(0);
+  const [isSavingCapacity, setIsSavingCapacity] = useState(false);
+  const capacityContext: CapacityContext | null = assignedRoute?.capacityCycle?.id && assignedRoute.assignedTruck?._id && (session?.user._id || session?.user.id)
+    ? { collectorId: (session.user._id || session.user.id)!, cycleLogId: assignedRoute.capacityCycle.id, routeId: assignedRoute._id, truckId: assignedRoute.assignedTruck._id } : null;
+  const capacityKey = capacityContext ? `${capacityContext.collectorId}:${capacityContext.cycleLogId}:${capacityContext.truckId}:${capacityContext.routeId}` : '';
+  const capacityKeyRef = useRef(capacityKey);
+  capacityKeyRef.current = capacityKey;
   const emptyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTogglingMonitoringRef = useRef(false);
   const monitoringSuspendedRef = useRef(false);
@@ -466,19 +475,30 @@ export default function CollectorScreen() {
   const [autoMonitoringRevision, setAutoMonitoringRevision] = useState(0);
   
   const handleTruckEmptied = () => {
+    if (!capacityContext || emptyTimeoutRef.current || isSavingCapacity || truckCapacityTonnes(assignedRoute?.assignedTruck) <= 0) return;
+    const context = capacityContext;
+    const key = capacityKey;
+    const now = Date.now();
     setIsEmptiedUndoing(true);
-    emptyTimeoutRef.current = setTimeout(() => {
+    emptyTimeoutRef.current = setTimeout(async () => {
+      if (capacityKeyRef.current !== key) return;
       setIsEmptiedUndoing(false);
-      const now = Date.now();
-      setLocalResetTimestamp(now);
-      const clientId = 'reset-' + now;
-      queueCapacityLog({ clientId, type: 'reset', fillLevelPct: 0, loggedAt: new Date(now).toISOString() }).catch(() => {});
-      if (session?.token) syncCapacityQueue(session.token).catch(() => {});
+      setIsSavingCapacity(true);
+      try {
+        await queueCapacityLog({ ...context, clientId: `reset-${context.collectorId}-${now}`, type: 'reset', fillLevelPct: 0, loggedAt: new Date(now).toISOString() });
+        if (capacityKeyRef.current === key) setLocalResetTimestamp(now);
+        if (session?.token) void syncCapacityQueue(session.token, context.collectorId).catch(() => {});
+      } catch {
+        if (capacityKeyRef.current === key) setRouteActionMessage({ kind: 'error', title: 'Could not save truck reset', message: 'The truck load was not reset. Please try Truck emptied again.' });
+      } finally {
+        if (capacityKeyRef.current === key) { emptyTimeoutRef.current = null; setIsSavingCapacity(false); }
+      }
     }, 10000);
   };
   
   const cancelTruckEmptied = () => {
     if (emptyTimeoutRef.current) clearTimeout(emptyTimeoutRef.current);
+    emptyTimeoutRef.current = null;
     setIsEmptiedUndoing(false);
   };
   const capacityPositionRef = useRef({ x: 0, y: 0 });
@@ -497,6 +517,33 @@ export default function CollectorScreen() {
     },
   }), []);
   const collectorId = session?.user._id || session?.user.id;
+  useEffect(() => {
+    let cancelled = false;
+    capacityKeyRef.current = capacityKey;
+    setLocalResetTimestamp(0);
+    setIsEmptiedUndoing(false);
+    setIsSavingCapacity(false);
+    if (capacityKey) {
+      const [owner, cycleLogId, truckId, routeId] = capacityKey.split(':');
+      void getLocalCapacityReset({ collectorId: owner, cycleLogId, truckId, routeId }).then(value => {
+        if (!cancelled) setLocalResetTimestamp(current => Math.max(current, value));
+      }).catch(() => {});
+    }
+    return () => {
+      cancelled = true;
+      capacityKeyRef.current = '';
+      if (emptyTimeoutRef.current) clearTimeout(emptyTimeoutRef.current);
+      emptyTimeoutRef.current = null;
+    };
+  }, [capacityKey]);
+
+  useEffect(() => {
+    if (!session?.token || !collectorId) return;
+    const retry = () => { void syncCapacityQueue(session.token, collectorId).catch(() => {}); };
+    retry();
+    const interval = setInterval(retry, 30000);
+    return () => clearInterval(interval);
+  }, [collectorId, session?.token, networkRevision]);
   const monitoringContextRef = useRef({ collectorId, routeId: assignedRoute?._id, eligible: false });
   const scheduledWeekday = new Date(Date.now() + 8 * 60 * 60 * 1000).getUTCDay();
   // A trip records travel; collection-day/completion flags only control auto prompts.
@@ -509,11 +556,13 @@ export default function CollectorScreen() {
   const refreshQueuedRouteStops = useCallback(async () => {
     if (!collectorId) return;
     try {
-      const [stopIds, queueStats] = await Promise.all([
-        getQueuedRouteLogStopIds(collectorId),
+      const [logs, queueStats] = await Promise.all([
+        getQueuedRouteLogs(collectorId),
         getRouteLogQueueStats(collectorId),
       ]);
-      setQueuedRouteStopIds(stopIds);
+      const dayStart = Date.parse(`${monitoringDay()}T00:00:00+08:00`);
+      setQueuedRouteStopIds([...new Set(logs.filter(log => Date.parse(log.collectedAt) >= dayStart).map(log => log.stopId))]);
+      setQueuedCapacityStops(logs);
       setPendingRouteLogs(queueStats.pending);
       setFailedRouteLogs(queueStats.failed);
     } catch {
@@ -880,35 +929,29 @@ export default function CollectorScreen() {
   const pending = Math.max(0, progress?.remaining ?? totalStops - completedStopIds.size);
   const reviewCount = (progress?.logs || []).filter((log) => log.flaggedForReview).length;
   const capacityCompletedStops = useMemo(
-    () => new Set([...completedStopIds, ...queuedRouteStopIds]).size,
-    [completedStopIds, queuedRouteStopIds],
+    () => new Set([...completedStopIds, ...queuedRouteStopIds].filter(id => routeStops.some(stop => stop._id === id))).size,
+    [completedStopIds, queuedRouteStopIds, routeStops],
   );
   const routeProgressPct = totalStops
     ? Math.round(Math.min(100, Math.max(0, (capacityCompletedStops / totalStops) * 100)))
     : 0;
 
-  const latestResetTime = Math.max(localResetTimestamp, latestCapacityLog ? new Date(latestCapacityLog.loggedAt).getTime() : 0);
+  const serverResetTime = latestCapacityLog?.cycleLogId === capacityContext?.cycleLogId && latestCapacityLog?.truckId === capacityContext?.truckId
+    ? Date.parse(latestCapacityLog?.loggedAt || '') || 0 : 0;
+  const latestResetTime = Math.max(localResetTimestamp, serverResetTime);
+  const capacityDayStart = Date.parse(`${monitoringDay()}T00:00:00+08:00`);
   
   const stopsSinceReset = useMemo(() => {
-    let count = 0;
-    if (progress?.logs) {
-      count += progress.logs.filter(log => new Date(log.collectedAt).getTime() > latestResetTime).length;
-    }
-    // queued stops are always since reset (offline local)
-    count += queuedRouteStopIds.length;
-    return count;
-  }, [progress, queuedRouteStopIds, latestResetTime]);
+    return countLoadedStops([...(progress?.logs || []), ...queuedCapacityStops], routeStops.map(stop => stop._id), latestResetTime,
+      Math.max(capacityDayStart, Date.parse(assignedRoute?.capacityCycle?.shiftStart || '') || 0));
+  }, [progress, queuedCapacityStops, routeStops, latestResetTime, capacityDayStart, assignedRoute?.capacityCycle?.shiftStart]);
   
-  const truckLength = assignedRoute?.assignedTruck?.length ?? 0;
-  const truckWidth = assignedRoute?.assignedTruck?.width ?? 0;
-  const truckHeight = assignedRoute?.assignedTruck?.height ?? 0;
-  const truckCapacityM3 = truckLength * truckWidth * truckHeight;
-  const capacityTonnes = truckCapacityM3 * TRUCK_DENSITY;
+  const capacityTonnes = truckCapacityTonnes(assignedRoute?.assignedTruck);
   
   const estimatedTonnes = stopsSinceReset * TONNES_PER_STOP;
   const cylinderPct = capacityTonnes > 0 ? Math.min(100, Math.max(0, (estimatedTonnes / capacityTonnes) * 100)) : 0;
   
-  const remainingStops = totalStops - completed;
+  const remainingStops = Math.max(0, totalStops - capacityCompletedStops);
   const projectedPct = capacityTonnes > 0 ? ((estimatedTonnes + (remainingStops * TONNES_PER_STOP)) / capacityTonnes) * 100 : 0;
   
   const capacityStatus = projectedPct > 100 || cylinderPct >= 90 ? 'CRITICAL' : projectedPct >= 90 ? 'WARNING' : 'OK';
@@ -1633,7 +1676,9 @@ export default function CollectorScreen() {
             <View style={[styles.capacityCylinder, capacityStatus === 'CRITICAL' && styles.capacityCylinderCritical, capacityStatus === 'WARNING' && styles.capacityCylinderWarning]}>
               <View style={[styles.capacityCylinderFill, { height: `${cylinderPct}%` }, capacityStatus === 'CRITICAL' && styles.capacityCylinderFillCritical, capacityStatus === 'WARNING' && styles.capacityCylinderFillWarning]} />
               <View style={[styles.capacityCylinderTop, capacityStatus === 'CRITICAL' && styles.capacityCylinderTopCritical, capacityStatus === 'WARNING' && styles.capacityCylinderTopWarning]} />
-              {stopsSinceReset === 0
+              {capacityTonnes <= 0
+                ? <Text style={styles.capacityNoLoadText}>{assignedRoute?.assignedTruck ? 'Truck size unavailable.' : 'No truck assigned.'}</Text>
+                : stopsSinceReset === 0
                 ? <Text style={styles.capacityNoLoadText}>No stops{`\n`}collected yet.</Text>
                 : <Text style={[styles.capacityCylinderPercent, capacityStatus === 'CRITICAL' && styles.capacityCylinderPercentCritical]}>{Math.round(cylinderPct)}%</Text>}
             </View>
@@ -1649,7 +1694,7 @@ export default function CollectorScreen() {
                 <Text style={styles.capacityEmptiedUndoText}>Undo (10s)</Text>
               </Pressable>
             ) : (
-              <Pressable disabled={!assignedRoute} accessibilityState={{ disabled: !assignedRoute }} onPress={handleTruckEmptied} style={styles.capacityEmptiedButton}>
+              <Pressable disabled={!capacityContext || capacityTonnes <= 0 || isSavingCapacity} accessibilityState={{ disabled: !capacityContext || capacityTonnes <= 0 || isSavingCapacity }} onPress={handleTruckEmptied} style={styles.capacityEmptiedButton}>
                 <Text style={styles.capacityEmptiedButtonText}>Truck emptied</Text>
               </Pressable>
             )}
@@ -1877,7 +1922,6 @@ export default function CollectorScreen() {
         <View style={styles.accountCard}>
           <Text style={styles.accountHeading}>ACCOUNT DETAILS</Text>
           <SkeletonRegion state={profileSkeleton} placeholder={<SkeletonRows kind="account" count={6} />}>
-          <AccountDetail label="Employee ID" value={profile?.employeeId || 'Not provided'} />
           <AccountDetail label="Contact" value={profile?.phone || profile?.contact || 'Not provided'} />
           <AccountDetail label="Location" value={profile?.location || 'Not provided'} />
           <AccountDetail label="Email" value={profile?.email || 'Not provided'} />

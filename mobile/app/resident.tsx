@@ -17,6 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   Image,
   Platform,
   ScrollView,
@@ -36,7 +37,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Card } from 'heroui-native';
 import { House, MessageCircleWarning, Newspaper, UserRound } from 'lucide-react-native';
 import { BrandMark } from '@/components/brand-mark';
-import { cancelScheduledCollectionReminders, scheduleCollectionReminders } from '@/lib/notifications';
+import { cancelScheduledCollectionReminders, scheduleCollectionReminders, setCollectionReminderPreference } from '@/lib/notifications';
 import { clearSession, getSession, saveSession, type AuthSession } from '@/lib/session';
 import { type ApiWasteType, type LegacyScheduleData, type ScheduleData, type UpcomingCollection } from '@/types/resident-schedule';
 import {
@@ -519,9 +520,12 @@ export default function ResidentScreen() {
   const isDarkTheme = appTheme === 'dark';
   const networkRevision = useNetworkRecovery();
   const router = useRouter();
-  const { tab } = useLocalSearchParams<{ tab?: string }>();
+  const { tab, notificationId } = useLocalSearchParams<{ tab?: string; notificationId?: string }>();
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<ResidentTab>(tab === 'schedule' ? 'schedule' : 'home');
+  useEffect(() => {
+    if (tab === 'home' && notificationId) setActiveTab('home');
+  }, [notificationId, tab]);
   const [isSignOutConfirmVisible, setIsSignOutConfirmVisible] = useState(false);
   const [isPrivacyVisible, setIsPrivacyVisible] = useState(false);
   const [showAllUpcoming, setShowAllUpcoming] = useState(false);
@@ -1320,13 +1324,40 @@ export default function ResidentScreen() {
     return date >= currentWeekStart && date <= currentWeekEnd;
   });
   const upcomingCollections = useMemo(() => schedule?.upcomingCollections || [], [schedule?.upcomingCollections]);
+  const reminderOwnerId = session?.user._id || session?.user.id || session?.user.email;
   useEffect(() => {
-    if (!session?.token || session.user.role !== 'resident' || !schedule) return;
-
-    void scheduleCollectionReminders(upcomingCollections, schedule.location || location).catch((error) => {
-      console.warn('Collection reminder scheduling failed:', error);
-    });
-  }, [location, schedule, session?.token, session?.user.role, upcomingCollections]);
+    if (!session?.token || session.user.role !== 'resident' || !schedule || !reminderOwnerId || isSettingsVisible) return;
+    let disposed = false;
+    let ready = false;
+    const reconcile = () => {
+      if (disposed || !ready || AppState.currentState === 'background') return;
+      void scheduleCollectionReminders(upcomingCollections, schedule.location || location, reminderOwnerId).catch((error) => {
+        console.warn('Collection reminder scheduling failed:', error);
+      });
+    };
+    void (async () => {
+      // Load the existing server preference, with the persisted device value as
+      // the offline fallback. Do not re-enable reminders on every schedule refresh.
+      try {
+        if (API_URL) {
+          const { response, payload } = await requestJson<ApiResponse<{ settings: { notifications?: { pushEnabled?: boolean; collectionReminders?: boolean } } }>>(`${API_URL}/auth/settings`, {
+            headers: { Authorization: `Bearer ${session.token}` },
+          });
+          if (!disposed && response.ok && payload.success && payload.data) {
+            const preferences = payload.data.settings.notifications;
+            await setCollectionReminderPreference(reminderOwnerId, preferences?.pushEnabled !== false && preferences?.collectionReminders !== false);
+          }
+        }
+      } catch (error) {
+        console.warn('Using saved collection notification preferences:', error);
+      }
+      ready = true;
+      reconcile();
+    })();
+    const subscription = AppState.addEventListener('change', state => { if (state === 'active') reconcile(); });
+    const timer = setInterval(reconcile, 30000);
+    return () => { disposed = true; subscription.remove(); clearInterval(timer); };
+  }, [isSettingsVisible, location, reminderOwnerId, schedule, session?.token, session?.user.role, upcomingCollections]);
 
   const visibleUpcomingCollections = showAllUpcoming ? upcomingCollections : upcomingCollections.slice(0, 3);
   const nextCollectionEntry = schedule?.upcomingCollections.find((collection) => (
@@ -1492,7 +1523,7 @@ export default function ResidentScreen() {
 
       <View style={styles.menuCard}>
         <Pressable accessibilityRole="button" onPress={() => setIsSettingsVisible(true)} style={styles.menuRow}><View accessible={false} style={styles.profileMenuBadge}><Feather color="#0A7F4F" name="settings" size={20} /></View><Text style={styles.menuText}>Settings & Preferences</Text><Feather color="#5A6761" name="chevron-right" size={20} /></Pressable>
-        <Pressable accessibilityRole="button" onPress={() => setActiveTab('schedule')} style={styles.menuRow}><View accessible={false} style={styles.profileMenuBadge}><Feather color="#0A7F4F" name="calendar" size={20} /></View><Text style={styles.menuText}>Collection Schedule</Text><Feather color="#5A6761" name="chevron-right" size={20} /></Pressable>
+        <Pressable accessibilityRole="button" onPress={() => setActiveTab('home')} style={styles.menuRow}><View accessible={false} style={styles.profileMenuBadge}><Feather color="#0A7F4F" name="calendar" size={20} /></View><Text style={styles.menuText}>Collection Schedule</Text><Feather color="#5A6761" name="chevron-right" size={20} /></Pressable>
         <Pressable accessibilityRole="button" onPress={() => setIsPrivacyVisible(true)} style={[styles.menuRow, { borderBottomWidth: 0 }]}><View accessible={false} style={styles.profileMenuBadge}><Feather color="#0A7F4F" name="shield" size={20} /></View><Text style={styles.menuText}>Privacy Policy</Text><Feather color="#5A6761" name="chevron-right" size={20} /></Pressable>
       </View>
 

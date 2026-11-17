@@ -34,6 +34,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText as Text } from '@/components/app-text';
 import { MotionModal as Modal, MotionPressable as Pressable, AccordionBody, MotionChevron } from '@/components/app-motion';
 import type { AuthSession } from '@/lib/session';
+import { setCollectionReminderPreference } from '@/lib/notifications';
 import { useAppPreferences, useAppTheme } from '@/hooks/app-preferences';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -464,6 +465,8 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
       if (!response.ok || !result.success || !result.data) throw new Error(result.error || 'Unable to load settings.');
       const loadedSettings: UserSettings = { ...DEFAULT_SETTINGS, ...result.data.settings, theme: result.data.settings.theme === 'dark' ? 'dark' : 'light' };
       setSettings(loadedSettings);
+      const ownerId = session.user._id || session.user.id || session.user.email;
+      if (ownerId) await setCollectionReminderPreference(ownerId, loadedSettings.notifications.pushEnabled && loadedSettings.notifications.collectionReminders);
       updatePreferences({ theme: loadedSettings.theme, language: loadedSettings.language === 'fil' ? 'fil' : 'en' });
       setAuthProvider(result.data.authProvider === 'google' ? 'google' : 'local');
       setIsPasswordSet(result.data.isPasswordSet);
@@ -472,7 +475,7 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
     } finally {
       setIsLoadingSettings(false);
     }
-  }, [apiUrl, session.token, updatePreferences]);
+  }, [apiUrl, session.token, session.user, updatePreferences]);
 
   const loadAppInfo = useCallback(async () => {
     if (!apiUrl) return;
@@ -513,6 +516,8 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
         if (result.data?.settings) {
           const saved: UserSettings = { ...DEFAULT_SETTINGS, ...result.data.settings, theme: result.data.settings.theme === 'dark' ? 'dark' : 'light' };
           setSettings(saved);
+          const ownerId = session.user._id || session.user.id || session.user.email;
+          if (ownerId) await setCollectionReminderPreference(ownerId, saved.notifications.pushEnabled && saved.notifications.collectionReminders);
           updatePreferences({ theme: saved.theme, language: saved.language === 'fil' ? 'fil' : 'en' });
         }
       } catch {
@@ -522,7 +527,7 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
         setIsSavingSettings(false);
       }
     },
-    [apiUrl, session.token, loadSettings, updatePreferences],
+    [apiUrl, session.token, session.user, loadSettings, updatePreferences],
   );
 
   const setTheme = (theme: Theme) => {
@@ -591,9 +596,8 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
 
   const displayName = session.user.name?.trim() || 'Resident';
 
-  const fallbackHotlines = appInfo?.hotlines ?? [{ label: 'SWMO Hotline', number: '(054) 881-2550' }];
-  const fallbackAddress = appInfo?.address ?? 'Municipal Office, Naga City';
-  const fallbackEmail = appInfo?.email;
+  const officeAddress = 'Roxas Ave., Concepcion Pequeña, Naga City, Naga City, Philippines, 4400';
+  const contactEmail = 'swmo@naga.gov.ph';
   const fallbackWasteGuide = appInfo?.wasteGuide ?? [
     { category: 'Biodegradable', color: '#07815f', accentColor: '#07815f', items: ['Food scraps', 'Garden waste', 'Paper', 'Cardboard'] },
     { category: 'Non-Biodegradable', color: '#2f70d7', accentColor: '#2f70d7', items: ['Plastic bags', 'Styrofoam', 'Tin cans (non-recyclable)', 'Rubber'] },
@@ -704,7 +708,7 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
                 iconBg="#f0f9ff"
                 iconColor="#2f70d7"
                 label="Collection Reminders"
-                sublabel="Get notified before your collection day"
+                sublabel="One alert when collection starts or is underway, and one when it ends"
                 right={
                   <Switch
                     disabled={!settings.notifications.pushEnabled}
@@ -777,35 +781,16 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
             {/* ── Info & Support ───────────────────────────────── */}
             <SectionHeader label="Information & Support" />
 
-            {/* Hotlines */}
+            {/* Office contact */}
             <View style={ss.card}>
               <View style={ss.infoSectionLabel}>
-                <Feather color="#07815f" name="phone" size={14} />
-                <Text style={ss.infoSectionLabelText}>SWMO HOTLINES</Text>
+                <Feather color="#07815f" name="mail" size={14} />
+                <Text style={ss.infoSectionLabelText}>CONTACT SWMO</Text>
               </View>
-              {fallbackHotlines.map((h, index) => (
                 <Pressable
-                  accessibilityRole="button"
-                  key={h.number}
-                  onPress={() => { void Linking.openURL(`tel:${h.number.replace(/\s/g, '')}`); }}
-                  style={[ss.hotlineRow, index < fallbackHotlines.length - 1 && ss.settingRowBorder]}
-                >
-                  <View style={ss.hotlineIconWrap}>
-                    <Feather color="#07815f" name="phone-call" size={14} />
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={ss.hotlineLabel}>{h.label}</Text>
-                    <Text style={ss.hotlineNumber}>{h.number}</Text>
-                  </View>
-                  <View style={ss.callBadge}>
-                    <Text style={ss.callBadgeText}>Call</Text>
-                  </View>
-                </Pressable>
-              ))}
-              {fallbackEmail ? (
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={() => { void Linking.openURL(`mailto:${fallbackEmail}`); }}
+                  accessibilityRole="link"
+                  accessibilityLabel={`Email SWMO at ${contactEmail}`}
+                  onPress={() => { void Linking.openURL(`mailto:${contactEmail}`).catch(() => Alert.alert('Email unavailable', `Please email ${contactEmail} using your email app.`)); }}
                   style={[ss.hotlineRow, ss.settingRowBorder]}
                 >
                   <View style={ss.hotlineIconWrap}>
@@ -813,20 +798,19 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={ss.hotlineLabel}>Email</Text>
-                    <Text style={ss.hotlineNumber}>{fallbackEmail}</Text>
+                    <Text style={ss.hotlineNumber}>{contactEmail}</Text>
                   </View>
                   <View style={ss.callBadge}>
                     <Text style={ss.callBadgeText}>Email</Text>
                   </View>
                 </Pressable>
-              ) : null}
               <View style={[ss.hotlineRow, { borderBottomWidth: 0 }]}>
                 <View style={ss.hotlineIconWrap}>
                   <Feather color="#07815f" name="map-pin" size={14} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={ss.hotlineLabel}>Office Address</Text>
-                  <Text style={ss.hotlineNumber}>{fallbackAddress}</Text>
+                  <Text style={ss.hotlineNumber}>{officeAddress}</Text>
                 </View>
               </View>
             </View>

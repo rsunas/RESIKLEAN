@@ -294,6 +294,10 @@ export async function getQueuedRouteLogStopIds(collectorId: string) {
   return [...new Set(rows.map((row) => row.stop_id))];
 }
 
+export async function getQueuedRouteLogs(collectorId: string) {
+  return (await getQueueRows(collectorId)).map(toRouteLog);
+}
+
 export function syncRouteLogQueue(context: RouteLogSyncContext) {
   if (!syncInFlight) {
     syncInFlight = syncQueue(context).then(result => {

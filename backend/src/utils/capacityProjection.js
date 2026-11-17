@@ -1,4 +1,5 @@
 const MIN_STOPS = 3;
+const DENSITY_TONNES_PER_M3 = 0.294;
 
 function calculateProjection(fillLevel, completedStops, totalStops) {
   // Always critical if actual fill level is 90% or more
@@ -39,6 +40,7 @@ function calculateProjection(fillLevel, completedStops, totalStops) {
 }
 
 module.exports = {
+  DENSITY_TONNES_PER_M3,
   MIN_STOPS,
   calculateProjection,
 };

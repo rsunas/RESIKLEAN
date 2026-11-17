@@ -75,6 +75,7 @@ const getAssignedRoute = async (req, res) => {
       isScheduledToday,
       isCompletedToday,
       assignedTruck: activeCycle?.truckId || null,
+      capacityCycle: activeCycle ? { id: activeCycle._id, shiftStart: activeCycle.shiftStart } : null,
     });
   } catch (err) {
     sendError(res, err.message, 500);
@@ -968,7 +969,7 @@ const batchSyncCapacity = async (req, res) => {
 
     const clientIds = logs.map(l => l.clientId).filter(Boolean);
     const existingLogs = clientIds.length
-      ? await CapacityLog.find({ clientId: { $in: clientIds } }).select('clientId').lean()
+      ? await CapacityLog.find({ clientId: { $in: clientIds }, driverId: req.user._id }).select('clientId').lean()
       : [];
     const existingSet = new Set(existingLogs.map(l => l.clientId));
 
@@ -987,6 +988,17 @@ const batchSyncCapacity = async (req, res) => {
       }
       if (existingSet.has(clientId)) {
         syncedIds.push(clientId);
+        continue;
+      }
+      // Never apply an offline reset to a different truck, shift, or route.
+      if ((record.cycleLogId && String(record.cycleLogId) !== String(cycle._id))
+        || (record.truckId && String(record.truckId) !== String(cycle.truckId._id))
+        || (record.routeId && String(record.routeId) !== String(route._id))) {
+        failed.push({ clientId, reason: 'Assignment changed; reset retained on device' });
+        continue;
+      }
+      if (type && !['reset', 'log'].includes(type)) {
+        failed.push({ clientId, reason: 'Invalid capacity log type' });
         continue;
       }
       
@@ -1032,11 +1044,9 @@ const batchSyncCapacity = async (req, res) => {
         syncedIds.push(clientId);
         existingSet.add(clientId);
       } catch (err) {
-        if (err.code === 11000) {
-          syncedIds.push(clientId);
-        } else {
-          failed.push({ clientId, reason: err.message });
-        }
+        const duplicate = err.code === 11000 && await CapacityLog.findOne({ clientId, driverId: req.user._id }).lean();
+        if (duplicate) syncedIds.push(clientId);
+        else failed.push({ clientId, reason: err.message });
       }
     }
 

@@ -1437,7 +1437,6 @@ export default function StaffScreen() {
     const currentMonth = history.length;
     const currentMonthTonnage = history.reduce((total, submission) => total + submission.tonnes, 0);
     const profileName = profile?.name || 'Staff profile';
-    const profileShift = profile?.shift ? `${formatRole(profile.shift)} shift` : 'Not provided';
     return (
       <ScrollView contentContainerStyle={styles.profileScrollContent} showsVerticalScrollIndicator={false}>
         <SkeletonRegion state={profileSkeleton} placeholder={<SkeletonBlock height={215} radius={24} />}>
@@ -1468,15 +1467,13 @@ export default function StaffScreen() {
 
         <View style={styles.accountCard}>
           <Text style={styles.accountHeading}>Account details</Text>
-          <SkeletonRegion state={profileSkeleton} placeholder={<SkeletonRows kind="account" count={5} />}>
+          <SkeletonRegion state={profileSkeleton} placeholder={<SkeletonRows kind="account" count={4} />}>
           {profileError ? <Text accessibilityRole="alert" style={styles.dataError}>{profileError}</Text> : null}
           {profile || !profileError ? <>
-            <ProfileAccountRow icon="id-card" label="Employee ID" value={profile?.employeeId || 'Not provided'} />
             <ProfileAccountRow icon="phone" label="Contact" value={profile?.phone || profile?.contact || 'Not provided'} />
             <ProfileAccountRow icon="mail" label="Email" value={profile?.email || 'Not provided'} />
             <ProfileAccountRow icon="map-pin" label="Location" value={profile?.location || 'Not provided'} />
-            <ProfileAccountRow icon="map-pin" label="Assigned area" value={profile?.barangay || 'Not assigned'} />
-            <ProfileAccountRow icon="clock" label="Shift" value={profileShift} last />
+            <ProfileAccountRow icon="map-pin" label="Assigned area" value={profile?.barangay || 'Not assigned'} last />
           </> : null}
           </SkeletonRegion>
         </View>

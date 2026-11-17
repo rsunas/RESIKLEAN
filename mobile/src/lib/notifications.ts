@@ -8,6 +8,8 @@ import getAllScheduledNotificationsAsync from 'expo-notifications/build/getAllSc
 import cancelScheduledNotificationAsync from 'expo-notifications/build/cancelScheduledNotificationAsync';
 import scheduleNotificationAsync from 'expo-notifications/build/scheduleNotificationAsync';
 import setNotificationChannelAsync from 'expo-notifications/build/setNotificationChannelAsync';
+import Storage from 'expo-sqlite/kv-store';
+import { buildCollectionReminderPlan, shouldScheduleReminder } from './collection-reminder-plan';
 import { Platform } from 'react-native';
 import type { UpcomingCollection } from '@/types/resident-schedule';
 
@@ -24,6 +26,7 @@ setNotificationHandler({
   }),
 });
 
+let requestedPermission = false;
 async function ensureNotificationPermissionsAsync(): Promise<boolean> {
   if (Platform.OS === 'web') return false;
 
@@ -42,7 +45,8 @@ async function ensureNotificationPermissionsAsync(): Promise<boolean> {
 
   const permission = await getPermissionsAsync();
   let granted = permission.granted;
-  if (!granted) {
+  if (!granted && permission.canAskAgain !== false && !requestedPermission) {
+    requestedPermission = true;
     const requested = await requestPermissionsAsync();
     granted = requested.granted;
   }
@@ -50,123 +54,105 @@ async function ensureNotificationPermissionsAsync(): Promise<boolean> {
   return granted;
 }
 
-/**
- * Parse a time string like "6:00 AM" or "2:30 PM" into { hours, minutes }.
- */
-function parseTimeString(timeStr: string): { hours: number; minutes: number } | null {
-  const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  if (!match) return null;
-  let hours = parseInt(match[1], 10);
-  const minutes = parseInt(match[2], 10);
-  const period = match[3].toUpperCase();
-  if (period === 'AM' && hours === 12) hours = 0;
-  else if (period === 'PM' && hours !== 12) hours += 12;
-  return { hours, minutes };
+// Serialize scheduling, preference changes and sign-out to avoid overlapping updates.
+let operations: Promise<unknown> = Promise.resolve();
+function serialized<T>(action: () => Promise<T>): Promise<T> {
+  const next = operations.then(action);
+  operations = next.catch(() => undefined);
+  return next;
 }
 
-/**
- * Parse the start time of a window string like "6:00 AM - 12:00 PM".
- * Returns a Date set to the given collectionDate at that start time, or null.
- */
-function getWindowStartDate(collectionDate: Date, windowStr: string): Date | null {
-  const parts = windowStr.split(/\s*[-–]\s*/);
-  if (parts.length < 2) return null;
-  const start = parseTimeString(parts[0]);
-  if (!start) return null;
-
-  const fireDate = new Date(collectionDate);
-  fireDate.setHours(start.hours, start.minutes, 0, 0);
-  return fireDate;
+const RECEIPTS_KEY = 'collection-reminder-receipts-v2';
+const preferenceKey = (ownerId: string) => `collection-reminder-enabled:${ownerId}`;
+type Receipts = Record<string, number>;
+async function readReceipts(): Promise<Receipts> {
+  const raw = await Storage.getItem(RECEIPTS_KEY);
+  return raw ? JSON.parse(raw) as Receipts : {};
 }
 
-function getWasteLabel(wasteType: UpcomingCollection['wasteType']) {
-  return wasteType === 'biodegradable' ? 'Biodegradable' : 'Non-biodegradable';
-}
-
-function getLocalDateKey(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return [
-    date.getFullYear(),
-    String(date.getMonth() + 1).padStart(2, '0'),
-    String(date.getDate()).padStart(2, '0'),
-  ].join('-');
-}
-
-export async function cancelScheduledCollectionReminders() {
+async function cancelReminders() {
   if (Platform.OS === 'web') return;
-
-  const scheduledNotifications = await getAllScheduledNotificationsAsync();
-  const collectionReminders = scheduledNotifications.filter((notification) =>
-    notification.identifier.startsWith(COLLECTION_REMINDER_PREFIX),
-  );
-
-  await Promise.all(
-    collectionReminders.map((notification) =>
-      cancelScheduledNotificationAsync(notification.identifier),
-    ),
-  );
+  const receipts = await readReceipts();
+  const now = Date.now();
+  for (const notification of await getAllScheduledNotificationsAsync()) {
+    if (!notification.identifier.startsWith(COLLECTION_REMINDER_PREFIX)) continue;
+    await cancelScheduledNotificationAsync(notification.identifier);
+    if (receipts[notification.identifier] > now) delete receipts[notification.identifier];
+  }
+  await Storage.setItem(RECEIPTS_KEY, JSON.stringify(receipts));
 }
 
-/**
- * Schedules one notification per collection time window start time.
- * Fires exactly when the collection window begins: "Collection is happening right now".
- * Does NOT schedule reminders the night before or in the morning.
- */
-export async function scheduleCollectionReminders(
-  collections: UpcomingCollection[],
-  location: string,
-): Promise<number> {
-  if (!(await ensureNotificationPermissionsAsync())) return 0;
+export function cancelScheduledCollectionReminders() {
+  return serialized(cancelReminders);
+}
 
-  await cancelScheduledCollectionReminders();
+export function setCollectionReminderPreference(ownerId: string, enabled: boolean) {
+  return serialized(async () => {
+    if (Platform.OS === 'web') return;
+    await Storage.setItem(preferenceKey(ownerId), JSON.stringify(enabled));
+    if (!enabled) await cancelReminders();
+  });
+}
 
-  const now = new Date();
-  let scheduledCount = 0;
-
-  for (const collection of collections) {
-    const collectionDate = new Date(collection.date);
-    const dateKey = getLocalDateKey(collection.date);
-    if (Number.isNaN(collectionDate.getTime()) || !dateKey) continue;
-
-    const wasteLabel = getWasteLabel(collection.wasteType);
-    const reminderBase = `${COLLECTION_REMINDER_PREFIX}${dateKey}:${collection.wasteType}`;
-
-    // Only schedule if we know the exact start time window(s)
-    if (collection.timeWindows.length === 0) continue;
-
-    for (let i = 0; i < collection.timeWindows.length; i++) {
-      const windowStr = collection.timeWindows[i];
-      const fireDate = getWindowStartDate(collectionDate, windowStr);
-
-      // Skip if already past or unparseable
-      if (!fireDate || fireDate <= now) continue;
-
-      const id = `${reminderBase}:window-${i}`;
-
-      await scheduleNotificationAsync({
-        identifier: id,
-        content: {
-          title: 'Collection is happening right now',
-          body: `${wasteLabel} waste collection is underway in ${location} (${windowStr}). Put out your waste now.`,
-          sound: 'default',
-          data: {
-            screen: 'schedule',
-            date: collection.date,
-            wasteType: collection.wasteType,
-          },
-        },
-        trigger: {
-          type: SchedulableTriggerInputTypes.DATE,
-          date: fireDate,
-          channelId: COLLECTION_NOTIFICATION_CHANNEL_ID,
-        },
-      });
-
-      scheduledCount += 1;
+/** One start (including an in-window catch-up) and one end per collection window. */
+export function scheduleCollectionReminders(collections: UpcomingCollection[], location: string, ownerId: string): Promise<number> {
+  return serialized(async () => {
+    if (Platform.OS === 'web' || !ownerId) return 0;
+    if (await Storage.getItem(preferenceKey(ownerId)) === 'false') {
+      await cancelReminders();
+      return 0;
     }
-  }
-
-  return scheduledCount;
+    if (!(await ensureNotificationPermissionsAsync())) return 0;
+    const now = Date.now();
+    const plan = buildCollectionReminderPlan(collections, ownerId, location);
+    const wanted = new Set(plan.map(item => item.id));
+    const receipts = await readReceipts();
+    // Retain recent receipts across restarts and sign-out without unbounded storage.
+    for (const [id, dueAt] of Object.entries(receipts)) {
+      if (dueAt < now - 2 * 86400000) delete receipts[id];
+    }
+    const scheduled = await getAllScheduledNotificationsAsync();
+    const pending = new Set<string>();
+    for (const notification of scheduled) {
+      const id = notification.identifier;
+      if (!id.startsWith(COLLECTION_REMINDER_PREFIX)) continue;
+      if (!wanted.has(id)) {
+        await cancelScheduledNotificationAsync(id);
+        if (receipts[id] > now) delete receipts[id];
+      } else {
+        pending.add(id);
+      }
+    }
+    await Storage.setItem(RECEIPTS_KEY, JSON.stringify(receipts));
+    let count = 0;
+    // Reserve room for other notifications under the iOS pending notification limit.
+    let slots = Math.max(0, 60 - scheduled.filter(item => !item.identifier.startsWith(COLLECTION_REMINDER_PREFIX) || pending.has(item.identifier)).length);
+    for (const reminder of plan) {
+      if (!shouldScheduleReminder(reminder, now, receipts[reminder.id], pending.has(reminder.id))) continue;
+      const immediate = reminder.dueAt <= now;
+      if (!immediate && slots === 0) continue;
+      const wasteLabel = reminder.wasteType === 'biodegradable' ? 'Biodegradable' : 'Non-biodegradable';
+      await scheduleNotificationAsync({
+        identifier: reminder.id,
+        content: {
+          title: reminder.phase === 'start' ? 'Collection is happening right now' : 'Collection window has ended',
+          body: reminder.phase === 'start'
+            ? `${wasteLabel} waste collection is scheduled now in ${location} (${reminder.window}). Put out your waste now.`
+            : `The scheduled ${wasteLabel.toLowerCase()} collection window in ${location} (${reminder.window}) has ended.`,
+          sound: 'default',
+          data: { screen: 'collection', date: reminder.date, wasteType: reminder.wasteType, phase: reminder.phase },
+        },
+        trigger: immediate
+          ? { channelId: COLLECTION_NOTIFICATION_CHANNEL_ID }
+          : { type: SchedulableTriggerInputTypes.DATE, date: new Date(reminder.dueAt), channelId: COLLECTION_NOTIFICATION_CHANNEL_ID },
+      });
+      receipts[reminder.id] = immediate ? now : reminder.dueAt;
+      // Persist every success even if a later notification fails to schedule.
+      await Storage.setItem(RECEIPTS_KEY, JSON.stringify(receipts));
+      if (!immediate) slots -= 1;
+      count += 1;
+    }
+    return count;
+  });
 }
 

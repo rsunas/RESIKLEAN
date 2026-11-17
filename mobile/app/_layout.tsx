@@ -43,8 +43,8 @@ function NotificationObserver() {
   useEffect(() => {
     const openNotificationTarget = (response: NotificationResponse) => {
       const data = response.notification.request.content.data as { screen?: string } | undefined;
-      if (data?.screen === 'schedule') {
-        router.push({ pathname: '/resident', params: { tab: 'schedule' } });
+      if (data?.screen === 'schedule' || data?.screen === 'collection') {
+        router.push({ pathname: '/resident', params: { tab: 'home', notificationId: response.notification.request.identifier } });
       }
     };
 
