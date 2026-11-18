@@ -5,7 +5,7 @@ const MissedReport = require('../models/MissedReport');
 const { sendSuccess, sendError } = require('../utils/response');
 const metrics = require('../services/overviewMetrics');
 
-const note = 'Some original itineraries are unavailable. Scheduled and remaining counts cover known stops only; confirmed completions are retained. Rates are unavailable where the full schedule is unknown. Historical schedules use saved trip snapshots or routes unchanged since that day.';
+const note = 'Some historical route data is unavailable.';
 
 async function loadStops(window, area, today) {
   const [routes, sessions, logs] = await Promise.all([
@@ -45,7 +45,7 @@ function endpoint(kind) {
         ]);
         const statuses = ['pending', 'verified', 'resolved', 'rejected'].map(status => ({ status, count: groups.filter(group => group._id === status || (status === 'verified' && group._id === 'scheduled')).reduce((sum, group) => sum + group.count, 0) }));
         const total = statuses.reduce((sum, status) => sum + status.count, 0);
-        return sendSuccess(res, { ...base, range, total, statuses: statuses.map(status => ({ ...status, percent: metrics.percent(status.count, total) || 0 })), lastSyncedAt: metrics.latest(groups.map(group => group.receivedAt)), note: 'Scheduled complaints are included under Verified. Statuses reflect their current state; date ranges use submission date.' });
+        return sendSuccess(res, { ...base, range, total, statuses: statuses.map(status => ({ ...status, percent: metrics.percent(status.count, total) || 0 })), lastSyncedAt: metrics.latest(groups.map(group => group.receivedAt)) });
       }
       let fetchWindow = window;
       if (kind === 'daily') {
