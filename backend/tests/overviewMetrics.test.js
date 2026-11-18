@@ -38,6 +38,13 @@ test('past collection days close and late offline completion removes the missed 
   expect(frequent(data)).toHaveLength(1);
 });
 
+test('frequently uncompleted stops returns the full ranking for the scrollable list', () => {
+  const manyStops = Array.from({ length: 6 }, (_, index) => ({ _id: `stop-${index}`, name: `Stop ${index + 1}` }));
+  const manyRoute = { ...route, stops: manyStops };
+  const manySession = { ...session, routeCompletedAt: '2026-11-18T04:00:00Z', routeSnapshot: { ...session.routeSnapshot, stops: manyStops } };
+  expect(frequent(build({ routes: [manyRoute], sessions: [manySession] }))).toHaveLength(6);
+});
+
 test('snapshot names and stops survive reassignment, rename, archival and area filtering', () => {
   const changed = { ...route, name: 'New route', barangay: ['New area'], stops: [{ _id: 'new', name: 'New stop' }], isActive: false, collectorId: null, updatedAt: '2026-11-18' };
   const data = build({ routes: [changed], sessions: [session], logs: [log], area: 'Original area' });

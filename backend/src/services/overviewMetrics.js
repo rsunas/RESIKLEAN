@@ -133,7 +133,7 @@ function frequent(data) {
     if (!missed.has(key)) missed.set(key, { key, name: stop.name, route: row.name, missed: 0 });
     missed.get(key).missed++;
   }
-  return [...missed.values()].sort((a, b) => b.missed - a.missed || a.name.localeCompare(b.name)).slice(0, 5);
+  return [...missed.values()].sort((a, b) => b.missed - a.missed || a.name.localeCompare(b.name));
 }
 
 module.exports = { dayKey, midnight, shiftDay, windowFor, latest, percent, buildOccurrences, summarize, coverage, frequent };
