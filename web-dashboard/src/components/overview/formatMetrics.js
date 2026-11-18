@@ -1,5 +1,5 @@
 export const RANGE_OPTIONS = [{ value: 'today', label: 'Today' }, { value: '7d', label: 'Last 7 days' }, { value: 'month', label: 'This month' }];
-export const rangeLabel = value => RANGE_OPTIONS.find(option => option.value === value)?.label || value;
+export const rangeLabel = value => value === 'all' ? 'All dates' : RANGE_OPTIONS.find(option => option.value === value)?.label || value;
 export const number = value => value == null ? '—' : value.toLocaleString('en-PH');
 export const rate = value => value == null ? '—' : `${number(value)}%`;
 export const hourLabel = hour => `${hour % 12 || 12} ${hour < 12 ? 'AM' : 'PM'}`;

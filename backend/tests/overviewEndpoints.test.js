@@ -32,7 +32,7 @@ test('all five endpoints require JWT and the admin role', async () => {
 
 test('validates range and area before database queries', async () => {
   const headers = auth('admin');
-  for (const query of ['coverage?range=bad', 'coverage?area[x]=bad', 'daily-completion?range=month', 'coverage?range[]=today']) expect((await fetch(base + query, { headers })).status).toBe(400);
+  for (const query of ['coverage?range=bad', 'coverage?area[x]=bad', 'daily-completion?range=month', 'coverage?range[]=today', 'complaints-by-status?range=5y']) expect((await fetch(base + query, { headers })).status).toBe(400);
 });
 
 test('empty database returns real empty states and no fabricated sync times', async () => {
@@ -60,6 +60,21 @@ test('scheduled complaints map to Verified with four categories and exact counts
   expect(data.total).toBe(10);
   expect(data.lastSyncedAt).toBe('2026-11-18T01:00:00.000Z');
   expect(aggregate.mock.calls[0][0][0].$match.barangay).toBe('Dayangdang');
+});
+
+test('complaints default to all dates and empty results return four zero-count slices', async () => {
+  const headers = auth('admin');
+  const aggregate = jest.spyOn(Report, 'aggregate').mockResolvedValue([]);
+  const response = await fetch(base + 'complaints-by-status', { headers });
+  const { data } = await response.json();
+  expect(data).toMatchObject({ range: 'all', start: null, end: null, total: 0 });
+  expect(data.statuses).toEqual([
+    { status: 'pending', count: 0, percent: 0 },
+    { status: 'verified', count: 0, percent: 0 },
+    { status: 'resolved', count: 0, percent: 0 },
+    { status: 'rejected', count: 0, percent: 0 },
+  ]);
+  expect(aggregate.mock.calls[0][0][0].$match).toEqual({});
 });
 
 test('hour buckets use exit time in Manila and aggregation deduplicates across drivers', async () => {

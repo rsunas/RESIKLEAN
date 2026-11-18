@@ -10,7 +10,7 @@ All endpoints are under `/api/admin/overview` and require the existing admin JWT
 | --- | --- |
 | `coverage` | `range=today\|7d\|month`, optional `area` (exact barangay name) |
 | `daily-completion` | `range=7d\|14d` |
-| `complaints-by-status` | `range=today\|7d\|month`, optional `area` |
+| `complaints-by-status` | `range=all\|today\|7d\|month` (defaults to `all`), optional `area` |
 | `stops-by-hour` | `range=today\|7d\|month`, optional `area` |
 | `frequently-uncompleted` | Fixed last 30 days, across areas |
 
@@ -25,7 +25,7 @@ Responses use `{ success, data }` with `start`, `end`, `timezone`, and `lastSync
 - Daily average is the arithmetic mean of available daily rates, excluding days with no scheduled stops. The comparison is the immediately preceding equal-length period. The period average/comparison is withheld if historical schedule information is incomplete.
 - Remaining counts are known scheduled stops without a completion. The frequently uncompleted ranking counts these only after explicit `routeCompletedAt` or after the Manila collection day has ended. Stopping GPS recording alone does not close today's route. Late uploads can reduce missed counts.
 - `lastSyncedAt` comes from actual record receipt/update timestamps, never the dashboard request time. No matching uploaded records returns `null`.
-- Complaints are filtered by submission date and current status. The actual enum has five states: `scheduled` is grouped with `verified` to provide the requested four displayed categories. The UI explains this grouping.
+- Complaints default to all dates; the card has its own date filter (all dates, today, last 7 days, this month). A selected period filters by submission date and current status. The actual enum has five states: `scheduled` is grouped with `verified` to provide the requested four displayed categories. The UI explains this grouping. An empty result keeps a neutral empty pie visible with zero counts.
 - Indexes support the completion date/status query, session start-date query and report submission-date query. Standard Mongoose index deployment applies; environments with `autoIndex` disabled must deploy those schema indexes through their normal database migration process.
 
 ## Validation

@@ -28,23 +28,24 @@ async function loadStops(window, area, today) {
 
 function endpoint(kind) {
   return async (req, res) => {
-    const allowed = kind === 'daily' ? ['7d', '14d'] : ['today', '7d', 'month'];
-    const range = req.query.range || (kind === 'daily' ? '7d' : 'today');
+    const allowed = kind === 'daily' ? ['7d', '14d'] : kind === 'complaints' ? ['all', 'today', '7d', 'month'] : ['today', '7d', 'month'];
+    const range = req.query.range || (kind === 'daily' ? '7d' : kind === 'complaints' ? 'all' : 'today');
     const area = req.query.area || '';
     if (!allowed.includes(range) || typeof area !== 'string' || area.length > 200) return sendError(res, 'Invalid range or area', 400);
     try {
       const now = new Date();
       const today = metrics.dayKey(now);
-      const window = metrics.windowFor(kind === 'frequent' ? '30d' : range, now);
-      const base = { start: window.start, end: window.end, timezone: 'Asia/Manila' };
+      const window = range === 'all' ? null : metrics.windowFor(kind === 'frequent' ? '30d' : range, now);
+      const base = window ? { start: window.start, end: window.end, timezone: 'Asia/Manila' } : { start: null, end: null, timezone: 'Asia/Manila' };
       if (kind === 'complaints') {
+        const match = { ...(window ? { createdAt: { $gte: window.from, $lt: window.until } } : {}), ...(area ? { barangay: area } : {}) };
         const groups = await MissedReport.aggregate([
-          { $match: { createdAt: { $gte: window.from, $lt: window.until }, ...(area ? { barangay: area } : {}) } },
+          { $match: match },
           { $group: { _id: '$status', count: { $sum: 1 }, receivedAt: { $max: '$updatedAt' } } },
         ]);
         const statuses = ['pending', 'verified', 'resolved', 'rejected'].map(status => ({ status, count: groups.filter(group => group._id === status || (status === 'verified' && group._id === 'scheduled')).reduce((sum, group) => sum + group.count, 0) }));
         const total = statuses.reduce((sum, status) => sum + status.count, 0);
-        return sendSuccess(res, { ...base, total, statuses: statuses.map(status => ({ ...status, percent: metrics.percent(status.count, total) || 0 })), lastSyncedAt: metrics.latest(groups.map(group => group.receivedAt)), note: 'Scheduled complaints are included under Verified. Statuses reflect their current state; the date filter uses submission date.' });
+        return sendSuccess(res, { ...base, range, total, statuses: statuses.map(status => ({ ...status, percent: metrics.percent(status.count, total) || 0 })), lastSyncedAt: metrics.latest(groups.map(group => group.receivedAt)), note: 'Scheduled complaints are included under Verified. Statuses reflect their current state; date ranges use submission date.' });
       }
       let fetchWindow = window;
       if (kind === 'daily') {
