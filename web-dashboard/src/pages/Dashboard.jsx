@@ -506,7 +506,7 @@ export default function Dashboard() {
   const socketRef = useRef(null);
   const [complaintsConnected, setComplaintsConnected] = useState(false);
   const [realtimeMessagesByReport, setRealtimeMessagesByReport] = useState({});
-  const [apiData, setApiData] = useState({ users: null, routes: null, reports: null, loads: null, tonnage: null, compliance: null, usingPlaceholder: true });
+  const [apiData, setApiData] = useState({ users: null, routes: null, reports: null, loads: null, tonnage: null, usingPlaceholder: true });
 
   const refreshDashboard = useCallback(async () => {
     if (!API_URL || !token) return;
@@ -518,7 +518,6 @@ export default function Dashboard() {
         fetch(`${API_URL.replace(/\/$/, '')}/admin/routes`, { headers }),
         fetch(`${API_URL.replace(/\/$/, '')}/admin/reports`, { headers }),
         fetch(`${API_URL.replace(/\/$/, '')}/admin/tonnage`, { headers }),
-        fetch(`${API_URL.replace(/\/$/, '')}/admin/compliance`, { headers }),
       ]);
       if (responses.some((response) => !response.ok)) throw new Error('One or more dashboard resources are unavailable.');
       const results = await Promise.all(responses.map((response) => response.json()));
@@ -529,7 +528,6 @@ export default function Dashboard() {
         reports: results[2].data?.reports || [],
         loads: results[3].data?.loads || [],
         tonnage: results[3].data || null,
-        compliance: results[4].data?.report || [],
         usingPlaceholder: false,
       });
     } catch {
@@ -827,30 +825,9 @@ export default function Dashboard() {
   const totalTonnage = apiData.tonnage?.totalTonnesEstimate;
   const totalLoads = apiData.tonnage?.count || 0;
 
-  const tonnageStats = useMemo(() => {
-    if (!tonnageSeries || tonnageSeries.length === 0) return { dailyAverage: 0, peakDay: 0, peakDate: null };
-    let total = 0;
-    let peak = 0;
-    let peakDt = null;
-    tonnageSeries.forEach(item => {
-      total += item.tonnes;
-      if (item.tonnes > peak) {
-        peak = item.tonnes;
-        peakDt = item.date;
-      }
-    });
-    return {
-      dailyAverage: total / tonnageSeries.length,
-      peakDay: peak,
-      peakDate: peakDt
-    };
-  }, [tonnageSeries]);
-  const completionRate = useMemo(() => {
-    if (!apiData.compliance?.length) return null;
-    const totalStops = apiData.compliance.reduce((sum, row) => sum + (row.totalStops || 0), 0);
-    const collectedStops = apiData.compliance.reduce((sum, row) => sum + (row.collected || 0), 0);
-    return totalStops ? `${((collectedStops / totalStops) * 100).toFixed(1)}%` : null;
-  }, [apiData.compliance]);
+  const tonnageStats = useMemo(() => ({
+    dailyAverage: tonnageSeries.length ? tonnageSeries.reduce((total, item) => total + item.tonnes, 0) / tonnageSeries.length : 0,
+  }), [tonnageSeries]);
 
   const signOut = () => {
     socketRef.current?.disconnect();
@@ -999,7 +976,7 @@ export default function Dashboard() {
   const overview = <>
     <PageHeader action={<Button className="outline-button" isDisabled={isRefreshing} onPress={refreshDashboard} variant="secondary"><Icon name="refresh" size={16} />{isRefreshing ? 'Refreshing…' : 'Refresh data'}</Button>} description="Live information from SWMO collection and landfill activity." title="Collection Overview" />
     <div className="metrics-grid">
-      <MetricCard {...metricLoading} caption={completionRate ? 'Across today’s active routes' : 'Live route data unavailable'} icon="route" label="Collection completion" progress={completionRate ? Number.parseFloat(completionRate) : 0} value={completionRate || '—'} />
+      <MetricCard loading={trendLoading} hasData={Boolean(trendResult.start)} error={trendResult.error} onRetry={() => setTrendRetry(value => value + 1)} caption={`Across the selected ${Math.round((tonnageRange.end.toDate('Asia/Manila') - tonnageRange.start.toDate('Asia/Manila')) / 86400000) + 1} days`} icon="chart" label="Daily average" value={tonnageSeries.length ? formatTonnes(tonnageStats.dailyAverage) : '—'} />
       <MetricCard {...metricLoading} caption={apiData.usingPlaceholder ? 'Connect the admin API to view totals' : `${totalLoads} submitted truckload${totalLoads === 1 ? '' : 's'}`} icon="truck" label="Recorded tonnage" tone="teal" trend={recentTonnageSeries} value={apiData.usingPlaceholder ? '—' : formatTonnes(totalTonnage)} />
       <MetricCard {...metricLoading} caption="Reports awaiting review" icon="alert" label="Pending complaints" tone="amber" value={String(complaintRows.filter((item) => item.status === 'pending').length)} />
     </div>
@@ -1045,28 +1022,6 @@ export default function Dashboard() {
           {!trendResult.count ? <div className="chart-empty"><Icon name="chart" size={24}/><p>No truckloads in this date range.</p><span>Choose another range to view recorded collections.</span></div> : <TonnageChart series={tonnageSeries}/>}
         </LoadingRegion>
       </Card>
-      <div className="tonnage-summary-grid">
-        <Card className="tonnage-summary-card">
-          <div className="tonnage-summary-icon"><Icon name="chart" size={18} /></div>
-          <div>
-            <p>Daily average</p>
-            <LoadingRegion loading={trendLoading} hasData={Boolean(trendResult.start)} error={trendResult.error} onRetry={() => setTrendRetry(value => value + 1)} placeholder={<SkeletonStat/>}>
-            <strong>{tonnageSeries.length ? formatTonnes(tonnageStats.dailyAverage) : '—'}</strong>
-            <span>Across the selected {tonnageSeries.length || Math.round((tonnageRange.end.toDate('Asia/Manila') - tonnageRange.start.toDate('Asia/Manila')) / 86400000) + 1} days</span>
-            </LoadingRegion>
-          </div>
-        </Card>
-        <Card className="tonnage-summary-card peak-day-card">
-          <div className="tonnage-summary-icon"><Icon name="truck" size={18} /></div>
-          <div>
-            <p>Peak day</p>
-            <LoadingRegion loading={trendLoading} hasData={Boolean(trendResult.start)} error={trendResult.error} onRetry={() => setTrendRetry(value => value + 1)} placeholder={<SkeletonStat/>}>
-            <strong>{tonnageSeries.length ? formatTonnes(tonnageStats.peakDay) : '—'}</strong>
-            <span>{tonnageStats.peakDate ? tonnageStats.peakDate.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' }) : 'No collection data yet'}</span>
-            </LoadingRegion>
-          </div>
-        </Card>
-      </div>
     </div>
     <OverviewMetrics token={token} />
     <Card className="overview-routes"><div className="card-heading-row overview-route-heading"><div><p className="eyebrow">Collection tracking</p><h3>Recent route activity</h3><p>Street-level collection status</p></div><Button type="button" variant="tertiary" className="text-button" onPress={() => selectPage('routes')}>View route history <Icon name="arrow" size={15} /></Button></div><LoadingRegion loading={isRefreshing} hasData={apiData.routes !== null} error={dashboardLoadError} onRetry={refreshDashboard} placeholder={<SkeletonDetails rows={4}/>}>{routeRows.slice(0, 4).map((route) => <RoutePreview key={route.id} route={route} />)}</LoadingRegion><Button type="button" variant="tertiary" className="view-more" onPress={() => selectPage('routes')}>View all {routeRows.length} entries <Icon name="arrow" size={15} /></Button></Card>
