@@ -1,0 +1,13 @@
+{
+  "types": ["Service delay", "Schedule change", "Reminder"],
+  "reasons": ["Flat tire", "Accident", "Engine problem", "Mechanical defect", "Bad weather", "Road closure", "Holiday", "Landfill closure"],
+  "impacts": ["Delays may occur", "Collection postponed", "Collection cancelled", "Rescheduled"],
+  "presets": {
+    "Flat tire": {"type":"Service delay", "impact":"Delays may occur"},
+    "Accident": {"type":"Service delay", "impact":"Delays may occur"},
+    "Engine problem": {"type":"Service delay", "impact":"Delays may occur"},
+    "Bad weather": {"type":"Service delay", "impact":"Collection postponed"},
+    "Road closure": {"type":"Schedule change", "impact":"Rescheduled"},
+    "Holiday": {"type":"Schedule change", "impact":"Collection postponed"}
+  }
+}

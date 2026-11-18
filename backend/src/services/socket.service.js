@@ -79,4 +79,8 @@ const emitToComplaint = (event, residentId, data) => {
   }
 };
 
-module.exports = { init, emit, emitToComplaint };
+const emitToResidents = (event, residentIds, data) => {
+  if (!_io) return;
+  _io.to(['admins', ...residentIds.map(id => `resident:${id}`)]).emit(event, data);
+};
+module.exports = { init, emit, emitToComplaint, emitToResidents };

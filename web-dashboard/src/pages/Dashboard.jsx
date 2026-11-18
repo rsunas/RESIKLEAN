@@ -1,4 +1,5 @@
 import NotificationsPage from './NotificationsPage.jsx';
+import AnnouncementsPage from './AnnouncementsPage.jsx';
 import OverviewMetrics from '../components/overview/OverviewMetrics.jsx';
 import useNotifications from '../components/useNotifications.js';
 import { DisabledControls, LoadingRegion, LoadingTableBody, SkeletonChart, SkeletonDetails, SkeletonStat } from '../components/Skeleton.jsx';
@@ -37,6 +38,7 @@ const NAV_ITEMS = [
   { id: 'overview', label: 'Overview', icon: 'grid' },
   { id: 'routes', label: 'Route History', icon: 'route' },
   { id: 'complaints', label: 'Complaints', icon: 'alert' },
+  { id: 'announcements', label: 'Announcements', icon: 'megaphone' },
   { id: 'activity', label: 'Staff Activity', icon: 'chart' },
   { id: 'manage-routes', label: 'Manage Routes', icon: 'map' },
   { id: 'assignments', label: 'Driver Assignments', icon: 'operations' },
@@ -202,6 +204,7 @@ function formatTrendRange(series) {
 
 function Icon({ name, size = 18 }) {
   const paths = {
+    megaphone: <><path d="M3 10v4h4l12 5V5L7 10H3Zm4 4 2 7h3l-2-6M22 9v6" /></>,
     grid: <><rect height="7" rx="1.5" width="7" x="3" y="3" /><rect height="7" rx="1.5" width="7" x="14" y="3" /><rect height="7" rx="1.5" width="7" x="3" y="14" /><rect height="7" rx="1.5" width="7" x="14" y="14" /></>,
     route: <><circle cx="6" cy="18" r="2" /><circle cx="18" cy="6" r="2" /><path d="M8 18h3a3 3 0 0 0 3-3v-3a3 3 0 0 1 3-3h1" /></>,
     alert: <><path d="M10.3 3.7 2.8 17a2 2 0 0 0 1.7 3h15a2 2 0 0 0 1.7-3L13.7 3.7a2 2 0 0 0-3.4 0Z" /><path d="M12 9v4m0 4h.01" /></>,
@@ -1089,7 +1092,7 @@ export default function Dashboard() {
       navigate('/dashboard?view=complaints');
     }
   };
-  const pageContent = { notifications: <NotificationsPage feed={notificationFeed} Icon={Icon} onOpen={openNotification} />, settings: <SettingsPage user={storedUser} token={token} onUserChange={updateOwnProfile} />, overview, routes: <>{routeHistorySearch}{routeHistory}</>, complaints: complaintInbox, activity, 'manage-routes': manageRoutes, assignments, accounts: <><PageHeader title="Manage accounts" />{accountsToolbar}{accountPage}</>, trucks }[activePage];
+  const pageContent = { announcements: <AnnouncementsPage token={token} />, notifications: <NotificationsPage feed={notificationFeed} Icon={Icon} onOpen={openNotification} />, settings: <SettingsPage user={storedUser} token={token} onUserChange={updateOwnProfile} />, overview, routes: <>{routeHistorySearch}{routeHistory}</>, complaints: complaintInbox, activity, 'manage-routes': manageRoutes, assignments, accounts: <><PageHeader title="Manage accounts" />{accountsToolbar}{accountPage}</>, trucks }[activePage];
   return <main className="admin-shell">{createPortal(<><Button isIconOnly variant="ghost" className="sidebar-collapse-toggle" aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-pressed={isSidebarCollapsed} onPress={() => setIsSidebarCollapsed(value => !value)}><span className="sidebar-collapse-toggle-icon" aria-hidden="true">{isSidebarCollapsed ? '›' : '‹'}</span></Button><Button isIconOnly variant="ghost" className="mobile-sidebar-toggle" aria-label={isMobileSidebarOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={isMobileSidebarOpen} onPress={() => setIsMobileSidebarOpen(value => !value)}><span className="mobile-sidebar-toggle-icon" aria-hidden="true">{isMobileSidebarOpen ? '×' : '☰'}</span></Button><Button variant="ghost" className="mobile-sidebar-backdrop" aria-label="Close navigation" onPress={() => setIsMobileSidebarOpen(false)} /></>, document.body)}<aside className="admin-sidebar"><div className="brand"><img alt="ResiKlean logo" className="brand-logo brand-logo-full" src="/swmo-resiklean-logo.svg" /><img alt="ResiKlean logo" className="brand-logo brand-logo-mark" src="/resiklean-sidebar-mark.svg" /></div><nav>{NAV_ITEMS.map((item) => <Button type="button" variant="tertiary" data-page-link aria-label={tr(item.label)} aria-current={activePage === item.id ? 'page' : undefined} className={activePage === item.id ? 'nav-link active' : 'nav-link'} key={item.id} title={tr(item.label)} onPress={() => { selectPage(item.id); setIsMobileSidebarOpen(false); }}><Icon name={item.icon} /><span className="sidebar-label">{tr(item.label)}</span></Button>)}<NotificationNav count={notificationFeed.data?.unread ?? null} loading={notificationFeed.loading} error={notificationFeed.error} active={activePage === 'notifications'} Icon={Icon} onOpen={() => { navigate('/notifications'); setIsMobileSidebarOpen(false); }} /></nav><SidebarAccount user={storedUser} Icon={Icon} settingsActive={activePage === 'settings'} onSettings={() => { navigate('/settings'); window.scrollTo(0, 0); setIsMobileSidebarOpen(false); }} onSignOut={() => { setIsMobileSidebarOpen(false); setShowLogoutConfirm(true); }} /></aside><section className="admin-workspace"><section className="dashboard-content">{apiData.usingPlaceholder && !isRefreshing && activePage !== 'settings' && activePage !== 'notifications' ? <p className="data-note">Live dashboard data is unavailable. Retry the affected section.</p> : null}{pageContent}</section></section><AccountModal isOpen={showAccountForm} onClose={() => setShowAccountForm(false)} account={newAccount} setAccount={setNewAccount} submission={submissionState} setSubmission={setSubmissionState} onSubmit={createAccount} />{selectedActivity ? <TruckloadSubmissionDialog activity={selectedActivity} load={apiData.loads?.find(load => load._id === selectedActivity.id)} onClose={() => setSelectedActivity(null)} /> : null}{isRouteHistoryDetailVisible ? (() => {
     const d = selectedRouteHistory;
     const data = d || {};

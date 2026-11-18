@@ -7,12 +7,15 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
+    "prepare:announcements": "node scripts/prepare-announcement-artwork.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@fontsource/plus-jakarta-sans": "^5.3.0",
     "@heroui/react": "^3.2.4",
     "@heroui/styles": "^3.2.4",
     "@mapbox/mapbox-gl-draw": "^1.5.2",
+    "html-to-image": "^1.11.13",
     "mapbox-gl": "^3.33.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
@@ -26,6 +29,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",
     "oxlint": "^1.75.0",
+    "sharp": "^0.35.5",
     "tailwindcss": "^4.3.3",
     "vite": "^8.2.0"
   }
