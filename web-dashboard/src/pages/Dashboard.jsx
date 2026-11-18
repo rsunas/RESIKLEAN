@@ -1,4 +1,5 @@
 import NotificationsPage from './NotificationsPage.jsx';
+import OverviewMetrics from '../components/overview/OverviewMetrics.jsx';
 import useNotifications from '../components/useNotifications.js';
 import { DisabledControls, LoadingRegion, LoadingTableBody, SkeletonChart, SkeletonDetails, SkeletonStat } from '../components/Skeleton.jsx';
 import SettingsPage from './SettingsPage.jsx';
@@ -1067,6 +1068,7 @@ export default function Dashboard() {
         </Card>
       </div>
     </div>
+    <OverviewMetrics token={token} />
     <Card className="overview-routes"><div className="card-heading-row overview-route-heading"><div><p className="eyebrow">Collection tracking</p><h3>Recent route activity</h3><p>Street-level collection status</p></div><Button type="button" variant="tertiary" className="text-button" onPress={() => selectPage('routes')}>View route history <Icon name="arrow" size={15} /></Button></div><LoadingRegion loading={isRefreshing} hasData={apiData.routes !== null} error={dashboardLoadError} onRetry={refreshDashboard} placeholder={<SkeletonDetails rows={4}/>}>{routeRows.slice(0, 4).map((route) => <RoutePreview key={route.id} route={route} />)}</LoadingRegion><Button type="button" variant="tertiary" className="view-more" onPress={() => selectPage('routes')}>View all {routeRows.length} entries <Icon name="arrow" size={15} /></Button></Card>
   </>;
 

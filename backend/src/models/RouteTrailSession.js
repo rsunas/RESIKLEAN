@@ -22,5 +22,6 @@ const routeTrailSessionSchema = new mongoose.Schema(
 );
 
 routeTrailSessionSchema.index({ collectorId: 1, startedAt: -1 });
+routeTrailSessionSchema.index({ startedAt: 1 });
 
 module.exports = mongoose.model('RouteTrailSession', routeTrailSessionSchema);

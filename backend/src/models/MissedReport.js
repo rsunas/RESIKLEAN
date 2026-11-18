@@ -50,5 +50,6 @@ const missedReportSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+missedReportSchema.index({ createdAt: 1, barangay: 1, status: 1 });
 module.exports = mongoose.model('MissedReport', missedReportSchema);
 

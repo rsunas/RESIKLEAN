@@ -34,6 +34,7 @@ routeLogSchema.index({ clientId: 1 }, { unique: true, sparse: true });
 // Atomic duplicate prevention: one log per stop per collector per calendar day.
 // The database enforces this — no race condition possible on offline retry.
 routeLogSchema.index({ stopId: 1, collectorId: 1, eventDate: 1 }, { unique: true });
+routeLogSchema.index({ status: 1, collectedAt: 1 });
 
 // Export the threshold so the controller can use it
 routeLogSchema.statics.DWELL_THRESHOLD_SECONDS = DWELL_THRESHOLD_SECONDS;

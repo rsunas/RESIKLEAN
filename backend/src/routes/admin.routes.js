@@ -32,6 +32,13 @@ const { getMessages, sendMessage } = require('../controllers/message.controller'
 
 router.use(protect, authorize('admin'));
 
+const overview = require('../controllers/overview.controller');
+router.get('/overview/coverage', overview.coverage);
+router.get('/overview/daily-completion', overview.daily);
+router.get('/overview/complaints-by-status', overview.complaints);
+router.get('/overview/stops-by-hour', overview.hourly);
+router.get('/overview/frequently-uncompleted', overview.frequent);
+
 const notifications = require('../controllers/adminNotifications.controller');
 router.get('/notifications', notifications.list);
 router.post('/notifications/read', notifications.markRead);
