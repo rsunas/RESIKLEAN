@@ -48,11 +48,11 @@ try {
   browser.on('Runtime.exceptionThrown', event => errors.push(event.exceptionDetails.text));
   const wait = async expression => {
     for (let i = 0; i < 300; i++) { assert.deepEqual(errors, []); if (await browser.evaluate(expression)) return; await new Promise(resolve => setTimeout(resolve, 100)); }
-    throw Error(`Timed out: ${expression}`);
+    throw Error(`Timed out: ${expression}\n${await browser.evaluate("document.body.innerText.slice(0, 2500)")}`);
   };
-  const button = (text, parent = 'document') => browser.evaluate(`[...${parent}.querySelectorAll('button')].find(button => button.textContent.trim() === ${JSON.stringify(text)}).click()`);
+  const button = (text, parent = 'document') => browser.evaluate(`(() => { const button = [...${parent}.querySelectorAll('button')].find(button => button.textContent.trim() === ${JSON.stringify(text)}); button.focus(); button.click(); })()`);
   const select = async (label, option) => {
-    await browser.evaluate(`document.querySelector('[aria-label=${JSON.stringify(label)}] button,button[aria-label=${JSON.stringify(label)}]').click()`);
+    await browser.evaluate(`document.querySelector('button[aria-label=${JSON.stringify(`Show ${label} suggestions`)}]').click()`);
     await wait("!!document.querySelector('[role=option]')");
     await browser.evaluate(`[...document.querySelectorAll('[role=option]')].find(item => item.textContent.trim() === ${JSON.stringify(option)}).click()`);
     await wait("!document.querySelector('[role=option]')");
@@ -66,6 +66,19 @@ try {
   await browser.send('Page.navigate', { url: `http://127.0.0.1:${server.httpServer.address().port}/__announcements` });
   await wait("!!document.querySelector('.ann-composer fieldset:not(:disabled)') && !document.querySelector('.ann-skeleton')");
   assert(await browser.evaluate("document.querySelector('.ann-recent').textContent.includes('No announcements yet')"));
+  await browser.evaluate("window.downloadCount = 0; HTMLAnchorElement.prototype.click = function() { if (this.download) window.downloadCount++; }; ");
+  const enter = async (label, value) => {
+    await browser.evaluate(`(() => { const input = document.getElementById([...document.querySelectorAll('label')].find(label => label.textContent === ${JSON.stringify(label)}).htmlFor); input.focus(); input.select(); })()`);
+    await browser.send('Input.insertText', { text: value });
+  };
+  await enter('Type', 'Local advisory');
+  await enter('Reason', 'Vehicle inspection');
+  await enter('Impact', 'Collection starts two hours later');
+  assert(await browser.evaluate("document.querySelector('#ann-message').value.includes('Vehicle inspection') && document.querySelector('#ann-message').value.includes('Collection starts two hours later')"));
+  await enter('Area', 'Area 4');
+  await wait("!!document.querySelector('[role=option]')");
+  await wait("document.querySelectorAll('[role=option]').length > 0 && [...document.querySelectorAll('[role=option]')].every(item => item.textContent.includes('Area 4'))");
+  await browser.evaluate("document.querySelector('[role=option]').click()");
   await select('Area', 'Area 4 Collection Route');
   await select('Affected truck (internal only)', 'Truck 57 · SNA-1478');
   assert(await browser.evaluate("document.querySelector('#ann-message').value.includes('Area 4 Collection Route')"));
@@ -90,6 +103,7 @@ try {
   await button('Publish announcement');
   await wait("document.querySelector('.ann-status')?.textContent === 'Published' && !document.querySelector('.ann-composer fieldset').disabled");
   assert.equal(uploads.length, 1); assert(uploads[0].size < 1024 * 1024);
+  assert.equal(await browser.evaluate('window.downloadCount'), 1, 'Only the explicit Download image action downloads a file');
   await button('View', "document.querySelector('.ann-recent')");
   await wait("!!document.querySelector('.ann-view-image')");
   await button('Close', "document.querySelector('.ann-dialog')");

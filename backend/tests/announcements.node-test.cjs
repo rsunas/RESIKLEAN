@@ -81,12 +81,21 @@ test('admin writes require authentication and the admin role', async () => {
   assert.equal((await call('/admin', { method: 'POST', body: payload(), role: 'resident' })).status, 403);
   assert.equal((await call('/resident', { role: 'collector' })).status, 403);
 });
-test('drafts save without images, strip HTML, validate enums, dates and length', async () => {
+test('drafts save without images, strip HTML, validate fields, dates and length', async () => {
   const result = await call('/admin', { method: 'POST', body: payload({ message: '<b>Hello</b>' }) });
   assert.equal(result.status, 201); assert.equal(result.data.message, 'Hello'); assert.equal(uploaded, 0);
-  for (const bad of [{ reason: 'fake' }, { areaId: 'bad' }, { message: 'x'.repeat(501) }, { date: '2026-02-30' }, { impact: 'Rescheduled', newDate: '' }]) {
+  for (const bad of [{ reason: '' }, { type: 'x'.repeat(81) }, { impact: { text: 'bad' } }, { reason: '<b>Reason</b>' }, { status: 'unknown' }, { areaId: 'bad' }, { message: 'x'.repeat(501) }, { date: '2026-02-30' }, { impact: 'Rescheduled', newDate: '' }]) {
     assert.equal((await call('/admin', { method: 'POST', body: payload({ ...bad, requestKey: 'another-request-0001' }) })).status, 400);
   }
+});
+test('custom announcement details persist and appear in generated messages', async () => {
+  const details = { type: 'Collection update', reason: 'Truck maintenance', impact: 'Expect a two-hour delay' };
+  const result = await call('/admin', { method: 'POST', body: payload(details) });
+  assert.equal(result.status, 201);
+  for (const [key, value] of Object.entries(details)) assert.equal(result.data[key], value);
+  const text = shared.generateMessage({ ...payload(), ...details });
+  for (const value of Object.values(details)) assert(text.includes(value));
+  assert(!text.includes('undefined'));
 });
 test('publishing requires message and valid image; upload limits are enforced', async () => {
   assert.equal((await call('/admin', { method: 'POST', body: payload({ status: 'published' }) })).status, 400);

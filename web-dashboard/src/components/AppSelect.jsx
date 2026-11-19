@@ -39,7 +39,7 @@ export default function AppSelect({
       <Select.Popover className={popoverClassName}>
         <ListBox>
           {options.map((option) => (
-            <ListBox.Item id={option.value} key={option.value} textValue={option.label}>
+            <ListBox.Item id={option.value} key={option.value} textValue={option.label} isDisabled={option.disabled} className={option.disabled ? 'select-option-disabled' : undefined}>
               {option.label}
             </ListBox.Item>
           ))}

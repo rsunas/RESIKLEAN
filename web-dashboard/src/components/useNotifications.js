@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 export default function useNotifications({ token, apiUrl }) {
-  const [filter, setFilter] = useState({ type: 'all', unread: false, page: 1, limit: 10 });
+  const [filter, setFilter] = useState({ type: 'all', unread: false, page: 1, limit: 4 });
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');

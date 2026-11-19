@@ -1,5 +1,6 @@
 .notifications-intro { margin: -7px 0 24px; color: #5a6761; font-size: 14px; line-height: 1.6; }
 .notifications-card { background: #fff; border: 1px solid #e3eae6; border-radius: 24px; overflow: hidden; }
+.notifications-card > .table-pagination { padding: 14px 24px; }
 .notifications-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; padding: 22px 24px; border-bottom: 1px solid #e3eae6; }
 .notifications-tabs { display: flex; padding: 4px; border-radius: 14px; background: #f1f5f3; }
 .notifications-tabs button { min-height: 40px; padding: 0 14px; font-weight: 600; border-radius: 10px; color: #5a6761; }

@@ -948,30 +948,24 @@ export default function Dashboard() {
     }
   };
 
-
   useEffect(() => {
     if (typeof document === 'undefined') return undefined;
-
     document.body.classList.toggle('sidebar-is-collapsed', isSidebarCollapsed);
     return () => document.body.classList.remove('sidebar-is-collapsed');
   }, [isSidebarCollapsed]);
 
   useEffect(() => {
     if (typeof document === 'undefined') return undefined;
-
     document.body.classList.toggle('mobile-sidebar-is-open', isMobileSidebarOpen);
     const closeWhenViewportExpands = () => {
       if (window.innerWidth > 640) setIsMobileSidebarOpen(false);
     };
     window.addEventListener('resize', closeWhenViewportExpands);
-
     return () => {
       window.removeEventListener('resize', closeWhenViewportExpands);
       document.body.classList.remove('mobile-sidebar-is-open');
     };
   }, [isMobileSidebarOpen]);
-
-
 
   const dashboardLoadError = !isRefreshing && apiData.usingPlaceholder ? 'Live dashboard data is unavailable.' : '';
   const metricLoading = { loading: isRefreshing, hasData: apiData.tonnage !== null, error: dashboardLoadError, onRetry: refreshDashboard };

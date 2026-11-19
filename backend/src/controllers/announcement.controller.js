@@ -2,7 +2,6 @@ const Announcement = require('../models/Announcement');
 const Route = require('../models/Route');
 const Truck = require('../models/Truck');
 const User = require('../models/User');
-const { types, reasons, impacts } = require('../shared/announcements.json');
 const { uploadPhoto, deletePhoto } = require('../services/cloudinary.service');
 const { sendPushNotifications } = require('../services/notification.service');
 const { emitToResidents } = require('../services/socket.service');
@@ -30,10 +29,13 @@ async function notifyPublished(item) {
 async function fields(body, existing) {
   const { scheduledDate, manilaParts, generateMessage } = await shared();
   const value = existing ? { type: existing.type, reason: existing.reason, impact: existing.impact, areaId: existing.areaId, areaLabel: existing.areaLabel, audienceBarangays: existing.audienceBarangays, affectedTruckId: existing.affectedTruckId, scheduledFor: existing.scheduledFor, newDate: existing.newDate, message: existing.message, status: existing.status } : { status: 'draft' };
-  for (const [key, choices] of Object.entries({ type: types, reason: reasons, impact: impacts, status: ['draft', 'published'] })) {
-    if (body[key] !== undefined) value[key] = body[key];
-    if (!choices.includes(value[key])) fail(`Choose a valid ${key}.`);
+  for (const key of ['type', 'reason', 'impact']) {
+    const text = body[key] ?? value[key];
+    if (typeof text !== 'string' || !text.trim() || text.length > 80 || /[<>\r\n]/.test(text)) fail(`Enter a valid ${key} within 80 characters.`);
+    value[key] = text.trim();
   }
+  if (body.status !== undefined) value.status = body.status;
+  if (!['draft', 'published'].includes(value.status)) fail('Choose a valid status.');
   if (body.areaId !== undefined || !existing) {
     if (body.areaId === 'all') Object.assign(value, { areaId: null, areaLabel: 'All areas', audienceBarangays: [] });
     else {

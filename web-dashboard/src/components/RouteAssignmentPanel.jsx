@@ -151,10 +151,23 @@ export default function RouteAssignmentPanel({ token }) {
             const selectedRoute = routes.find((route) => route._id === routeSelections[collector._id]);
             const assignedCycle = cycles.find((cycle) => cycleDriverId(cycle) === collector._id);
             const hasExistingAssignment = Boolean(selectedRoute || assignedCycle);
+            const routeOptions = routes
+              .filter((route) => route.isActive !== false || route._id === routeSelections[collector._id])
+              .sort((a, b) => routeLabel(a).localeCompare(routeLabel(b), undefined, { numeric: true, sensitivity: 'base' }))
+              .map((route) => {
+                const assignedToOther = route.collectorId && collectorId(route) !== collector._id;
+                return { label: `${routeLabel(route)}${route.isActive === false ? ' (Archived)' : ''}${assignedToOther ? ' (Assigned)' : ''}`, value: route._id, disabled: assignedToOther };
+              });
+            const truckOptions = trucks.map((truck) => {
+              const assignment = cycles.find((cycle) => cycleTruckId(cycle) === truck._id);
+              const assignedToOther = assignment && cycleDriverId(assignment) !== collector._id;
+              const unavailable = truck.availability === 'unavailable';
+              return { label: truckLabel(truck), value: truck._id, disabled: assignedToOther || unavailable };
+            });
             return <tr key={collector._id}>
               <td><strong>{collector.name || 'Unnamed driver'}</strong><span className="route-stop-count">{collector.email || 'Driver'}</span></td>
-              <td><AppSelect aria-label={`Assign a route to ${collector.name || 'this driver'}`} className="route-assignment-select" onChange={(routeId) => setRouteSelections((current) => ({ ...current, [collector._id]: routeId === 'unassigned' ? '' : routeId }))} options={[{ label: 'Unassigned', value: 'unassigned' }, ...routes.filter((route) => route.isActive !== false || route._id === routeSelections[collector._id]).sort((a, b) => routeLabel(a).localeCompare(routeLabel(b), undefined, { numeric: true, sensitivity: 'base' })).map((route) => ({ label: `${routeLabel(route)}${route.isActive === false ? ' (Archived)' : ''}`, value: route._id }))]} value={routeSelections[collector._id] || 'unassigned'} /></td>
-              <td><AppSelect aria-label={`Assign a truck to ${collector.name || 'this driver'}`} className="route-assignment-select" onChange={(truckId) => setTruckSelections((current) => ({ ...current, [collector._id]: truckId === 'unassigned' ? '' : truckId }))} options={[{ label: 'Unassigned', value: 'unassigned' }, ...trucks.map((truck) => ({ label: truckLabel(truck), value: truck._id }))]} value={truckSelections[collector._id] || 'unassigned'} /></td>
+              <td><AppSelect aria-label={`Assign a route to ${collector.name || 'this driver'}`} className="route-assignment-select" onChange={(routeId) => setRouteSelections((current) => ({ ...current, [collector._id]: routeId === 'unassigned' ? '' : routeId }))} options={[{ label: 'Unassigned', value: 'unassigned' }, ...routeOptions]} value={routeSelections[collector._id] || 'unassigned'} /></td>
+              <td><AppSelect aria-label={`Assign a truck to ${collector.name || 'this driver'}`} className="route-assignment-select" onChange={(truckId) => setTruckSelections((current) => ({ ...current, [collector._id]: truckId === 'unassigned' ? '' : truckId }))} options={[{ label: 'Unassigned', value: 'unassigned' }, ...truckOptions]} value={truckSelections[collector._id] || 'unassigned'} /></td>
               <td>{selectedRoute ? routeSchedule(selectedRoute) : '—'}</td>
               <td><Button className="reassign-button" isDisabled={(!routeSelections[collector._id] && !truckSelections[collector._id] && !hasExistingAssignment) || isSaving === collector._id} onPress={() => saveAssignments(collector)} variant="secondary">{isSaving === collector._id ? 'Saving...' : hasExistingAssignment ? 'Update' : 'Assign'}</Button></td>
             </tr>;

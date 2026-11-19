@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Button, Modal } from '@heroui/react';
-import AppSelect from '../components/AppSelect.jsx';
+import AnnouncementCombobox from '../components/announcements/AnnouncementCombobox.jsx';
 import TablePagination from '../components/TablePagination.jsx';
 import { AnnouncementCanvas, AnnouncementPreview } from '../components/announcements/AnnouncementCanvas.jsx';
 import { exportAnnouncement, downloadAnnouncement } from '../components/announcements/exportImage.js';
@@ -73,7 +73,10 @@ export default function AnnouncementsPage({ token }) {
   const reset = () => { setEditing(null); setFields(initial()); setManualMessage(null); requestKey.current = crypto.randomUUID(); };
   function validate(value, text, published = false) {
     scheduledDate(value.date, value.time);
-    if (!value.reason || !value.areaId) throw new Error('Choose a reason and area.');
+    if (!value.areaId) throw new Error('Choose an area.');
+    for (const key of ['type', 'reason', 'impact']) {
+      if (!value[key]?.trim() || value[key].length > 80) throw new Error(`Enter a ${key} within 80 characters.`);
+    }
     if (value.impact === 'Rescheduled') scheduledDate(value.newDate, '00:00');
     if (text.length > 500) throw new Error('Keep the message within 500 characters.');
     if (published && !text.trim()) throw new Error('Add a message before publishing.');
@@ -126,11 +129,10 @@ export default function AnnouncementsPage({ token }) {
     } catch (error) { setNotice({ text: error.message, error: true }); }
     finally { busyRef.current = false; setBusy(''); }
   }
-  const select = (key, label, items) => <div className="ann-field"><span>{label}</span><AppSelect aria-label={label} value={fields[key] || 'all-trucks'} disabled={Boolean(busy)} options={items} onChange={value => update(key, value === 'all-trucks' ? '' : value)} /></div>;
+  const select = (key, label, items) => <AnnouncementCombobox label={label} value={fields[key] || (key === 'affectedTruckId' ? 'all-trucks' : '')} custom={['type', 'reason', 'impact'].includes(key)} disabled={Boolean(busy) || optionsState !== 'ready'} options={items} onChange={value => update(key, value === 'all-trucks' ? '' : value)} />;
   const dateInput = (key, label, type = 'date') => <div className="ann-field"><label htmlFor={`ann-${key}`}>{label}</label><input id={`ann-${key}`} type={type} required value={fields[key]} onChange={event => update(key, event.target.value)} /></div>;
 
   return <section className="announcements-page">
-    <header className="ann-page-heading"><h1>Announcements</h1><p>Tell residents about delays, changes and reminders in a few taps.</p></header>
     {notice && <div className={`ann-toast${notice.error ? ' ann-error' : ''}`} role={notice.error ? 'alert' : 'status'}><span>{notice.text}</span><Button variant="ghost" isIconOnly aria-label="Dismiss message" onPress={() => setNotice(null)}>×</Button></div>}
     <div className="ann-top-grid">
       <section className="ann-card ann-composer" ref={composer} aria-labelledby="ann-compose-title">
@@ -164,7 +166,7 @@ export default function AnnouncementsPage({ token }) {
       <section className="ann-card ann-preview-card" aria-labelledby="ann-preview-title">
         <header className="ann-card-heading"><h2 id="ann-preview-title">Preview</h2><p>Announcement image</p></header>
         <AnnouncementPreview fields={fields} />
-        <div className="ann-preview-bottom"><p>Ready to share with residents.</p><Button variant="secondary" isDisabled={Boolean(busy)} onPress={download}>{busy === 'download' ? 'Preparing…' : '↓ Download image'}</Button></div>
+        <div className="ann-preview-bottom"><p>Ready to share with residents.</p><Button type="button" variant="secondary" isDisabled={Boolean(busy)} onPress={download}>{busy === 'download' ? 'Preparing…' : '↓ Download image'}</Button></div>
       </section>
     </div>
     <section className="ann-card ann-recent" aria-labelledby="ann-recent-title">

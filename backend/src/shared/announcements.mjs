@@ -30,8 +30,9 @@ export function generateMessage(fields, now = new Date()) {
   const today = manilaParts(now).date;
   const tomorrow = manilaParts(new Date(new Date(now).getTime() + 86400000)).date;
   const when = `${date === today ? 'today, ' : date === tomorrow ? 'tomorrow, ' : ''}${formatDay(date)}`;
-  const cause = ({ 'Flat tire': 'a flat tire', Accident: 'an accident', 'Engine problem': 'an engine problem', 'Mechanical defect': 'a mechanical defect', 'Bad weather': 'bad weather', 'Road closure': 'a road closure', Holiday: 'the holiday', 'Landfill closure': 'a landfill closure' })[reason] || 'service changes';
+  const cause = ({ 'Flat tire': 'a flat tire', Accident: 'an accident', 'Engine problem': 'an engine problem', 'Mechanical defect': 'a mechanical defect', 'Bad weather': 'bad weather', 'Road closure': 'a road closure', Holiday: 'the holiday', 'Landfill closure': 'a landfill closure' })[reason] || reason.trim() || 'service changes';
   const action = ({ 'Delays may occur': 'may be delayed', 'Collection postponed': 'is postponed', 'Collection cancelled': 'is cancelled', Rescheduled: `is rescheduled to ${formatDay(newDate)}` })[impact];
-  const prefix = type === 'Reminder' ? 'Reminder: ' : type === 'Schedule change' ? 'Schedule update: ' : '';
+  const prefix = type === 'Reminder' ? 'Reminder: ' : type === 'Schedule change' ? 'Schedule update: ' : type && type !== 'Service delay' ? `${type.trim()}: ` : '';
+  if (!action) return `${prefix}Collection in ${areaLabel === 'All areas' ? 'all areas' : areaLabel} scheduled for ${formatTime(time)} on ${formatDay(date)}: ${reason.trim() || 'Service update'}. ${impact.trim() || 'Please check for updates'}. Thank you for your patience.`;
   return `${prefix}Collection in ${areaLabel === 'All areas' ? 'all areas' : areaLabel} scheduled for ${formatTime(time)} ${date === today || date === tomorrow ? '' : 'on '}${when} ${action} due to ${cause}. ${impact === 'Collection postponed' ? 'Please wait for the updated schedule. ' : ''}Thank you for your patience.`;
 }

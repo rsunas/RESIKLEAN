@@ -46,7 +46,7 @@ export default function NotificationsPage({ feed, onOpen, Icon }) {
           <div className="notifications-actions"><Button variant="secondary" className="outline-button" isDisabled={loading || !!busy} onPress={() => open(item)}>{busy === item.id ? 'Opening...' : item.type === 'complaint' || item.type === 'reply' ? 'View conversation' : 'View details'}</Button>{!item.read ? <Button variant="ghost" isDisabled={loading || !!busy} onPress={() => act(`read:${item.id}`, () => markRead([item.id]))} aria-label={`Mark ${item.title.toLowerCase()} as read`}>Mark as read</Button> : <span className="notifications-read-label">Read</span>}</div>
         </li>)}</ul> : <div className="notifications-empty"><Icon name="bell" size={32}/><h3>{filter.unread ? "You're all caught up" : 'No notifications here yet'}</h3><p>{filter.type !== 'all' ? 'Try another activity category.' : 'New activity will appear here automatically.'}</p></div>}
       </LoadingRegion>
-      <TablePagination label="Notifications" page={filter.page} pageSize={filter.limit} total={data?.total || 0} disabled={loading || !!busy} onPageChange={page => changeFilter({ page })} onPageSizeChange={limit => changeFilter({ limit })}/>
+      <TablePagination label="Notifications" page={filter.page} pageSize={filter.limit} pageSizeOptions={[4]} total={data?.total || 0} disabled={loading || !!busy} onPageChange={page => changeFilter({ page })} onPageSizeChange={limit => changeFilter({ limit })}/>
     </section>
     <p className="notifications-note">Reading a notification does not resolve a complaint. Collection totals update as offline stop records sync. Finished-collection notices start with this update; earlier ended trips are not treated as finished collections.</p>
   </>;
