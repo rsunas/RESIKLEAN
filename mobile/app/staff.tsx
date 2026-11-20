@@ -3,7 +3,7 @@ import { useAppTheme } from '@/hooks/app-preferences';
 import { requestJson } from '@/lib/network-request';
 import { WorkProfileEditor } from '@/components/work-profile-editor';
 import { ResidentAvatar } from '@/components/resident-avatar';
-import { StaffSearchSelect, StaffSlopeInput, StaffHistoryFilters, filterStaffHistory, historyText, validSlope } from '@/components/staff-controls';
+import { StaffSearchSelect, StaffHistoryFilters, filterStaffHistory, historyText, validSlope } from '@/components/staff-controls';
 import { ProfileSettingsRow } from '@/components/profile-settings-row';
 import { MotionPressable as Pressable, TabTransition, useSlidingTabPill, useClosingValue, RevealRow, useFirstLoadReveal, ToastMotion } from '@/components/app-motion';
 import { SkeletonBlock, SkeletonRegion, SkeletonRows, useSkeletonVisible } from '@/components/loading-skeleton';
@@ -37,9 +37,6 @@ import { StaffSubmissionDetails } from '@/components/staff-submission-details';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { clearSession, getSession } from '@/lib/session';
 import {
-  DEFAULT_FALLBACK_AREAS,
-  DEFAULT_FALLBACK_DRIVERS,
-  DEFAULT_FALLBACK_TRUCKS,
   enqueueStaffTruckload,
   getQueuedStaffTruckloads,
   getStaffCache,
@@ -62,6 +59,7 @@ const DENSITY_FACTOR = 0.294;
 
 type Tab = 'input' | 'history' | 'profile';
 type Truck = {
+  truckNumber?: string;
   plate: string;
   length: string;
   width: string;
@@ -69,6 +67,7 @@ type Truck = {
 };
 
 type TruckResponse = {
+  truckNumber?: string;
   plateNumber: string;
   length: number;
   width: number;
@@ -77,7 +76,7 @@ type TruckResponse = {
 
 type AreaOption = {
   _id: string;
-  barangay: string;
+  barangay: string | string[];
   name?: string;
 };
 
@@ -111,6 +110,13 @@ type TruckLoadResponse = {
   width?: number;
   height?: number;
   slope?: number;
+  measurementMode?: 'three-point' | 'single-pile';
+  pileHeightM?: number;
+  avgHeightM?: number;
+  baseVolumeM3?: number;
+  slopeVolumeM3?: number;
+  totalVolumeM3?: number;
+  pileHeightsCm?: Record<string, number>;
   volumeCubicM?: number;
   tonnesEstimate?: number;
   densityFactor?: number;
@@ -146,6 +152,13 @@ type Submission = {
   width: number;
   height: number;
   slope: string;
+  measurementMode?: 'three-point' | 'single-pile';
+  pileHeightM?: number;
+  avgHeightM?: number;
+  baseVolumeM3?: number;
+  slopeVolumeM3?: number;
+  totalVolumeM3?: number;
+  pileHeightsCm?: Record<string, number>;
   tonnes: number;
   status: 'Synced' | 'Pending';
   notes: string;
@@ -155,8 +168,12 @@ type Submission = {
 };
 
 type TonnagePreview = {
+  measurementMode: 'three-point' | 'single-pile';
+  avgHeightM?: number;
+  baseVolumeM3: number;
   volumeCubicM: number;
   slopeCubicM: number;
+  totalVolumeM3: number;
   tonnes: number;
 };
 
@@ -170,7 +187,7 @@ const formatHistoryNumber = (value: number) => value.toLocaleString('en-PH', {
 const formatHistoryTonnage = (tonnes: number) => `${formatHistoryNumber(tonnes)} t`;
 const formatFileSize = (size: number) => `${(size / (1024 * 1024)).toFixed(1)} MB`;
 const areaLabel = (area: AreaOption) => {
-  const match = area.name?.match(/\bArea\s+(\d+)\s*([A-Za-z]?)/i);
+  const match = area.name?.match(/\bArea\s+(\d+)([A-Za-z]?)\b/i);
   if (match) return `Area ${match[1]}${match[2].toUpperCase()}`;
   return area.name?.replace(/\s+Collection Route\s*$/i, '').trim() || 'Unnamed area';
 };
@@ -190,12 +207,22 @@ const slopeValue = (selection: string) => {
   const value = Number.parseFloat(selection);
   return Number.isFinite(value) ? value : 0;
 };
-const calculateTonnage = (length: number, width: number, height: number, slope: number, densityFactor = DENSITY_FACTOR) => {
-  const volumeCubicM = length * width * height;
-  const slopeCubicM = Number.isFinite(slope) ? slope : 0;
-  return Number.isFinite(volumeCubicM) && volumeCubicM > 0
-    ? (volumeCubicM + slopeCubicM) * densityFactor
-    : 0;
+const calculateBreakdown = (mode: 'three-point' | 'single-pile', length: number, width: number, height: number, pileHeights: Record<string, string>, pileHeightM: string, densityFactor = DENSITY_FACTOR) => {
+  if (mode === 'three-point') {
+    const avgHeightM = (Number(pileHeights.front) + Number(pileHeights.middle) + Number(pileHeights.back)) / 300;
+    const totalVolumeM3 = length * width * avgHeightM;
+    return { measurementMode: mode, avgHeightM, baseVolumeM3: 0, volumeCubicM: totalVolumeM3, slopeCubicM: 0, totalVolumeM3, tonnes: totalVolumeM3 * densityFactor };
+  }
+  const baseVolumeM3 = length * width * height;
+  const slopeCubicM = 0.5 * length * width * Number(pileHeightM || 0);
+  const totalVolumeM3 = baseVolumeM3 + slopeCubicM;
+  return { measurementMode: mode, baseVolumeM3, volumeCubicM: totalVolumeM3, slopeCubicM, totalVolumeM3, tonnes: totalVolumeM3 * densityFactor };
+};
+const calculateTonnage = (length: number, width: number, height: number, slope: number, densityFactor = DENSITY_FACTOR) => (length * width * height + slope) * densityFactor;
+const queueBreakdown = (q: { measurementMode?: 'three-point' | 'single-pile'; pileHeightsCm?: Record<string, number>; pileHeightM?: string; length: string; width: string; height: string; slope: string }) => {
+  const mode = q.measurementMode || (q.pileHeightsCm ? 'three-point' : 'single-pile');
+  const heights = q.pileHeightsCm ? Object.fromEntries(Object.entries(q.pileHeightsCm).map(([key, value]) => [key, String(value)])) : { front: '0', middle: '0', back: '0' };
+  return calculateBreakdown(mode, Number(q.length || 0), Number(q.width || 0), Number(q.height || 0), heights, q.pileHeightM || '0');
 };
 const formatSlope = (value?: number) => `${Number(value || 0).toLocaleString('en-PH', { maximumFractionDigits: 6 })} m³`;
 const formatSubmissionDate = (value?: string) => {
@@ -218,7 +245,10 @@ function mapTruckLoad(load: TruckLoadResponse, staffName = 'You', fallbackArea =
   // Recalculate from the stored metre dimensions so older records that were
   // saved before the tonnage hook (and therefore have tonnesEstimate = 0)
   // still display the correct value.
-  const calculatedTonnage = calculateTonnage(length, width, height, slope, effectiveDensity);
+  const mode = load.measurementMode || (load.pileHeightsCm ? 'three-point' : 'single-pile');
+  const heights = load.pileHeightsCm ? Object.fromEntries(Object.entries(load.pileHeightsCm).map(([key, value]) => [key, String(value)])) : { front: '0', middle: '0', back: '0' };
+  const breakdown = calculateBreakdown(mode, length, width, height, heights, String(load.pileHeightM ?? 0), effectiveDensity);
+  const calculatedTonnage = load.measurementMode || load.pileHeightsCm ? breakdown.tonnes : calculateTonnage(length, width, height, slope, effectiveDensity);
   return {
     id: load._id || `${load.truckPlate || 'load'}-${load.arrivedAt || Date.now()}`,
     barangay: historyText(load.routeId?.barangay) || fallbackArea.split(' · ')[0] || 'No area assigned',
@@ -229,6 +259,13 @@ function mapTruckLoad(load: TruckLoadResponse, staffName = 'You', fallbackArea =
     width,
     height,
     slope: formatSlope(slope),
+    measurementMode: breakdown.measurementMode,
+    pileHeightM: load.pileHeightM,
+    avgHeightM: load.avgHeightM ?? breakdown.avgHeightM,
+    baseVolumeM3: load.baseVolumeM3 ?? breakdown.baseVolumeM3,
+    slopeVolumeM3: load.slopeVolumeM3 ?? breakdown.slopeCubicM,
+    totalVolumeM3: load.totalVolumeM3 || breakdown.totalVolumeM3,
+    pileHeightsCm: load.pileHeightsCm,
     tonnes: calculatedTonnage,
     status: 'Synced',
     notes: load.notes || '',
@@ -400,24 +437,30 @@ export default function StaffScreen() {
   const [activeTab, setActiveTab] = useState<Tab>('input');
   const [isOffline, setIsOffline] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [trucks, setTrucks] = useState<Truck[]>(DEFAULT_FALLBACK_TRUCKS);
+  const [trucks, setTrucks] = useState<Truck[]>([]);
   const [isLoadingTrucks, setIsLoadingTrucks] = useState(false);
   const [truckLoadError, setTruckLoadError] = useState('');
-  const [truckPlate, setTruckPlate] = useState(DEFAULT_FALLBACK_TRUCKS[0]?.plate || '');
-  const [areas, setAreas] = useState<AreaOption[]>(DEFAULT_FALLBACK_AREAS);
+  const [truckPlate, setTruckPlate] = useState('');
+  const [areas, setAreas] = useState<AreaOption[]>([]);
   const [isLoadingAreas, setIsLoadingAreas] = useState(false);
   const [areaLoadError, setAreaLoadError] = useState('');
-  const [area, setArea] = useState(areaLabel(DEFAULT_FALLBACK_AREAS[0]));
-  const [routeId, setRouteId] = useState(DEFAULT_FALLBACK_AREAS[0]?._id || '');
-  const [drivers, setDrivers] = useState<string[]>(DEFAULT_FALLBACK_DRIVERS);
+  const [area, setArea] = useState('');
+  const [routeId, setRouteId] = useState('');
+  const [drivers, setDrivers] = useState<string[]>([]);
   const [isLoadingDrivers, setIsLoadingDrivers] = useState(false);
   const [driverLoadError, setDriverLoadError] = useState('');
-  const [driver, setDriver] = useState(DEFAULT_FALLBACK_DRIVERS[0] || '');
-  const [slope, setSlope] = useState('0.5');
-  const [length, setLength] = useState(DEFAULT_FALLBACK_TRUCKS[0]?.length || '');
-  const [width, setWidth] = useState(DEFAULT_FALLBACK_TRUCKS[0]?.width || '');
-  const [height, setHeight] = useState(DEFAULT_FALLBACK_TRUCKS[0]?.height || '');
+  const [driver, setDriver] = useState('');
+  const [measurementMode, setMeasurementMode] = useState<'three-point' | 'single-pile'>('three-point');
+  const [pileHeights, setPileHeights] = useState({ front: '', middle: '', back: '' });
+  const [pileHeightM, setPileHeightM] = useState('0');
+  const [length, setLength] = useState('');
+  const [width, setWidth] = useState('');
+  const [height, setHeight] = useState('');
   const [notes, setNotes] = useState('');
+  const validPileHeights = Object.values(pileHeights).every(value => value.trim() !== '' && validSlope(value));
+  const validSinglePile = pileHeightM.trim() !== '' && validSlope(pileHeightM);
+  const slope = measurementMode === 'single-pile' ? pileHeightM : (validPileHeights ? '0' : '');
+
   const [sidePhoto, setSidePhoto] = useState<AuditPhoto | null>(null);
   const [backPhoto, setBackPhoto] = useState<AuditPhoto | null>(null);
   const [isOpeningAuditCamera, setIsOpeningAuditCamera] = useState(false);
@@ -483,6 +526,7 @@ export default function StaffScreen() {
         if (response.ok && result.success && Array.isArray(result.data?.trucks)) {
           const registeredTrucks = ((result.data?.trucks || []) as TruckResponse[]).map((truck) => ({
             plate: truck.plateNumber,
+            truckNumber: truck.truckNumber,
             length: String(truck.length),
             width: String(truck.width),
             height: String(truck.height),
@@ -603,7 +647,8 @@ export default function StaffScreen() {
       const len = Number(q.length || 0);
       const wid = Number(q.width || 0);
       const hgt = Number(q.height || 0);
-      const slp = Number(q.slope || 0);
+      const qBreakdown = queueBreakdown(q);
+      const slp = qBreakdown.slopeCubicM;
       return {
         id: q.clientId,
         barangay: q.area || 'Offline submission',
@@ -614,7 +659,13 @@ export default function StaffScreen() {
         width: wid,
         height: hgt,
         slope: formatSlope(slp),
-        tonnes: calculateTonnage(len, wid, hgt, slp),
+        pileHeightsCm: q.pileHeightsCm,
+        measurementMode: qBreakdown.measurementMode,
+        avgHeightM: qBreakdown.avgHeightM,
+        baseVolumeM3: qBreakdown.baseVolumeM3,
+        slopeVolumeM3: qBreakdown.slopeCubicM,
+        totalVolumeM3: qBreakdown.totalVolumeM3,
+        tonnes: qBreakdown.tonnes,
         status: 'Pending',
         notes: q.notes,
         sidePhotoUrl: q.sidePhotoUri,
@@ -743,6 +794,7 @@ export default function StaffScreen() {
             width: wid,
             height: hgt,
             slope: formatSlope(slp),
+        pileHeightsCm: q.pileHeightsCm,
             tonnes: calculateTonnage(len, wid, hgt, slp),
             status: 'Pending',
             notes: q.notes,
@@ -808,6 +860,7 @@ export default function StaffScreen() {
                 width: wid,
                 height: hgt,
                 slope: formatSlope(slp),
+        pileHeightsCm: q.pileHeightsCm,
                 tonnes: calculateTonnage(len, wid, hgt, slp),
                 status: 'Pending',
                 notes: q.notes,
@@ -890,7 +943,7 @@ export default function StaffScreen() {
           if (savedContext.area) setArea(savedContext.area);
           if (savedContext.routeId) setRouteId(savedContext.routeId);
           if (savedContext.driver) setDriver(savedContext.driver);
-          if (savedContext.slope) setSlope(String(Number.parseFloat(savedContext.slope)));
+          if (savedContext.pileHeights) setPileHeights(savedContext.pileHeights);
           if (savedContext.length) setLength(savedContext.length);
           if (savedContext.width) setWidth(savedContext.width);
           if (savedContext.height) setHeight(savedContext.height);
@@ -948,11 +1001,10 @@ export default function StaffScreen() {
   const selectedTruck = trucks.find((truck) => truck.plate === truckPlate);
 
   const previewTonnage = () => {
-    if (!validSlope(slope)) { setMessage('Enter a valid slope of 0 cubic metres or more.'); setTonnagePreview(null); return; }
+    if ((measurementMode === 'three-point' && !validPileHeights) || (measurementMode === 'single-pile' && !validSinglePile)) { setMessage(measurementMode === 'three-point' ? 'Enter front, middle, and back heights in cm (0 or more).' : 'Enter a non-negative pile height in metres.'); setTonnagePreview(null); return; }
     const numericLength = Number(length);
     const numericWidth = Number(width);
     const numericHeight = Number(height);
-    const slopeCubicM = slopeValue(slope);
 
     if (!Number.isFinite(numericLength) || !Number.isFinite(numericWidth) || !Number.isFinite(numericHeight)
       || numericLength <= 0 || numericWidth <= 0 || numericHeight <= 0) {
@@ -961,12 +1013,7 @@ export default function StaffScreen() {
       return;
     }
 
-    const volumeCubicM = numericLength * numericWidth * numericHeight;
-    setTonnagePreview({
-      volumeCubicM,
-      slopeCubicM,
-      tonnes: calculateTonnage(numericLength, numericWidth, numericHeight, slopeCubicM),
-    });
+    setTonnagePreview(calculateBreakdown(measurementMode, numericLength, numericWidth, numericHeight, pileHeights, pileHeightM));
     setMessage('');
   };
 
@@ -1001,6 +1048,7 @@ export default function StaffScreen() {
         routeId,
         driver,
         slope,
+        pileHeights,
         length,
         width,
         height,
@@ -1031,7 +1079,7 @@ export default function StaffScreen() {
   };
 
   const submitMeasurement = async () => {
-    if (!validSlope(slope)) { setMessage('Enter a valid slope of 0 cubic metres or more.'); setTonnagePreview(null); return; }
+    if ((measurementMode === 'three-point' && !validPileHeights) || (measurementMode === 'single-pile' && !validSinglePile)) { setMessage(measurementMode === 'three-point' ? 'Enter front, middle, and back heights in cm (0 or more).' : 'Enter a non-negative pile height in metres.'); setTonnagePreview(null); return; }
     const numericLength = Number(length);
     const numericWidth = Number(width);
     const numericHeight = Number(height);
@@ -1046,15 +1094,12 @@ export default function StaffScreen() {
       return;
     }
 
-    if (!sidePhoto || !backPhoto) {
-      setMessage('Capture both a Side photo and a Back photo before submitting.');
-      return;
-    }
 
     if (!numericLength || !numericWidth || !numericHeight) {
       setMessage('The selected truck has incomplete registered dimensions.');
       return;
     }
+    const breakdown = calculateBreakdown(measurementMode, numericLength, numericWidth, numericHeight, pileHeights, pileHeightM);
 
     if (!API_URL) {
       setMessage('EXPO_PUBLIC_API_URL is not configured.');
@@ -1081,7 +1126,12 @@ export default function StaffScreen() {
           length,
           width,
           height,
-          slope: String(slopeValue(slope)),
+          measurementMode,
+          pileHeightM,
+          slope: String(breakdown.slopeCubicM),
+          pileHeightsCm: measurementMode === 'three-point' ? Object.fromEntries(Object.entries(pileHeights).map(([key, value]) => [key, Number(value)])) : undefined,
+          totalVolumeM3: breakdown.totalVolumeM3,
+          tonnes: breakdown.tonnes,
           notes: notes.trim(),
           sidePhoto,
           backPhoto,
@@ -1096,12 +1146,19 @@ export default function StaffScreen() {
           length: numericLength,
           width: numericWidth,
           height: numericHeight,
-          slope: formatSlope(slopeValue(slope)),
-          tonnes: tonnagePreview?.tonnes || calculateTonnage(numericLength, numericWidth, numericHeight, slopeValue(slope)),
+          slope: formatSlope(breakdown.slopeCubicM),
+          measurementMode,
+          pileHeightM: Number(pileHeightM),
+          pileHeightsCm: measurementMode === 'three-point' ? Object.fromEntries(Object.entries(pileHeights).map(([key, value]) => [key, Number(value)])) : undefined,
+          avgHeightM: breakdown.avgHeightM,
+          baseVolumeM3: breakdown.baseVolumeM3,
+          slopeVolumeM3: breakdown.slopeCubicM,
+          totalVolumeM3: breakdown.totalVolumeM3,
+          tonnes: breakdown.tonnes,
           status: 'Pending',
           notes: notes.trim(),
-          sidePhotoUrl: sidePhoto.uri,
-          backPhotoUrl: backPhoto.uri,
+          sidePhotoUrl: sidePhoto?.uri,
+          backPhotoUrl: backPhoto?.uri,
         };
         setHistory((current) => [pendingSubmission, ...current.filter((item) => item.id !== clientSubmissionId)]);
         setPendingSync(queueStats.pending);
@@ -1130,13 +1187,20 @@ export default function StaffScreen() {
       formData.append('length', length);
       formData.append('width', width);
       formData.append('height', height);
-      formData.append('slope', String(slopeValue(slope)));
+      formData.append('measurementMode', measurementMode);
+      formData.append('pileHeightM', pileHeightM);
+      formData.append('slope', String(breakdown.slopeCubicM));
+      if (measurementMode === 'three-point') formData.append('pileHeightsCm', JSON.stringify(Object.fromEntries(Object.entries(pileHeights).map(([key, value]) => [key, Number(value)]))));
       formData.append('notes', notes.trim());
 
-      appendAuditPhoto(formData, 'sidePhoto', sidePhoto);
-      appendAuditPhoto(formData, 'backPhoto', backPhoto);
-      formData.append('sidePhotoMetadata', auditPhotoMetadata(sidePhoto));
-      formData.append('backPhotoMetadata', auditPhotoMetadata(backPhoto));
+      if (sidePhoto) {
+        appendAuditPhoto(formData, 'sidePhoto', sidePhoto);
+        formData.append('sidePhotoMetadata', auditPhotoMetadata(sidePhoto));
+      }
+      if (backPhoto) {
+        appendAuditPhoto(formData, 'backPhoto', backPhoto);
+        formData.append('backPhotoMetadata', auditPhotoMetadata(backPhoto));
+      }
 
       let response: Response;
       let result: { success?: boolean; error?: string; data?: TruckLoadResponse };
@@ -1221,7 +1285,7 @@ export default function StaffScreen() {
               setTonnagePreview(null);
             }
           }}
-          options={trucks.map((truck) => ({ label: `${truck.plate} · ${truck.length}×${truck.width}×${truck.height} m`, value: truck.plate }))}
+          options={trucks.map((truck) => ({ label: truck.truckNumber ? `Truck ${truck.truckNumber}` : 'Truck number not registered', value: truck.plate }))}
           placeholder={isLoadingTrucks ? 'Loading registered trucks…' : trucks.length ? 'Select truck' : 'No registered trucks available'}
           value={truckPlate}
         />
@@ -1237,7 +1301,7 @@ export default function StaffScreen() {
             setArea(option);
             setRouteId(selectedArea?._id || '');
           }}
-          options={areas.map((item) => ({ label: areaLabel(item), description: item.barangay, value: areaLabel(item) }))}
+          options={areas.map((item) => ({ label: areaLabel(item), description: historyText(item.barangay), value: areaLabel(item) }))}
           placeholder={isLoadingAreas ? 'Loading areas…' : areas.length ? 'Select area' : 'No areas available'}
           value={area}
         />
@@ -1255,7 +1319,25 @@ export default function StaffScreen() {
         />
         {driverLoadError && drivers.length === 0 ? <Text style={styles.truckLoadError}>{driverLoadError}</Text> : null}
 
-        <StaffSlopeInput value={slope} onChange={value => { setSlope(value); setTonnagePreview(null); }} />
+        <Text style={[styles.formSectionTitle, styles.sectionSpacing]}>Height of pile</Text>
+        <View style={styles.modeSelector}>
+          {([['three-point', '3-Point Height (cm)'], ['single-pile', 'Single Pile Height (m)']] as const).map(([mode, label]) => (
+            <Pressable key={mode} onPress={() => { setMeasurementMode(mode); setTonnagePreview(null); }} style={[styles.modeOption, measurementMode === mode && styles.modeOptionSelected]}>
+              <Text style={[styles.modeOptionText, measurementMode === mode && styles.modeOptionTextSelected]}>{label}</Text>
+            </Pressable>
+          ))}
+        </View>
+        <Text style={styles.helperText}>{measurementMode === 'three-point' ? 'Measure total pile height from the truck bed floor in centimetres.' : 'Enter the extra mound height above the truck wall height in metres.'}</Text>
+        {measurementMode === 'three-point' ? <View style={styles.measurementRow}>
+          {(['front', 'middle', 'back'] as const).map(position => (
+            <View key={position} style={styles.measurementField}>
+              <Text style={styles.measurementLabel}>{position[0].toUpperCase() + position.slice(1)} (cm)</Text>
+              <TextInput accessibilityLabel={`${position} pile height in centimetres`} keyboardType="decimal-pad"
+                value={pileHeights[position]} placeholder="0" style={[styles.notesInput, { minHeight: 48 }]}
+                onChangeText={value => { setPileHeights(current => ({ ...current, [position]: value })); setTonnagePreview(null); }} />
+            </View>
+          ))}
+        </View> : <View style={styles.fieldGroup}><Text style={styles.measurementLabel}>Pile Height (m)</Text><TextInput accessibilityLabel="pile height in metres" keyboardType="decimal-pad" value={pileHeightM} onChangeText={value => { setPileHeightM(value); setTonnagePreview(null); }} placeholder="0" style={styles.notesInput} /></View>}
         <Text style={[styles.formSectionTitle, styles.sectionSpacing]}>Measurements</Text>
         <View style={styles.measurementRow}>
           <MeasurementField label="Length (m)" value={length} />
@@ -1287,15 +1369,15 @@ export default function StaffScreen() {
             <View style={styles.tonnagePreviewDetails}>
               <Text style={styles.tonnagePreviewLabel}>ESTIMATED TONNAGE</Text>
               <Text style={styles.tonnagePreviewValue}>{formatTonnage(tonnagePreview.tonnes).replace(/ t$/, '')}<Text style={styles.tonnageUnit}> t</Text></Text>
-              <Text style={styles.tonnagePreviewFormula}>
-                ({tonnagePreview.volumeCubicM.toFixed(2)} m³ + {tonnagePreview.slopeCubicM} m³ slope) × 294 kg/m³
-              </Text>
+              <Text style={styles.tonnagePreviewFormula}>{tonnagePreview.measurementMode === 'three-point'
+                ? `Average height ${tonnagePreview.avgHeightM?.toFixed(2)} m · Total volume ${tonnagePreview.totalVolumeM3.toFixed(2)} m³ × 294 kg/m³`
+                : `Base ${tonnagePreview.baseVolumeM3.toFixed(2)} m³ + slope ${tonnagePreview.slopeCubicM.toFixed(2)} m³ = ${tonnagePreview.totalVolumeM3.toFixed(2)} m³ × 294 kg/m³`}</Text>
             </View>
           </View>
         ) : null}
 
         <View style={styles.fieldGroup}>
-          <Text style={styles.formSectionTitle}>Proof photos <Text style={styles.required}>*</Text></Text>
+          <Text style={styles.formSectionTitle}>Proof photos (optional)</Text>
           <Text style={styles.photoInstruction}>Submit the original images. They will not be cropped before upload.</Text>
           <View style={[styles.photoRow, fontScale > 1.3 && { flexDirection: 'column' }]}>
           <AuditPhotoField
@@ -1412,7 +1494,7 @@ export default function StaffScreen() {
             </View>
             <View style={styles.historyMeasurements}>
               {[
-                ['Slope', submission.slope],
+                ['Pile volume', submission.slope],
                 ['Length', `${submission.length} m`],
                 ['Width', `${submission.width} m`],
                 ['Height', `${submission.height} m`],
@@ -1584,6 +1666,11 @@ const styles = StyleSheet.create({
   calculateButtonDisabled: { backgroundColor: '#f2f5f3', borderColor: '#dce4df' },
   calculateButtonLabel: { color: '#086B42', fontSize: 16, fontWeight: '700', flexShrink: 1, textAlign: 'center' },
   calculateButtonLabelDisabled: { color: '#91a19a' },
+  modeSelector: { flexDirection: 'row', backgroundColor: '#E8F0EC', borderRadius: 14, padding: 4, gap: 4 },
+  modeOption: { flex: 1, paddingVertical: 11, borderRadius: 10, alignItems: 'center' },
+  modeOptionSelected: { backgroundColor: '#0A7F4F' },
+  modeOptionText: { color: '#35463F', fontSize: 12, fontWeight: '600', textAlign: 'center' },
+  modeOptionTextSelected: { color: '#FFFFFF' },
   tonnagePreview: { backgroundColor: '#E3F4EB', borderRadius: 20, marginTop: 12, paddingVertical: 16, paddingHorizontal: 18 },
   tonnagePreviewDetails: { alignSelf: 'stretch' },
   tonnagePreviewLabel: { color: '#086B42', fontSize: 11, fontWeight: '700', letterSpacing: 1 },

@@ -97,8 +97,15 @@ if (Platform.OS !== 'web' && !TaskManager.isTaskDefined(DRIVER_GEOFENCE_TASK)) {
 
 export async function getDriverGeofencingStatus() {
   if (Platform.OS === 'web' || !await TaskManager.isAvailableAsync()) return false;
-
-  return Location.hasStartedGeofencingAsync(DRIVER_GEOFENCE_TASK);
+  try {
+    const permission = await Location.getBackgroundPermissionsAsync();
+    if (permission.status !== 'granted') return false;
+    return await Location.hasStartedGeofencingAsync(DRIVER_GEOFENCE_TASK);
+  } catch {
+    // Android rejects the status call when background location was revoked.
+    // Treat that as disabled so a status poll never becomes an app error.
+    return false;
+  }
 }
 
 export async function enableDriverGeofencing({ apiUrl, stops }: { apiUrl: string; stops: DriverGeofenceStop[] }): Promise<GeofencingSetupResult> {
@@ -157,8 +164,12 @@ export async function updateDriverGeofences({ apiUrl, stops }: { apiUrl: string;
   }));
 
   await writeStoredJson(GEOFENCE_CONFIG_KEY, { apiUrl });
-  await Location.startGeofencingAsync(DRIVER_GEOFENCE_TASK, regions);
-  return true;
+  try {
+    await Location.startGeofencingAsync(DRIVER_GEOFENCE_TASK, regions);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function stopDriverGeofencing({ clearPending = false, forgetConfiguration = false }: { clearPending?: boolean; forgetConfiguration?: boolean } = {}) {
@@ -166,6 +177,9 @@ export async function stopDriverGeofencing({ clearPending = false, forgetConfigu
     if (await getDriverGeofencingStatus()) {
       await Location.stopGeofencingAsync(DRIVER_GEOFENCE_TASK);
     }
+  } catch {
+    // Permission may have been revoked after the status check. Local queue
+    // cleanup still runs below and the caller should not be interrupted.
   } finally {
     const cleanup = [clearGeofenceEntries()];
     if (forgetConfiguration) cleanup.push(SecureStore.deleteItemAsync(GEOFENCE_CONFIG_KEY));

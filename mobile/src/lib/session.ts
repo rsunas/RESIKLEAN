@@ -39,5 +39,11 @@ export async function getSession(): Promise<AuthSession | null> {
 }
 
 export async function clearSession() {
+  const session = await getSession();
+  const apiUrl = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
+  if (apiUrl && session?.user.role === 'resident') {
+    const { unregisterResidentPush } = await import('./resident-push');
+    await unregisterResidentPush(apiUrl, session.token).catch(() => {});
+  }
   await SecureStore.deleteItemAsync(SESSION_KEY);
 }

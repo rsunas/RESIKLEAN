@@ -16,6 +16,13 @@ export type StaffSubmissionDetailsData = {
   width: number;
   height: number;
   slope: string;
+  measurementMode?: 'three-point' | 'single-pile';
+  pileHeightM?: number;
+  avgHeightM?: number;
+  baseVolumeM3?: number;
+  slopeVolumeM3?: number;
+  totalVolumeM3?: number;
+  pileHeightsCm?: Record<string, number>;
   tonnes: number;
   status: 'Synced' | 'Pending' | 'Failed';
   notes: string;
@@ -74,8 +81,10 @@ export function StaffSubmissionDetails({ submission, onClose, visible = true }: 
   };
   const statusColors = STATUS_COLORS[submission.status];
   // Exactly the calculator's base volume (slope is added separately there).
-  const volume = submission.length * submission.width * submission.height;
-  const slopeDisplay = submission.slope.startsWith('-') || submission.slope.startsWith('+') ? submission.slope : `+${submission.slope}`;
+  const volume = submission.totalVolumeM3 ?? submission.length * submission.width * submission.height;
+  const slopeDisplay = submission.measurementMode === 'three-point'
+    ? `Average height ${(submission.avgHeightM || 0).toFixed(2)} m`
+    : `Base ${(submission.baseVolumeM3 ?? submission.length * submission.width * submission.height).toFixed(2)} m³ + slope ${(submission.slopeVolumeM3 ?? 0).toFixed(2)} m³`;
   const tonnageDisplay = `${formatMeasurement(submission.tonnes)} t`;
 
   const placeholder = (fullScreen = false) => (
@@ -135,7 +144,12 @@ export function StaffSubmissionDetails({ submission, onClose, visible = true }: 
             </View>
             <View style={styles.card}>
               <Text accessibilityRole="header" style={styles.heading}>Measurements</Text>
-              <ReceiptRow label="Slope" value={slopeDisplay} />
+              {submission.pileHeightsCm ? <>
+                <ReceiptRow label="Front pile height" value={`${submission.pileHeightsCm.front} cm`} />
+                <ReceiptRow label="Middle pile height" value={`${submission.pileHeightsCm.middle} cm`} />
+                <ReceiptRow label="Back pile height" value={`${submission.pileHeightsCm.back} cm`} />
+              </> : null}
+              <ReceiptRow label="Additional volume" value={slopeDisplay} />
               <ReceiptRow label="Length" value={`${formatMeasurement(submission.length)} m`} />
               <ReceiptRow label="Width" value={`${formatMeasurement(submission.width)} m`} />
               <ReceiptRow label="Height" value={`${formatMeasurement(submission.height)} m`} />

@@ -27,9 +27,14 @@ export type StaffTruckloadQueueInput = {
   width: string;
   height: string;
   slope: string;
+  measurementMode?: 'three-point' | 'single-pile';
+  pileHeightM?: string;
+  pileHeightsCm?: Record<string, number>;
+  totalVolumeM3?: number;
+  tonnes?: number;
   notes: string;
-  sidePhoto: StaffQueuePhoto;
-  backPhoto: StaffQueuePhoto;
+  sidePhoto?: StaffQueuePhoto | null;
+  backPhoto?: StaffQueuePhoto | null;
 };
 
 type QueuePayload = Omit<StaffTruckloadQueueInput, 'staffId'>;
@@ -56,6 +61,9 @@ export type QueuedStaffTruckloadRecord = {
   width: string;
   height: string;
   slope: string;
+  measurementMode?: 'three-point' | 'single-pile';
+  pileHeightM?: string;
+  pileHeightsCm?: Record<string, number>;
   notes: string;
   sidePhotoUri: string;
   backPhotoUri: string;
@@ -188,6 +196,7 @@ const persistPhoto = async (photo: StaffQueuePhoto, clientId: string, slot: 'sid
 };
 
 const deletePhoto = async (uri: string) => {
+  if (!uri) return;
   try {
     await FileSystem.deleteAsync(uri, { idempotent: true });
   } catch {
@@ -211,10 +220,10 @@ export async function enqueueStaffTruckload(input: StaffTruckloadQueueInput) {
   );
   if (existing) return { alreadyQueued: true };
 
-  const sideUri = await persistPhoto(input.sidePhoto, input.clientSubmissionId, 'side');
+  const sideUri = input.sidePhoto ? await persistPhoto(input.sidePhoto, input.clientSubmissionId, 'side') : '';
   let backUri = '';
   try {
-    backUri = await persistPhoto(input.backPhoto, input.clientSubmissionId, 'back');
+    backUri = input.backPhoto ? await persistPhoto(input.backPhoto, input.clientSubmissionId, 'back') : '';
     const payload: QueuePayload = {
       clientSubmissionId: input.clientSubmissionId,
       truckPlate: input.truckPlate,
@@ -225,9 +234,14 @@ export async function enqueueStaffTruckload(input: StaffTruckloadQueueInput) {
       width: input.width,
       height: input.height,
       slope: input.slope,
+      measurementMode: input.measurementMode,
+      pileHeightM: input.pileHeightM,
+      pileHeightsCm: input.pileHeightsCm,
+      totalVolumeM3: input.totalVolumeM3,
+      tonnes: input.tonnes,
       notes: input.notes,
-      sidePhoto: { ...input.sidePhoto, uri: sideUri },
-      backPhoto: { ...input.backPhoto, uri: backUri },
+      sidePhoto: input.sidePhoto ? { ...input.sidePhoto, uri: sideUri } : null,
+      backPhoto: input.backPhoto ? { ...input.backPhoto, uri: backUri } : null,
     };
 
     await database.runAsync(
@@ -295,6 +309,9 @@ export async function getQueuedStaffTruckloads(staffId: string): Promise<QueuedS
           width: payload.width,
           height: payload.height,
           slope: payload.slope,
+          measurementMode: payload.measurementMode,
+          pileHeightM: payload.pileHeightM,
+          pileHeightsCm: payload.pileHeightsCm,
           notes: payload.notes || '',
           sidePhotoUri: row.side_photo_uri,
           backPhotoUri: row.back_photo_uri,
@@ -360,11 +377,14 @@ const syncQueue = async ({ apiUrl, token, staffId }: StaffQueueSyncContext): Pro
       formData.append('width', payload.width);
       formData.append('height', payload.height);
       formData.append('slope', payload.slope);
+      if (payload.measurementMode) formData.append('measurementMode', payload.measurementMode);
+      if (payload.pileHeightM !== undefined) formData.append('pileHeightM', payload.pileHeightM);
+      if (payload.pileHeightsCm) formData.append('pileHeightsCm', JSON.stringify(payload.pileHeightsCm));
       formData.append('notes', payload.notes);
-      appendQueuedPhoto(formData, 'sidePhoto', payload.sidePhoto);
-      appendQueuedPhoto(formData, 'backPhoto', payload.backPhoto);
-      formData.append('sidePhotoMetadata', photoMetadata(payload.sidePhoto));
-      formData.append('backPhotoMetadata', photoMetadata(payload.backPhoto));
+      if (payload.sidePhoto) appendQueuedPhoto(formData, 'sidePhoto', payload.sidePhoto);
+      if (payload.backPhoto) appendQueuedPhoto(formData, 'backPhoto', payload.backPhoto);
+      if (payload.sidePhoto) formData.append('sidePhotoMetadata', photoMetadata(payload.sidePhoto));
+      if (payload.backPhoto) formData.append('backPhotoMetadata', photoMetadata(payload.backPhoto));
 
       const { response, payload: result } = await requestJson(`${apiUrl.replace(/\/$/, '')}/staff/truckloads`, {
         method: 'POST',

@@ -5,6 +5,7 @@ import * as TaskManager from 'expo-task-manager';
 import { AppState, Platform } from 'react-native';
 import { finishDriverTrailSession, recordDriverTrailLocation, startDriverTrailSession, type TripRouteSnapshot } from '@/lib/driver-trail-queue';
 import { getSession } from '@/lib/session';
+import { ensureNotificationPermissionsAsync } from '@/lib/notifications';
 
 export const DRIVER_ROUTE_PROXIMITY_TASK = 'resiklean-driver-route-proximity';
 export { ROUTE_ENTER_TOLERANCE_METERS, ROUTE_EXIT_TOLERANCE_METERS } from './route-presence-filter';
@@ -287,7 +288,7 @@ async function readDetection() {
   return { filter, signal: row?.signal ?? 'confirming' as PresenceSignal, armedAt: row?.armed_at ?? Date.now() };
 }
 
-const processPresence = async (location: Location.LocationObject, expected?: { collectorId?: string; routeId: string }) => {
+const processPresence = async (location: Location.LocationObject, expected?: { collectorId?: string; routeId: string }, backgroundBatch = false) => {
   const config = await getConfig();
   if (!config || (expected && (config.collectorId !== expected.collectorId || config.routeId !== expected.routeId))) return;
   if (trackingSuppressed || !await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK)) return;
@@ -296,7 +297,10 @@ const processPresence = async (location: Location.LocationObject, expected?: { c
   const detection = await readDetection();
   if (location.timestamp < detection.armedAt) return;
   const distance = getDistanceToRouteMeters(location.coords.latitude, location.coords.longitude, config.routePath);
-  const result = evaluateRoutePresence(detection.filter, location, distance, Date.now());
+  // OS batches can arrive minutes after capture. Validate historical samples at
+  // capture time; live status still reports stale using lastCheckedAt.
+  if (location.timestamp > Date.now() + 5_000) return;
+  const result = evaluateRoutePresence(detection.filter, location, distance, backgroundBatch ? location.timestamp : Date.now());
   const database = await getDatabase();
   const current = await getStoredStatus();
   const checkedAt = result.accepted ? new Date(location.timestamp).toISOString() : current.lastCheckedAt;
@@ -336,10 +340,10 @@ const processPresence = async (location: Location.LocationObject, expected?: { c
   emitStatus({ ...(await getStoredStatus()), enabled: true, signal: result.signal, hasEntered: result.filter.hasEntered });
 };
 
-export function processDriverRouteLocation(location: Location.LocationObject, expected?: { collectorId?: string; routeId: string }, generation = trackingGeneration) {
+export function processDriverRouteLocation(location: Location.LocationObject, expected?: { collectorId?: string; routeId: string }, generation = trackingGeneration, backgroundBatch = false) {
   return serializeTracking(async () => {
     if (generation !== trackingGeneration) return;
-    await processPresence(location, expected);
+    await processPresence(location, expected, backgroundBatch);
   }).catch((error) => { console.warn('Unable to process route location:', error); });
 }
 
@@ -351,7 +355,7 @@ if (Platform.OS !== 'web' && !TaskManager.isTaskDefined(DRIVER_ROUTE_PROXIMITY_T
     if (!config) return;
     const locations = (data as { locations?: Location.LocationObject[] }).locations || [];
     for (const location of [...locations].sort((left, right) => left.timestamp - right.timestamp)) {
-      await processDriverRouteLocation(location, config, generation);
+      await processDriverRouteLocation(location, config, generation, true);
     }
   });
 }
@@ -524,6 +528,7 @@ export function enableRouteProximityTracking(config: RouteTrackingConfig, { requ
     if (cancelled()) return unavailable('Monitoring was stopped.');
     if (background.status !== 'granted') return permissionDenied('Allow location all the time in Settings, then enable automatic route monitoring.');
     if (AppState.currentState !== 'active') return unavailable('Return to the app to start automatic route monitoring.');
+    if (requestPermissions) await ensureNotificationPermissionsAsync().catch(() => false);
 
     const database = await getDatabase();
     const previous = await getConfig();

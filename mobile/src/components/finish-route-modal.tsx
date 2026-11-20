@@ -6,15 +6,16 @@ import { MotionModal as Modal, MotionPressable as Pressable } from '@/components
 import { AppText as Text } from '@/components/app-text';
 import { startRouteFinishCountdown } from '@/lib/route-finish-countdown';
 
-export function FinishRouteModal({ visible, onCancel, onConfirm }: {
-  visible: boolean; onCancel: () => void; onConfirm: () => void;
+export function FinishRouteModal({ visible, busy = false, onCancel, onConfirm }: {
+  visible: boolean; busy?: boolean; onCancel: () => void; onConfirm: () => void;
 }) {
   const [seconds, setSeconds] = useState<number | null>(null);
   const cancelCountdown = useRef<(() => void) | null>(null);
-  const callbacks = useRef({ onCancel, onConfirm });
-  callbacks.current = { onCancel, onConfirm };
+  const callbacks = useRef({ onCancel, onConfirm, busy });
+  callbacks.current = { onCancel, onConfirm, busy };
 
   const dismiss = useCallback(() => {
+    if (callbacks.current.busy) return;
     cancelCountdown.current?.();
     cancelCountdown.current = null;
     setSeconds(null);
@@ -53,15 +54,15 @@ export function FinishRouteModal({ visible, onCancel, onConfirm }: {
           <Text style={styles.eyebrow}>END TODAY'S SHIFT</Text>
           <Text accessibilityRole="header" style={styles.title}>Finish route collection?</Text>
           <Text style={styles.message}>This ends your trip, closes today's route and submits your collection history to admin. Offline records will sync when you reconnect.</Text>
-          <Text accessibilityLiveRegion="polite" style={styles.message}>{seconds === null
+          <Text accessibilityLiveRegion="polite" style={styles.message}>{busy ? 'Saving your route on this phone. Uploads will continue in the background.' : seconds === null
             ? 'Your trip keeps recording until you confirm and the five-second safety countdown finishes.'
             : `Finishing in ${seconds} second${seconds === 1 ? '' : 's'}. Tap Keep route open to cancel.`}</Text>
           <View style={styles.actions}>
-            <Pressable accessibilityRole="button" onPress={dismiss} style={styles.cancel}>
+            <Pressable accessibilityRole="button" disabled={busy} onPress={dismiss} style={styles.cancel}>
               <Text style={styles.cancelText}>Keep route open</Text>
             </Pressable>
             <Pressable accessibilityRole="button" accessibilityState={{ disabled: seconds !== null }} disabled={seconds !== null} onPress={beginCountdown} style={[styles.confirm, seconds !== null && styles.disabled]}>
-              <Text style={styles.confirmText}>{seconds === null ? 'Finish route' : `Finishing in ${seconds}s`}</Text>
+              <Text style={styles.confirmText}>{busy ? 'Saving route…' : seconds === null ? 'Finish route' : `Finishing in ${seconds}s`}</Text>
             </Pressable>
           </View>
         </ScrollView>

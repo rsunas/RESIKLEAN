@@ -283,6 +283,41 @@ export async function recordDriverTrailLocation(location: DriverTrailLocation, c
   return true;
 }
 
+/** Read the latest saved fixes, independent of the network or map tile cache. */
+export async function getActiveDriverTrail(collectorId: string, routeId: string) {
+  const database = await getDatabase();
+  const points = await database.getAllAsync<TrailPointRow>(
+    `SELECT p.* FROM driver_trail_points p WHERE p.client_session_id = (
+      SELECT client_session_id FROM driver_trail_sessions
+      WHERE collector_id = ? AND route_id = ? AND status = 'active'
+      ORDER BY started_at DESC LIMIT 1
+    ) ORDER BY recorded_at DESC LIMIT 2000`, collectorId, routeId,
+  );
+  points.reverse();
+  return { points: points.length, lastRecordedAt: points.at(-1)?.recorded_at,
+    path: buildTrailPath(points) };
+}
+
+// Never imply that a truck drove a straight line through a long GPS outage.
+function buildTrailPath(points: TrailPointRow[]) {
+  const segments: [number, number][][] = [];
+  let segment: [number, number][] = [];
+  let previousTime: number | undefined;
+  for (const point of points) {
+    if (!validCoordinate(point.latitude, point.longitude)) continue;
+    const time = Date.parse(point.recorded_at);
+    if (previousTime !== undefined && time - previousTime > 60_000) {
+      if (segment.length >= 2) segments.push(segment);
+      segment = [];
+    }
+    segment.push([point.longitude, point.latitude]);
+    previousTime = time;
+  }
+  if (segment.length >= 2) segments.push(segment);
+  return segments.length > 1 ? { type: 'MultiLineString' as const, coordinates: segments }
+    : segments.length ? { type: 'LineString' as const, coordinates: segments[0] } : undefined;
+}
+
 export async function finishDriverTrailSession() {
   const database = await getDatabase();
   await database.runAsync(
@@ -320,7 +355,7 @@ export async function getLocalDriverTrailHistory(collectorId: string) {
       barangay: routeSnapshot.barangay || [], totalStops: routeSnapshot.stops?.length || 0, collected: 0, flagged: 0, distanceMi: 0, greeneryPct: null,
       elevationGainFt: 0, elevationLossFt: 0, sessionId: session.client_session_id,
       sessionStartedAt: session.started_at, sessionEndedAt: session.ended_at || undefined,
-      routeSnapshot, routePath, trailPath: coordinates.length >= 2 ? {type: 'LineString' as const, coordinates} : undefined,
+      routeSnapshot, routePath, trailPath: buildTrailPath(points),
       lastLocation: coordinates.at(-1), pendingSync: !session.synced_at, stopLogs: [],
     };
   }));
@@ -406,7 +441,9 @@ const syncQueue = async ({ apiUrl, token, collectorId }: DriverTrailSyncContext)
 
   let syncedSessions = 0;
   let syncedPoints = 0;
-  while (true) {
+  // Bound one pass: recording can keep invalidating sync_version while online.
+  // A later reconnect/status refresh will retry the remaining local records.
+  for (let batch = 0; batch < 10; batch += 1) {
     const { sessions, payload: sessionsPayload } = await getPendingSessions(collectorId);
     if (!sessions.length) return { ...(await getStats(collectorId)), syncedSessions, syncedPoints };
 
@@ -434,12 +471,13 @@ const syncQueue = async ({ apiUrl, token, collectorId }: DriverTrailSyncContext)
         .filter((item) => typeof item.clientSessionId === 'string')
         .map((item) => [item.clientSessionId as string, item.reason || 'The server could not store this trail session.']));
       await Promise.all([...rejected].map(([sessionId, reason]) => markFailed([sessionId], reason)));
-      if (!confirmed.length) return { ...(await getStats(collectorId)), syncedSessions, syncedPoints };
+      if (!confirmed.length || !markedSessions) return { ...(await getStats(collectorId)), syncedSessions, syncedPoints };
     } catch {
       await markFailed(sessions.map((session) => session.client_session_id), 'Waiting for a network connection.');
       return { ...(await getStats(collectorId)), syncedSessions, syncedPoints };
     } finally { controller.abort(); }
   }
+  return { ...(await getStats(collectorId)), syncedSessions, syncedPoints };
 };
 
 export function getDriverTrailQueueStats(collectorId: string) {

@@ -14,7 +14,7 @@ const { sendSuccess, sendError } = require('../utils/response');
 // Measurements are in metres.
 const submitTruckLoad = async (req, res) => {
   try {
-    const { truckPlate, routeId, length, width, height, slope, notes, clientSubmissionId } = req.body;
+    const { truckPlate, routeId, length, width, height, slope, notes, clientSubmissionId, measurementMode, pileHeightM } = req.body;
     const normalizedClientSubmissionId = typeof clientSubmissionId === 'string'
       ? clientSubmissionId.trim()
       : '';
@@ -37,8 +37,9 @@ const submitTruckLoad = async (req, res) => {
     const dimensionError = validateTruckDimensions({ length, width, height });
     if (dimensionError) return sendError(res, dimensionError, 400);
 
+    const selectedMode = measurementMode === 'single-pile' ? 'single-pile' : 'three-point';
     let pileHeightsCm;
-    let pileVolume = slope ? Number(slope) : 0;
+    let pileVolume = 0;
     if (req.body.pileHeightsCm !== undefined) {
       try {
         pileHeightsCm = typeof req.body.pileHeightsCm === 'string' ? JSON.parse(req.body.pileHeightsCm) : req.body.pileHeightsCm;
@@ -47,9 +48,10 @@ const submitTruckLoad = async (req, res) => {
         return sendError(res, 'Front, middle, and back heights must be non-negative centimetres', 400);
       }
       pileHeightsCm = Object.fromEntries(['front', 'middle', 'back'].map(key => [key, pileHeightsCm[key]]));
-      pileVolume = Number(length) * Number(width) * (pileHeightsCm.front + pileHeightsCm.middle + pileHeightsCm.back) / 300;
+      if (selectedMode !== 'three-point') return sendError(res, 'Pile heights are only valid in 3-point mode', 400);
     }
-    if (!Number.isFinite(pileVolume) || pileVolume < 0) return sendError(res, 'Invalid pile volume', 400);
+    const parsedPileHeightM = pileHeightM === undefined || pileHeightM === '' ? 0 : Number(pileHeightM);
+    if (selectedMode === 'single-pile' && (!Number.isFinite(parsedPileHeightM) || parsedPileHeightM < 0)) return sendError(res, 'Pile height must be a non-negative metre value', 400);
 
     // Validate routeId if provided
     let validatedRouteId = null;
@@ -111,7 +113,9 @@ const submitTruckLoad = async (req, res) => {
       length: Number(length),
       width: Number(width),
       height: Number(height),
-      slope: pileVolume,
+      measurementMode: selectedMode,
+      pileHeightM: parsedPileHeightM,
+      slope: selectedMode === 'single-pile' ? 0.5 * Number(length) * Number(width) * parsedPileHeightM : 0,
       pileHeightsCm,
       notes: notes || '',
       photoUrl,
@@ -165,9 +169,14 @@ const getMyTruckLoads = async (req, res) => {
       const height = Number(load.height || 0);
       const slope = Number(load.slope || 0);
       const densityFactor = Number(load.densityFactor) > 0 ? Number(load.densityFactor) : 0.294;
-      const volumeCubicM = length > 0 && width > 0 && height > 0 ? length * width * height : Number(load.volumeCubicM || 0);
+      const mode = load.measurementMode || (load.pileHeightsCm ? 'three-point' : 'legacy');
+      const volumeCubicM = mode === 'three-point' && load.pileHeightsCm
+        ? length * width * (Number(load.pileHeightsCm.front || 0) + Number(load.pileHeightsCm.middle || 0) + Number(load.pileHeightsCm.back || 0)) / 300
+        : mode === 'single-pile'
+          ? length * width * height + 0.5 * length * width * Number(load.pileHeightM || 0)
+          : (length > 0 && width > 0 && height > 0 ? length * width * height : Number(load.volumeCubicM || 0));
       const tonnesEstimate = volumeCubicM > 0
-        ? (volumeCubicM + slope) * densityFactor
+        ? (mode === 'legacy' ? volumeCubicM + slope : volumeCubicM) * densityFactor
         : Number(load.tonnesEstimate || 0);
 
       return { ...load, volumeCubicM, tonnesEstimate, densityFactor };

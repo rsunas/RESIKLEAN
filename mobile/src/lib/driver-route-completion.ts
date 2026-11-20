@@ -1,6 +1,7 @@
 import { requestJson } from './network-request';
 import NetInfo from '@react-native-community/netinfo';
 import * as SQLite from 'expo-sqlite';
+import { withTimeout } from './async-timeout';
 
 const DATABASE_NAME = 'resiklean-driver-route-tracking.db';
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
@@ -83,9 +84,19 @@ export async function isRouteCompletionQueued(routeId: string, collectorId: stri
   }
 }
 
-export async function syncRouteCompletions(apiUrl: string, token: string, collectorId: string): Promise<number> {
+const completionSyncs = new Map<string, Promise<number>>();
+export function syncRouteCompletions(apiUrl: string, token: string, collectorId: string): Promise<number> {
+  const key = `${apiUrl}|${collectorId}`;
+  const existing = completionSyncs.get(key);
+  if (existing) return existing;
+  const pending = syncCompletions(apiUrl, token, collectorId).finally(() => completionSyncs.delete(key));
+  completionSyncs.set(key, pending);
+  return pending;
+}
+
+async function syncCompletions(apiUrl: string, token: string, collectorId: string): Promise<number> {
   if (!apiUrl || !token || !collectorId) return 0;
-  const network = await NetInfo.fetch().catch(() => ({ isConnected: false, isInternetReachable: false }));
+  const network = await withTimeout(NetInfo.fetch()).catch(() => ({ isConnected: false, isInternetReachable: false }));
   if (!network.isConnected || network.isInternetReachable === false) return 0;
 
   const pending = await getQueuedRouteCompletions(collectorId);
@@ -102,18 +113,15 @@ export async function syncRouteCompletions(apiUrl: string, token: string, collec
       });
       if (response.ok && payload.success) {
         await db.runAsync(
-          `DELETE FROM driver_route_completions WHERE route_id = ? AND collector_id = ?`,
+          `DELETE FROM driver_route_completions WHERE route_id = ? AND collector_id = ? AND queued_at = ?`,
           item.routeId,
           item.collectorId,
+          item.queuedAt,
         );
         synced += 1;
-      } else if (response.status === 400 || response.status === 404) {
-        // Already completed or invalid on server - remove from queue so it does not block future completions
-        await db.runAsync(
-          `DELETE FROM driver_route_completions WHERE route_id = ? AND collector_id = ?`,
-          item.routeId,
-          item.collectorId,
-        );
+      } else {
+        // A rejected request is not an acknowledgement. Keep the local record.
+        console.warn('Route completion is still pending:', response.status);
       }
     } catch {
       break;

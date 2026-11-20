@@ -50,6 +50,7 @@ const database = {
   },
 };
 const dependencies = {
+  '@/lib/notifications': { ensureNotificationPermissionsAsync: async () => true },
   'expo-crypto': { randomUUID: () => `uuid-${++uuid}` },
   'expo-sqlite': { openDatabaseAsync: async () => database },
   'react-native': { AppState: appState, Platform: { OS: 'android' } },
@@ -311,6 +312,16 @@ test('background batch is sorted and uses the same detector while minimized', as
   const first = now; now += 10000; appState.currentState = 'background';
   await tasks[service.DRIVER_ROUTE_PROXIMITY_TASK]({ data: { locations: [fix(first + 10000), fix(first), fix(first + 5000)] } });
   assert.equal(events().length, 1); assert.equal(points.length, 3);
+});
+test('delayed screen-off batches preserve capture times and report stale live status', async () => {
+  reset(); await service.enableRouteProximityTracking(config);
+  const first = now; now += 5 * 60_000; appState.currentState = 'background';
+  await tasks[service.DRIVER_ROUTE_PROXIMITY_TASK]({ data: { locations: [fix(first + 10000), fix(first), fix(first + 5000)] } });
+  assert.equal(points.length, 3);
+  assert.equal(events().length, 1);
+  assert.equal((await service.getRouteProximityStatus()).signal, 'stale');
+  await tasks[service.DRIVER_ROUTE_PROXIMITY_TASK]({ data: { locations: [fix(first), { ...fix(first + 15000), mocked: true }, fix(now + 60000)] } });
+  assert.equal(points.length, 3);
 });
 test('confirmation survives a headless JS restart with the same local database', async () => {
   reset(); await service.enableRouteProximityTracking(config); await sample(); await sample();

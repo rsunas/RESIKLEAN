@@ -29,9 +29,9 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { deleteOfflineRouteMap, downloadOfflineRouteMap, getOfflineRouteMapStatus, type OfflineRouteMapStatus } from '@/lib/driver-offline-map';
 import { enableDriverGeofencing, getDriverGeofencingStatus, stopDriverGeofencing, updateDriverGeofences } from '@/lib/driver-geofencing';
 import { getQueuedRouteLogs, getRouteLogQueueStats, subscribeToRouteLogSync, syncRouteLogQueue, type RouteLogSyncResult } from '@/lib/driver-route-log-queue';
-import { isRouteCompletionQueued, queueRouteCompletion, subscribeToRouteCompletionSync } from '@/lib/driver-route-completion';
+import { isRouteCompletionQueued, queueRouteCompletion, subscribeToRouteCompletionSync, syncRouteCompletions } from '@/lib/driver-route-completion';
 import { getRouteHistoryCache, saveRouteHistoryCache, mergeRouteHistory } from '@/lib/driver-route-history-cache';
-import { getLocalDriverTrailHistory, subscribeToDriverTrailSync, syncDriverTrailQueue } from '@/lib/driver-trail-queue';
+import { getActiveDriverTrail, getLocalDriverTrailHistory, subscribeToDriverTrailSync, syncDriverTrailQueue } from '@/lib/driver-trail-queue';
 import { claimTripStartPrompt, getRouteMonitoringPreference, setRouteMonitoringConsent, pauseRouteMonitoringToday, processDriverRouteLocation, cacheAssignedRoute, clearCachedAssignedRoute, clearRouteProximityEvents, enableRouteProximityTracking, getCachedAssignedRoute, getRouteProximityStatus, stopRouteProximityTracking, subscribeToRouteProximityStatus, type RoutePresenceStatus } from '@/lib/driver-route-proximity';
 import { clearSession, getSession, type AccountUser, type AuthSession } from '@/lib/session';
 import { queueCapacityLog, syncCapacityQueue, getLocalCapacityReset, type CapacityContext } from '@/lib/driver-capacity-queue';
@@ -975,6 +975,26 @@ export default function CollectorScreen() {
   }, []);
 
 
+  const [liveTrail, setLiveTrail] = useState<Awaited<ReturnType<typeof getActiveDriverTrail>> | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    let reading = false;
+    setLiveTrail(null);
+    const refresh = async () => {
+      if (reading || !collectorId || !assignedRoute?._id || AppState.currentState !== 'active') return;
+      reading = true;
+      try {
+        const trail = await getActiveDriverTrail(collectorId, assignedRoute._id);
+        if (!cancelled) setLiveTrail(trail);
+      } catch { /* Keep the last saved preview if a database read is busy. */ }
+      finally { reading = false; }
+    };
+    void refresh();
+    const timer = setInterval(() => void refresh(), 5000);
+    const subscription = AppState.addEventListener('change', state => { if (state === 'active') void refresh(); });
+    return () => { cancelled = true; clearInterval(timer); subscription.remove(); };
+  }, [collectorId, assignedRoute?._id]);
+
   const submitRoute = async () => {
     if (!session?.token || !assignedRoute || isSubmittingRoute) return;
     setIsFinishRouteConfirmVisible(true);
@@ -986,7 +1006,6 @@ export default function CollectorScreen() {
     const routeId = assignedRoute._id;
     const token = session.token;
     const effectiveCollectorId = collectorId || session.user._id || session.user.id || '';
-    setIsFinishRouteConfirmVisible(false);
     setIsSubmittingRoute(true);
     setRouteActionMessage(null);
 
@@ -1029,48 +1048,19 @@ export default function CollectorScreen() {
       void clearRouteProximityEvents(routeId);
       setRouteActionMessage({
         kind: 'success',
-        title: 'Route saved offline',
-        message: 'The route completion was saved on this phone and will sync automatically when you reconnect.',
+        title: 'Route saved',
+        message: 'Your route and recorded trail are saved on this phone. Pending uploads will sync when a connection is available.',
       });
     };
 
     try {
       await disableBackgroundGeofencing();
-
-      const network = await NetInfo.fetch().catch(() => ({ isConnected: false, isInternetReachable: false }));
-      if (!network.isConnected || network.isInternetReachable === false) {
-        await completeOffline();
-        return;
+      await completeOffline();
+      if (API_URL && effectiveCollectorId) {
+        void syncDriverTrailQueue({ apiUrl: API_URL, token, collectorId: effectiveCollectorId }).catch(() => {});
+        void syncRouteCompletions(API_URL, token, effectiveCollectorId)
+          .then(synced => { if (synced) void loadRouteHistory(token); }).catch(() => {});
       }
-
-      const trailContext = API_URL && effectiveCollectorId
-        ? { apiUrl: API_URL, token, collectorId: effectiveCollectorId }
-        : null;
-
-      let trailPending = false;
-      if (trailContext) {
-        const result = await syncDriverTrailQueue(trailContext).catch(() => null);
-        trailPending = !result || result.pendingSessions > 0;
-      }
-
-      if (!API_URL) throw new Error('API URL is not configured.');
-      const { response: res, payload: data } = await requestJson(`${API_URL}/collector/route/complete`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ routeId }),
-      });
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Failed to finish the assigned route.');
-      }
-      if (trailContext) void syncDriverTrailQueue(trailContext).catch(() => {});
-      setAssignedRoute(null);
-      void clearCachedAssignedRoute(effectiveCollectorId);
-      void clearRouteProximityEvents(routeId);
-      setRouteActionMessage({ kind: 'success', title: 'Route completed', message: trailPending ? 'Route completed. GPS trail is saved on this phone and is waiting to sync; history will update after upload.' : 'Today\'s assigned route has been saved successfully.' });
-      void loadRouteHistory(token);
     } catch (err) {
       const isNetworkErr = !API_URL || (err instanceof Error && (
         err.message.includes('Network request failed') ||
@@ -1094,6 +1084,7 @@ export default function CollectorScreen() {
       }
     } finally {
       submittingRouteRef.current = false;
+      setIsFinishRouteConfirmVisible(false);
       setIsSubmittingRoute(false);
     }
   };
@@ -1597,6 +1588,9 @@ export default function CollectorScreen() {
               animationDuration={500}
             />
             {mapRouteLine ? <DriverRouteLayers shape={mapRouteLine} /> : null}
+            {liveTrail?.path ? <Mapbox.ShapeSource id="live-recorded-trail" shape={routeLineFeature(liveTrail.path) ?? undefined}>
+              <Mapbox.LineLayer id="live-recorded-trail-line" style={{ lineColor: '#c53030', lineWidth: 4, lineCap: 'round', lineJoin: 'round' }} />
+            </Mapbox.ShapeSource> : null}
             {mapStopFeatures.features.length ? <DriverStopLayers shape={mapStopFeatures} onExpandCluster={expandStopCluster} /> : null}
             {driverLocation ? (
               <Mapbox.PointAnnotation
@@ -1661,6 +1655,9 @@ export default function CollectorScreen() {
                 <View style={styles.geofenceTextWrap}>
                   <Text style={styles.geofenceTitle}>{monitoringTitle}</Text>
                   <Text style={styles.geofenceCaption}>{monitoringCaption}</Text>
+                  {routePresence.enabled ? <Text style={styles.geofenceCaption}>{liveTrail?.lastRecordedAt
+                    ? `${liveTrail.points} recent GPS fixes saved on phone · Last fix ${Math.max(0, Math.floor((Date.now() - Date.parse(liveTrail.lastRecordedAt)) / 1000))}s ago. Red line: recorded travel.`
+                    : 'Waiting for the first accurate GPS fix. No trail saved yet.'}</Text> : null}
                 </View>
               </View>
               <Pressable
@@ -2168,6 +2165,7 @@ export default function CollectorScreen() {
         </SafeAreaView>
       </Modal>
       <FinishRouteModal
+        busy={isSubmittingRoute}
         visible={isFinishRouteConfirmVisible}
         onCancel={() => setIsFinishRouteConfirmVisible(false)}
         onConfirm={() => void confirmRouteCompletion()}

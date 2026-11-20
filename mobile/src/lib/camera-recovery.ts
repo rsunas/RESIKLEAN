@@ -20,6 +20,7 @@ export type PendingStaffCameraContext = {
   routeId: string;
   driver: string;
   slope: string;
+  pileHeights?: { front: string; middle: string; back: string };
   length: string;
   width: string;
   height: string;

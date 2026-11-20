@@ -20,6 +20,7 @@ import {
   AppState,
   Image,
   Platform,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   TextInput,
@@ -46,6 +47,7 @@ import {
   savePendingCameraContext,
 } from '@/lib/camera-recovery';
 import { optimizeProofPhoto, proofCameraOptions } from '@/lib/proof-photo';
+import { registerResidentPush } from '@/lib/resident-push';
 
 type ResidentTab = 'home' | 'schedule' | 'report' | 'profile';
 
@@ -96,6 +98,9 @@ type ApiReportMessage = {
   senderId?: string | ResidentReference & { name?: string };
   createdAt: string;
 };
+
+type Announcement = { id: string; imageUrl?: string | null; message: string; type: string; reason: string; areaId?: string | null; areaLabel: string; scheduledFor: string; publishedAt?: string; affectsMyArea?: boolean; hasArea?: boolean };
+type AnnouncementPage = { items: Announcement[]; nextCursor?: string | null; hasMore?: boolean };
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL?.replace(/\/$/, '') || API_URL?.replace(/\/api\/?$/, '');
@@ -422,7 +427,7 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: ResidentTab; onC
   const pill = useSlidingTabPill(activeTab);
   const tabs = [
     { key: 'home' as const, label: 'Home', icon: House },
-    { key: 'schedule' as const, label: 'News', icon: Newspaper },
+    { key: 'schedule' as const, label: 'Announcements', icon: Newspaper },
     { key: 'report' as const, label: 'Complaint', icon: MessageCircleWarning },
     { key: 'profile' as const, label: 'Profile', icon: UserRound },
   ];
@@ -459,18 +464,13 @@ function HomeSectionLabel({ label, onViewAll, first = false }: { label: string; 
   );
 }
 
-function NewsListItem({ item }: { item: (typeof CITY_NEWS)[number] }) {
+function AnnouncementCard({ item }: { item: Announcement }) {
+  const isNew = item.publishedAt ? Date.now() - new Date(item.publishedAt).getTime() < 24 * 60 * 60 * 1000 : false;
+  const relative = item.publishedAt ? formatDate(item.publishedAt, { month: 'short', day: 'numeric' }) : '';
   return (
     <View style={styles.newsCard}>
-      <View style={styles.newsCardContent}>
-        <Image accessibilityLabel={`${item.headline} image`} resizeMode="cover" source={item.image} style={styles.newsThumbnail} />
-        <View style={styles.newsCopy}>
-          <Text style={styles.newsCategory}>{item.category}</Text>
-          <Text style={styles.newsHeadline}>{item.headline}</Text>
-          <Text style={styles.newsDate}>{item.date}</Text>
-          <Text numberOfLines={3} style={styles.newsExcerpt}>{item.excerpt}</Text>
-        </View>
-      </View>
+      {item.imageUrl ? <ExpoImage accessibilityLabel={`${item.reason} announcement image`} contentFit="cover" source={{ uri: item.imageUrl }} style={styles.newsThumbnail} /> : <View style={[styles.newsThumbnail, styles.announcementArtwork]}><Text style={styles.announcementArtworkText}>SERVICE ADVISORY</Text></View>}
+      <View style={styles.newsCopy}><View style={styles.announcementMeta}><Text style={styles.newsCategory}>{item.areaLabel}</Text>{isNew ? <Text style={styles.announcementNew}>NEW</Text> : null}<Text style={styles.newsDate}>{relative}</Text></View><Text style={styles.newsHeadline}>{item.message}</Text></View>
     </View>
   );
 }
@@ -530,9 +530,20 @@ export default function ResidentScreen() {
   const [isPrivacyVisible, setIsPrivacyVisible] = useState(false);
   const [showAllUpcoming, setShowAllUpcoming] = useState(false);
   const [session, setSession] = useState<AuthSession | null>(null);
+  useEffect(() => {
+    if (API_URL && session?.token) void registerResidentPush(API_URL, session.token)
+      .catch(error => console.warn('Resident push registration failed:', error instanceof Error ? error.message : 'Unknown error'));
+  }, [session?.token, networkRevision]);
   const [schedule, setSchedule] = useState<ScheduleData | null>(null);
   const [isLoadingSchedule, setIsLoadingSchedule] = useState(false);
   const [scheduleError, setScheduleError] = useState('');
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [announcementScope, setAnnouncementScope] = useState<'all' | 'mine'>('all');
+  const [announcementCursor, setAnnouncementCursor] = useState<string | null>(null);
+  const [announcementHasMore, setAnnouncementHasMore] = useState(false);
+  const [announcementLoading, setAnnouncementLoading] = useState(false);
+  const [announcementError, setAnnouncementError] = useState('');
+  const announcementCursorRef = useRef<string | null>(null);
   const [pastReports, setPastReports] = useState<ApiReport[]>([]);
   const [selectedReport, setSelectedReport] = useState<ApiReport | null>(null);
   const closingReport = useClosingValue(selectedReport);
@@ -633,6 +644,17 @@ export default function ResidentScreen() {
     }
   }, []);
 
+  const loadAnnouncements = useCallback(async (token: string, reset = true) => {
+    if (!API_URL) return;
+    setAnnouncementLoading(true); setAnnouncementError('');
+    try {
+      const cursor = reset ? '' : announcementCursorRef.current ? `&cursor=${encodeURIComponent(announcementCursorRef.current)}` : '';
+      const { response, payload: result } = await requestJson<ApiResponse<AnnouncementPage>>(`${API_URL}/announcements?scope=${announcementScope}&limit=10${cursor}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!response.ok || !result.success || !result.data) throw new Error(result.error || 'Unable to load announcements.');
+      setAnnouncements(current => reset ? result.data!.items : [...current, ...result.data!.items]); announcementCursorRef.current = result.data.nextCursor || null; setAnnouncementCursor(result.data.nextCursor || null); setAnnouncementHasMore(Boolean(result.data.hasMore));
+    } catch (error) { setAnnouncementError(error instanceof Error ? error.message : 'Unable to load announcements.'); } finally { setAnnouncementLoading(false); }
+  }, [announcementScope]);
+
   useEffect(() => {
     let isMounted = true;
     getSession()
@@ -650,7 +672,8 @@ export default function ResidentScreen() {
   useEffect(() => {
     if (session?.token) void loadReports(session.token);
     if (session?.token) void loadSchedule(session.token, session.user.location || session.user.barangay);
-  }, [loadReports, loadSchedule, session?.token, session?.user.barangay, session?.user.location, networkRevision]);
+    if (session?.token) void loadAnnouncements(session.token);
+  }, [loadReports, loadSchedule, loadAnnouncements, session?.token, session?.user.barangay, session?.user.location, networkRevision]);
 
   // Pre-warm camera permission so the OS dialog never interrupts the camera launch.
   useEffect(() => {
@@ -740,7 +763,7 @@ export default function ResidentScreen() {
   }, [selectedReport?._id, session?.token, networkRevision]);
 
   useEffect(() => {
-    if (tab === 'schedule') setActiveTab('schedule');
+    if (tab === 'schedule' || tab === 'announcements' || tab === 'news') setActiveTab('schedule');
   }, [tab]);
 
   useEffect(() => {
@@ -796,6 +819,10 @@ export default function ResidentScreen() {
       if (!reportId || !selectedId || reportId !== selectedId || !payload.message) return;
       setReportMessages((current) => mergeReportMessages(current, payload.message));
     };
+    const handleAnnouncementEvent = (payload: Announcement) => {
+      if (!payload?.id) return;
+      setAnnouncements(current => current.some(item => item.id === payload.id) ? current : [{ ...payload, affectsMyArea: announcementScope === 'mine' ? true : payload.affectsMyArea }, ...current]);
+    };
 
     socket.on('connect', handleConnect);
     socket.on('disconnect', handleDisconnect);
@@ -803,6 +830,7 @@ export default function ResidentScreen() {
     socket.on('complaint:created', handleComplaintEvent);
     socket.on('complaint:status-updated', handleComplaintEvent);
     socket.on('complaint:message-created', handleMessageEvent);
+    socket.on('announcement:new', handleAnnouncementEvent);
 
     return () => {
       socket.off('connect', handleConnect);
@@ -811,10 +839,11 @@ export default function ResidentScreen() {
       socket.off('complaint:created', handleComplaintEvent);
       socket.off('complaint:status-updated', handleComplaintEvent);
       socket.off('complaint:message-created', handleMessageEvent);
+      socket.off('announcement:new', handleAnnouncementEvent);
       socket.disconnect();
       if (socketRef.current === socket) socketRef.current = null;
     };
-  }, [loadReports, session?.token, session?.user._id, session?.user.id, networkRevision]);
+  }, [announcementScope, loadReports, session?.token, session?.user._id, session?.user.id, networkRevision]);
 
   useEffect(() => {
     setProfileName(session?.user.name || '');
@@ -1406,9 +1435,13 @@ export default function ResidentScreen() {
   );
 
   const scheduleScreen = (
-    <ScrollView contentContainerStyle={styles.newsScreenContent} showsVerticalScrollIndicator={false}>
-      <Text style={styles.newsScreenTitle}>SWMO's latest news</Text>
-      {CITY_NEWS.map((item) => <NewsListItem item={item} key={item.id} />)}
+    <ScrollView contentContainerStyle={styles.newsScreenContent} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl onRefresh={() => { if (session?.token) void loadAnnouncements(session.token); }} refreshing={announcementLoading} tintColor="#0A7F4F" />} onScroll={({ nativeEvent }) => { if (announcementHasMore && !announcementLoading && nativeEvent.layoutMeasurement.height + nativeEvent.contentOffset.y >= nativeEvent.contentSize.height - 240 && session?.token) void loadAnnouncements(session.token, false); }} scrollEventThrottle={200}>
+      <Text style={styles.newsScreenTitle}>Announcements</Text><Text style={styles.newsScreenSubtitle}>Service updates from SWMO</Text>
+      <View style={styles.announcementFilters}><Pressable onPress={() => setAnnouncementScope('all')} style={[styles.announcementFilter, announcementScope === 'all' && styles.announcementFilterActive]}><Text style={[styles.announcementFilterText, announcementScope === 'all' && styles.announcementFilterTextActive]}>All</Text></Pressable><Pressable onPress={() => setAnnouncementScope('mine')} style={[styles.announcementFilter, announcementScope === 'mine' && styles.announcementFilterActive]}><Text style={[styles.announcementFilterText, announcementScope === 'mine' && styles.announcementFilterTextActive]}>My area</Text></Pressable></View>
+      {announcementError ? <Text style={styles.errorMessage}>{announcementError}</Text> : null}
+      {announcements.map(item => <AnnouncementCard item={item} key={item.id} />)}
+      {announcementLoading && !announcements.length ? <ActivityIndicator color="#0A7F4F" /> : null}
+      {!announcementLoading && !announcements.length && !announcementError ? <Text style={styles.emptyScheduleText}>No announcements yet.</Text> : null}
     </ScrollView>
   );
 
@@ -1588,7 +1621,17 @@ const styles = StyleSheet.create({
   content: { flex: 1 },
   scrollContent: { padding: 20, paddingBottom: 32 },
   newsScreenContent: { padding: 20, paddingBottom: 32 },
-  newsScreenTitle: { color: '#121A16', fontSize: 30, fontWeight: '700', marginBottom: 24 },
+  newsScreenTitle: { color: '#121A16', fontSize: 30, fontWeight: '700', marginBottom: 2 },
+  newsScreenSubtitle: { color: '#5A6761', fontSize: 16, marginBottom: 18 },
+  announcementFilters: { flexDirection: 'row', gap: 10, marginBottom: 22 },
+  announcementFilter: { borderColor: '#D5E0DA', borderRadius: 24, borderWidth: 1, paddingHorizontal: 22, paddingVertical: 11 },
+  announcementFilterActive: { backgroundColor: '#087D5B', borderColor: '#087D5B' },
+  announcementFilterText: { color: '#20372A', fontSize: 16, fontWeight: '700' },
+  announcementFilterTextActive: { color: '#FFFFFF' },
+  announcementMeta: { alignItems: 'center', flexDirection: 'row', gap: 8 },
+  announcementNew: { backgroundColor: '#087D5B', borderRadius: 16, color: '#FFFFFF', fontSize: 11, fontWeight: '800', paddingHorizontal: 10, paddingVertical: 4 },
+  announcementArtwork: { alignItems: 'center', backgroundColor: '#1d5545', justifyContent: 'center' },
+  announcementArtworkText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800', letterSpacing: 1 },
   newsCard: { backgroundColor: '#F4F6F5', borderRadius: 24, marginBottom: 16, overflow: 'hidden' },
   newsCategory: { color: '#086B42', fontSize: 11, fontWeight: '700', letterSpacing: 1, marginBottom: 10, textTransform: 'uppercase' },
   newsCardContent: { },

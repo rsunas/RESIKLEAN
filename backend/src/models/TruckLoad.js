@@ -21,6 +21,9 @@ const truckLoadSchema = new mongoose.Schema(
     length: dimensionSchema('length'),
     width: dimensionSchema('width'),
     height: dimensionSchema('height'),
+    measurementMode: { type: String, enum: ['three-point', 'single-pile'], default: 'three-point' },
+    pileHeightM: { type: Number, min: 0, default: 0 },
+    avgHeightM: { type: Number, min: 0 },
     slope: { type: Number, default: 0 },
     pileHeightsCm: {
       type: new mongoose.Schema({ front: { type: Number, min: 0, required: true }, middle: { type: Number, min: 0, required: true }, back: { type: Number, min: 0, required: true } }, { _id: false }),
@@ -28,6 +31,9 @@ const truckLoadSchema = new mongoose.Schema(
     },
     // Calculated tonnage (stored for reporting)
     volumeCubicM: { type: Number },
+    baseVolumeM3: { type: Number },
+    slopeVolumeM3: { type: Number },
+    totalVolumeM3: { type: Number },
     tonnesEstimate: { type: Number },
     // Snapshot of the density factor used for this record
     densityFactor: { type: Number, default: DEFAULT_DENSITY_FACTOR },
@@ -45,12 +51,29 @@ const truckLoadSchema = new mongoose.Schema(
 // Auto-calculate volume and tonnage before saving
 truckLoadSchema.pre('save', function (next) {
   // Truck dimensions are already stored in metres.
-  this.volumeCubicM = this.length * this.width * this.height;
+  const mode = this.measurementMode || (this.pileHeightsCm ? 'three-point' : 'single-pile');
+  const baseVolume = this.length * this.width * this.height;
+  let slopeVolume = Number(this.slope || 0);
+  let totalVolume = baseVolume + slopeVolume;
+  if (mode === 'three-point' && this.pileHeightsCm) {
+    this.avgHeightM = (this.pileHeightsCm.front + this.pileHeightsCm.middle + this.pileHeightsCm.back) / 300;
+    slopeVolume = 0;
+    totalVolume = this.length * this.width * this.avgHeightM;
+  } else if (mode === 'single-pile') {
+    slopeVolume = 0.5 * this.length * this.width * (Number(this.pileHeightM) || 0);
+    totalVolume = baseVolume + slopeVolume;
+  }
+  this.measurementMode = mode;
+  this.baseVolumeM3 = mode === 'three-point' ? 0 : baseVolume;
+  this.slopeVolumeM3 = slopeVolume;
+  this.totalVolumeM3 = totalVolume;
+  this.volumeCubicM = totalVolume;
+  this.slope = slopeVolume;
   // Apply slope correction (slope is already in m³)
   const adjustedVolume = this.volumeCubicM + (this.slope || 0);
   // Snapshot the density factor and calculate tonnage
   this.densityFactor = this.densityFactor || DEFAULT_DENSITY_FACTOR;
-  this.tonnesEstimate = adjustedVolume * this.densityFactor;
+  this.tonnesEstimate = totalVolume * this.densityFactor;
   next();
 });
 

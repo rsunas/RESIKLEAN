@@ -27,7 +27,7 @@ setNotificationHandler({
 });
 
 let requestedPermission = false;
-async function ensureNotificationPermissionsAsync(): Promise<boolean> {
+export async function ensureNotificationPermissionsAsync(): Promise<boolean> {
   if (Platform.OS === 'web') return false;
 
   if (Platform.OS === 'android') {
