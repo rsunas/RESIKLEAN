@@ -10,7 +10,7 @@ const shared = () => import('../shared/announcements.mjs');
 const fail = message => { const error = new Error(message); error.status = 400; throw error; };
 const validId = id => typeof id === 'string' && /^[a-f\d]{24}$/i.test(id);
 const populate = query => query.populate('affectedTruckId', 'truckNumber plateNumber').populate('areaId', 'name');
-const publicItem = item => ({ id: String(item._id), imageUrl: item.imageUrl, message: item.message, type: item.type, reason: item.reason, impact: item.impact, areaLabel: item.areaLabel, scheduledFor: item.scheduledFor, newDate: item.newDate, publishedAt: item.publishedAt });
+const publicItem = (item, affectsMyArea) => ({ id: String(item._id), imageUrl: item.imageUrl || null, message: item.message, type: item.type, reason: item.reason, areaId: item.areaId ? String(item.areaId._id || item.areaId) : null, areaLabel: item.areaLabel, scheduledFor: item.scheduledFor, publishedAt: item.publishedAt, affectsMyArea: Boolean(affectsMyArea), hasArea: Boolean(item.areaId) });
 const escapeRegex = value => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const audience = item => item.areaId ? { role: 'resident', $or: [{ home_segment_id: item.areaId }, { barangay: { $in: item.audienceBarangays.map(name => new RegExp(`^${escapeRegex(name)}$`, 'i')) } }, { location: { $in: item.audienceBarangays.map(name => new RegExp(`^${escapeRegex(name)}$`, 'i')) } }] } : { role: 'resident' };
 async function cleanup(publicId) {
@@ -108,16 +108,25 @@ exports.save = async (req, res) => {
 };
 exports.list = async (req, res) => {
   try {
-    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const cursor = typeof req.query.cursor === 'string' && req.query.cursor ? req.query.cursor : null;
     const limit = Math.min(50, Math.max(1, Number.parseInt(req.query.limit, 10) || 10));
     let filter = {};
     const resident = req.user.role === 'resident';
     if (resident) {
       const names = [req.user.barangay, req.user.location].filter(Boolean).map(name => new RegExp(`^${escapeRegex(name)}$`, 'i'));
-      filter = { status: 'published', $or: [{ areaId: null }, ...(req.user.home_segment_id ? [{ areaId: req.user.home_segment_id }] : []), { audienceBarangays: { $in: names } }] };
+      filter = req.query.scope === 'all' ? { status: 'published' } : { status: 'published', $or: [{ areaId: null }, ...(req.user.home_segment_id ? [{ areaId: req.user.home_segment_id }] : []), { audienceBarangays: { $in: names } }] };
     }
-    const [items, total] = await Promise.all([populate(Announcement.find(filter)).sort(resident ? { publishedAt: -1, _id: -1 } : { createdAt: -1, _id: -1 }).skip((page - 1) * limit).limit(limit).lean(), Announcement.countDocuments(filter)]);
-    return sendSuccess(res, { items: resident ? items.map(publicItem) : items, total, page, limit });
+    if (resident && cursor) {
+      const decoded = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
+      if (decoded.length === 2 && !Number.isNaN(Date.parse(decoded[0])) && validId(decoded[1])) filter.$and = [{ $or: [{ publishedAt: { $lt: new Date(decoded[0]) } }, { publishedAt: new Date(decoded[0]), _id: { $lt: decoded[1] } }] }];
+    }
+    const items = await populate(Announcement.find(filter)).sort(resident ? { publishedAt: -1, _id: -1 } : { createdAt: -1, _id: -1 }).limit(limit + 1).lean();
+    const hasMore = resident && items.length > limit;
+    const pageItems = hasMore ? items.slice(0, limit) : items;
+    const last = pageItems[pageItems.length - 1];
+    const nextCursor = hasMore && last ? Buffer.from(`${new Date(last.publishedAt).toISOString()}|${last._id}`).toString('base64url') : null;
+    const areaIds = resident ? new Set([req.user.home_segment_id].filter(Boolean).map(String)) : new Set();
+    return sendSuccess(res, { items: resident ? pageItems.map(item => publicItem(item, !item.areaId || areaIds.has(String(item.areaId)) || (item.audienceBarangays || []).some(name => [req.user.barangay, req.user.location].filter(Boolean).some(value => String(value).toLowerCase() === String(name).toLowerCase())))) : pageItems, nextCursor, hasMore, limit });
   } catch { return sendError(res, 'Unable to load announcements.', 500); }
 };
 exports.detail = async (req, res) => {

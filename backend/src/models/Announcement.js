@@ -20,4 +20,5 @@ const schema = new mongoose.Schema({
 }, { timestamps: true, optimisticConcurrency: true });
 schema.index({ createdBy: 1, requestKey: 1 }, { unique: true });
 schema.index({ status: 1, publishedAt: -1 });
+schema.index({ status: 1, areaId: 1, publishedAt: -1 });
 module.exports = mongoose.model('Announcement', schema);

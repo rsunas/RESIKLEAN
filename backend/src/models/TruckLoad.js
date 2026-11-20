@@ -22,6 +22,10 @@ const truckLoadSchema = new mongoose.Schema(
     width: dimensionSchema('width'),
     height: dimensionSchema('height'),
     slope: { type: Number, default: 0 },
+    pileHeightsCm: {
+      type: new mongoose.Schema({ front: { type: Number, min: 0, required: true }, middle: { type: Number, min: 0, required: true }, back: { type: Number, min: 0, required: true } }, { _id: false }),
+      default: undefined,
+    },
     // Calculated tonnage (stored for reporting)
     volumeCubicM: { type: Number },
     tonnesEstimate: { type: Number },

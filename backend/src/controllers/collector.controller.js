@@ -545,6 +545,7 @@ const getRouteHistory = async (req, res) => {
           .lean();
         for (let i = 1; i < trailPoints.length; i += 1) {
           if (trailPoints[i - 1].clientSessionId !== trailPoints[i].clientSessionId) continue;
+          if (+new Date(trailPoints[i].recordedAt) - +new Date(trailPoints[i - 1].recordedAt) > 60_000) continue;
           distanceMi += haversineMi(trailPoints[i - 1], trailPoints[i]);
           const prevAltFt = (trailPoints[i - 1].altitudeMeters || 0) * 3.28084;
           const currAltFt = (trailPoints[i].altitudeMeters || 0) * 3.28084;
@@ -554,8 +555,13 @@ const getRouteHistory = async (req, res) => {
         }
       }
       const segments = new Map();
+      const sessionSegments = new Map();
       trailPoints.forEach(point => {
-        const key = point.clientSessionId;
+        const previous = sessionSegments.get(point.clientSessionId);
+        const time = +new Date(point.recordedAt);
+        const part = previous ? previous.part + (time - previous.time > 60_000 ? 1 : 0) : 0;
+        sessionSegments.set(point.clientSessionId, { time, part });
+        const key = `${point.clientSessionId}:${part}`;
         if (!segments.has(key)) segments.set(key, []);
         segments.get(key).push([point.longitude, point.latitude]);
       });

@@ -37,9 +37,19 @@ const submitTruckLoad = async (req, res) => {
     const dimensionError = validateTruckDimensions({ length, width, height });
     if (dimensionError) return sendError(res, dimensionError, 400);
 
-    if (!req.files || (!req.files['sidePhoto'] && !req.files['backPhoto'] && !req.files['photo'])) {
-      return sendError(res, 'Proof photos are required', 400);
+    let pileHeightsCm;
+    let pileVolume = slope ? Number(slope) : 0;
+    if (req.body.pileHeightsCm !== undefined) {
+      try {
+        pileHeightsCm = typeof req.body.pileHeightsCm === 'string' ? JSON.parse(req.body.pileHeightsCm) : req.body.pileHeightsCm;
+      } catch { return sendError(res, 'Invalid pile heights', 400); }
+      if (!pileHeightsCm || !['front', 'middle', 'back'].every(key => typeof pileHeightsCm[key] === 'number' && Number.isFinite(pileHeightsCm[key]) && pileHeightsCm[key] >= 0)) {
+        return sendError(res, 'Front, middle, and back heights must be non-negative centimetres', 400);
+      }
+      pileHeightsCm = Object.fromEntries(['front', 'middle', 'back'].map(key => [key, pileHeightsCm[key]]));
+      pileVolume = Number(length) * Number(width) * (pileHeightsCm.front + pileHeightsCm.middle + pileHeightsCm.back) / 300;
     }
+    if (!Number.isFinite(pileVolume) || pileVolume < 0) return sendError(res, 'Invalid pile volume', 400);
 
     // Validate routeId if provided
     let validatedRouteId = null;
@@ -82,25 +92,16 @@ const submitTruckLoad = async (req, res) => {
     let sidePhotoMetadata = {};
     let backPhotoMetadata = {};
 
-    // Upload side and back photos if they exist
-    if (req.files['sidePhoto'] && req.files['backPhoto']) {
-      const [sideResult, backResult] = await Promise.all([
-        uploadPhoto(req.files['sidePhoto'][0].buffer, 'resiklean/truckloads'),
-        uploadPhoto(req.files['backPhoto'][0].buffer, 'resiklean/truckloads')
-      ]);
-      sidePhotoUrl = sideResult.url;
-      backPhotoUrl = backResult.url;
-
-      try { if (req.body.sidePhotoMetadata) sidePhotoMetadata = JSON.parse(req.body.sidePhotoMetadata); } catch (e) { }
-      try { if (req.body.backPhotoMetadata) backPhotoMetadata = JSON.parse(req.body.backPhotoMetadata); } catch (e) { }
+    const files = req.files || {};
+    if (files.sidePhoto?.[0]) {
+      sidePhotoUrl = (await uploadPhoto(files.sidePhoto[0].buffer, 'resiklean/truckloads')).url;
+      try { if (req.body.sidePhotoMetadata) sidePhotoMetadata = JSON.parse(req.body.sidePhotoMetadata); } catch {}
     }
-    // Legacy support
-    else if (req.files['photo']) {
-      const result = await uploadPhoto(req.files['photo'][0].buffer, 'resiklean/truckloads');
-      photoUrl = result.url;
-    } else {
-      return sendError(res, 'Both side and back photos are required', 400);
+    if (files.backPhoto?.[0]) {
+      backPhotoUrl = (await uploadPhoto(files.backPhoto[0].buffer, 'resiklean/truckloads')).url;
+      try { if (req.body.backPhotoMetadata) backPhotoMetadata = JSON.parse(req.body.backPhotoMetadata); } catch {}
     }
+    if (files.photo?.[0]) photoUrl = (await uploadPhoto(files.photo[0].buffer, 'resiklean/truckloads')).url;
 
     const load = await TruckLoad.create({
       staffId: req.user._id,
@@ -110,7 +111,8 @@ const submitTruckLoad = async (req, res) => {
       length: Number(length),
       width: Number(width),
       height: Number(height),
-      slope: slope ? Number(slope) : 0,
+      slope: pileVolume,
+      pileHeightsCm,
       notes: notes || '',
       photoUrl,
       sidePhotoUrl,
