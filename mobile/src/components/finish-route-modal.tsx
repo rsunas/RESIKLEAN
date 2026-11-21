@@ -4,7 +4,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
 import { MotionModal as Modal, MotionPressable as Pressable } from '@/components/app-motion';
 import { AppText as Text } from '@/components/app-text';
-import { startRouteFinishCountdown } from '@/lib/route-finish-countdown';
+import { ROUTE_FINISH_COUNTDOWN_SECONDS, startRouteFinishCountdown } from '@/lib/route-finish-countdown';
 
 export function FinishRouteModal({ visible, busy = false, onCancel, onConfirm }: {
   visible: boolean; busy?: boolean; onCancel: () => void; onConfirm: () => void;
@@ -14,32 +14,37 @@ export function FinishRouteModal({ visible, busy = false, onCancel, onConfirm }:
   const callbacks = useRef({ onCancel, onConfirm, busy });
   callbacks.current = { onCancel, onConfirm, busy };
 
-  const dismiss = useCallback(() => {
-    if (callbacks.current.busy) return;
+  const resetCountdown = useCallback(() => {
     cancelCountdown.current?.();
     cancelCountdown.current = null;
     setSeconds(null);
-    callbacks.current.onCancel();
   }, []);
 
+  const dismiss = useCallback(() => {
+    if (callbacks.current.busy) return;
+    resetCountdown();
+    callbacks.current.onCancel();
+  }, [resetCountdown]);
+
   useEffect(() => {
-    setSeconds(null);
+    resetCountdown();
     const subscription = AppState.addEventListener('change', state => {
-      // Never finalize an accidental tap after the driver leaves the app.
-      if (visible && state !== 'active') dismiss();
+      // Permission dialogs and system UI can interrupt an online sync. Keep
+      // confirmation open, but require a fresh countdown after an interruption.
+      if (visible && state !== 'active' && !callbacks.current.busy) resetCountdown();
     });
     return () => {
       cancelCountdown.current?.();
       cancelCountdown.current = null;
       subscription.remove();
     };
-  }, [visible, dismiss]);
+  }, [visible, resetCountdown]);
 
   const beginCountdown = () => {
-    if (!visible || cancelCountdown.current) return;
+    if (!visible || callbacks.current.busy || cancelCountdown.current) return;
     cancelCountdown.current = startRouteFinishCountdown(setSeconds, () => {
       if (AppState.currentState !== 'active' && AppState.currentState !== null) {
-        dismiss();
+        resetCountdown();
         return;
       }
       callbacks.current.onConfirm();
@@ -55,13 +60,13 @@ export function FinishRouteModal({ visible, busy = false, onCancel, onConfirm }:
           <Text accessibilityRole="header" style={styles.title}>Finish route collection?</Text>
           <Text style={styles.message}>This ends your trip, closes today's route and submits your collection history to admin. Offline records will sync when you reconnect.</Text>
           <Text accessibilityLiveRegion="polite" style={styles.message}>{busy ? 'Saving your route on this phone. Uploads will continue in the background.' : seconds === null
-            ? 'Your trip keeps recording until you confirm and the five-second safety countdown finishes.'
+            ? `Your trip keeps recording until you confirm and the ${ROUTE_FINISH_COUNTDOWN_SECONDS}-second safety countdown finishes.`
             : `Finishing in ${seconds} second${seconds === 1 ? '' : 's'}. Tap Keep route open to cancel.`}</Text>
           <View style={styles.actions}>
             <Pressable accessibilityRole="button" disabled={busy} onPress={dismiss} style={styles.cancel}>
               <Text style={styles.cancelText}>Keep route open</Text>
             </Pressable>
-            <Pressable accessibilityRole="button" accessibilityState={{ disabled: seconds !== null }} disabled={seconds !== null} onPress={beginCountdown} style={[styles.confirm, seconds !== null && styles.disabled]}>
+            <Pressable accessibilityRole="button" accessibilityState={{ disabled: busy || seconds !== null }} disabled={busy || seconds !== null} onPress={beginCountdown} style={[styles.confirm, (busy || seconds !== null) && styles.disabled]}>
               <Text style={styles.confirmText}>{busy ? 'Saving route…' : seconds === null ? 'Finish route' : `Finishing in ${seconds}s`}</Text>
             </Pressable>
           </View>

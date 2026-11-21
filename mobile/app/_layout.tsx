@@ -42,9 +42,13 @@ function NotificationObserver() {
 
   useEffect(() => {
     const openNotificationTarget = (response: NotificationResponse) => {
-      const data = response.notification.request.content.data as { screen?: string; type?: string; announcementId?: string } | undefined;
+      const data = response.notification.request.content.data as { screen?: string; type?: string; announcementId?: string; reportId?: string } | undefined;
       if (data?.type === 'announcement') {
         router.push({ pathname: '/resident', params: { tab: 'announcements', notificationId: response.notification.request.identifier } });
+        return;
+      }
+      if (data?.type === 'complaint') {
+        router.push({ pathname: '/resident', params: { tab: 'report', notificationId: data.reportId || response.notification.request.identifier } });
         return;
       }
       if (data?.screen === 'schedule' || data?.screen === 'collection') {

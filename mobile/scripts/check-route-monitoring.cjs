@@ -111,6 +111,7 @@ function screenFixture(consent = null, pausedDay = null, accept = true, tracking
   const calls = [];
   const consentPrompt = { request: async () => { prompts++; return accept; } };
   const context = {
+    finishRouteFlowRef: { current: false },
     activeTab: 'map', automaticTripPromptEligible: true, editingProfile: false, claimTripStartPrompt: async () => { if(claimed)return false; claimed=true;return true; },
     withTimeout, loadRouteHistory: async () => {}, useCallback: fn => fn, isTogglingMonitoringRef: { current: false }, monitoringSuspendedRef: { current: false }, monitoringRequestRef: { current: 0 },
     monitoringContextRef: { current: { collectorId: config.collectorId, routeId: config.routeId, eligible: true } },
@@ -138,6 +139,79 @@ test('explicit trip start explains background access, asks consent and then requ
   assert.equal(screen.prompts(), 1);
   assert.equal(screen.preference().consent, true);
   assert.deepEqual(screen.calls.find(call => call[0] === 'enable'), ['enable', { requestPermissions: true }]);
+});
+test('online automatic monitoring cannot interrupt an open Finish route dialog', async () => {
+  const screen = screenFixture(true);
+  screen.context.finishRouteFlowRef.current = true;
+  await screen.enable({ automatic: true });
+  assert.equal(screen.prompts(), 0);
+  assert.deepEqual(screen.calls, []);
+});
+test('Finish route opened during a status request prevents further automatic setup', async () => {
+  const screen = screenFixture(true);
+  let resolveStatus;
+  screen.context.getRouteProximityStatus = () => new Promise(resolve => { resolveStatus = resolve; });
+  const pending = evaluateScreen('enableBackgroundGeofencing', screen.context)({ automatic: true });
+  await Promise.resolve();
+  screen.context.finishRouteFlowRef.current = true;
+  resolveStatus({ enabled: true, routeId: config.routeId });
+  await pending;
+  assert.deepEqual(screen.calls, []);
+});
+test('an online assignment response cannot replace the route during Finish route', async () => {
+  let release;
+  const response = new Promise(resolve => { release = resolve; });
+  let requests = 0;
+  const writes = [];
+  const context = {
+    useCallback: fn => fn, API_URL: 'https://fixture',
+    finishRouteFlowRef: { current: false }, driverDataRequestRef: { current: 0 },
+    NetInfo: { fetch: async () => ({ isConnected: true, isInternetReachable: true }) },
+    requestJson: () => { requests++; return response; },
+    setLoadError() {}, setIsLoading() {}, setIsOffline() {},
+    setAssignedRoute: value => writes.push(value), setDriver: value => writes.push(value),
+    setProgress: value => writes.push(value), setLatestCapacityLog: value => writes.push(value),
+  };
+  const refresh = evaluateScreen('loadDriverData', context);
+  const pending = refresh('token', 'driver');
+  await Promise.resolve();
+  assert.equal(requests, 4);
+  context.finishRouteFlowRef.current = true;
+  context.driverDataRequestRef.current++;
+  release({ response: { ok: true }, payload: { success: true, data: { _id: 'changed-route' } } });
+  await pending;
+  assert.deepEqual(writes, []);
+  await refresh('token', 'driver');
+  assert.equal(requests, 4, 'New online refresh must wait until confirmation closes');
+});
+test('online Finish route waits for local save and completes even while uploads are stalled', async () => {
+  let save;
+  let visible = true, busy = false, message = null, route = { _id: 'route', name: 'Area 4' };
+  const uploads = [];
+  const context = {
+    session: { token: 'token', user: { _id: 'driver' } }, assignedRoute: route,
+    collectorId: 'driver', isSubmittingRoute: false, submittingRouteRef: { current: false },
+    setIsSubmittingRoute: value => { busy = value; },
+    setIsFinishRouteConfirmVisible: value => { visible = value; },
+    setRouteActionMessage: value => { message = value; },
+    disableBackgroundGeofencing: async () => {},
+    queueRouteCompletion: () => new Promise(resolve => { save = resolve; }),
+    monitoringDay: () => '2026-11-21', displayBarangay: () => 'Abella', totalStops: 5, completed: 3,
+    getRouteHistoryCache: async () => [], getLocalDriverTrailHistory: async () => [],
+    mergeRouteHistory: (a, b) => [...a, ...b], setHistoryGroups() {}, saveRouteHistoryCache: async () => {},
+    setAssignedRoute: value => { route = value; }, clearCachedAssignedRoute: async () => {}, clearRouteProximityEvents: async () => {},
+    API_URL: 'https://fixture', loadRouteHistory: async () => {},
+    syncDriverTrailQueue: () => { uploads.push('trail'); return new Promise(() => {}); },
+    syncRouteCompletions: () => { uploads.push('completion'); return new Promise(() => {}); },
+  };
+  const pending = evaluateScreen('confirmRouteCompletion', context)();
+  await Promise.resolve();
+  assert.equal(busy, true); assert.equal(visible, true);
+  assert.equal(route._id, 'route'); assert.equal(message, null);
+  save(); await pending;
+  assert.equal(busy, false); assert.equal(visible, false);
+  assert.equal(route, null); assert.equal(message.kind, 'success');
+  assert.deepEqual(uploads, ['trail', 'completion']);
 });
 test('map auto-prompts once and Not now never starts recording', async () => {
   const screen = screenFixture(null, null, false); await screen.enable({ automatic: true });
@@ -336,6 +410,26 @@ test('reopening after a force-close restarts GPS without ending the saved trip',
   assert.equal(finishes, completedBeforeRestart);
   await sample(); assert.equal(events().length, 1);
 });
+test('registered GPS task rebinds its foreground service without ending the saved trip', async () => {
+  reset(); await service.enableRouteProximityTracking(config); await sample();
+  const completedBeforeRestart = finishes;
+  tasks = {}; service = load('driver-route-proximity', dependencies);
+  assert.equal(running, true, 'registration can survive process recreation');
+  await service.enableRouteProximityTracking(config, { requestPermissions: false });
+  assert.equal(nativeStarts, 2, 'refresh options so native code can restore the notification service');
+  assert.equal(finishes, completedBeforeRestart);
+});
+
+test('notification permission dialog cannot start the service while the app is inactive', async () => {
+  reset();
+  const original = dependencies['@/lib/notifications'].ensureNotificationPermissionsAsync;
+  dependencies['@/lib/notifications'].ensureNotificationPermissionsAsync = async () => { appState.currentState = 'background'; return true; };
+  try {
+    assert.equal((await service.enableRouteProximityTracking(config)).enabled, false);
+    assert.equal(nativeStarts, 0);
+  } finally { dependencies['@/lib/notifications'].ensureNotificationPermissionsAsync = original; }
+});
+
 test('a different owner/route cannot feed fixes into this session', async () => {
   reset(); await service.enableRouteProximityTracking(config);
   for (let index = 0; index < 3; index++) { now += 5000; await service.processDriverRouteLocation(fix(), { collectorId: 'other', routeId: config.routeId }); }

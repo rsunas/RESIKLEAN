@@ -1,6 +1,7 @@
 const ReportMessage = require('../models/ReportMessage');
 const MissedReport  = require('../models/MissedReport');
 const socketService = require('../services/socket.service');
+const { sendUserPush } = require('../services/notification.service');
 const { sendSuccess, sendError } = require('../utils/response');
 
 // ── GET  /api/resident/reports/:reportId/messages ────────────────────────────
@@ -83,6 +84,16 @@ const sendMessage = async (req, res) => {
         reportId,
         message: populated,
       });
+    }
+
+    // Notify the resident when staff replies while the app is closed.
+    if (req.user.role !== 'resident') {
+      const recipient = await require('../models/User').findById(report.residentId).select('pushTokens notificationsEnabled settings');
+      await sendUserPush(recipient, {
+        title: 'New complaint reply',
+        body: populated.body,
+        data: { type: 'complaint', reportId: String(reportId), messageId: String(message._id) },
+      }).catch(error => console.error('Complaint message notification failed:', error.message));
     }
 
     sendSuccess(res, populated, 201);

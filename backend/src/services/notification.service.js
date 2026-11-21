@@ -88,7 +88,18 @@ const cleanupTokens = async (tokens) => {
   }
 };
 
+async function sendUserPush(user, message) {
+  if (!user || user.notificationsEnabled === false || user.settings?.notifications?.pushEnabled === false) return;
+  const tokens = [...new Set((user.pushTokens || [])
+    .filter(item => item.isEnabled !== false)
+    .map(item => item.token)
+    .filter(Boolean))];
+  if (!tokens.length) return;
+  await sendPushNotifications(tokens.map(to => ({ to, sound: 'default', badge: 1, ...message })));
+}
+
 module.exports = {
   sendPushNotifications,
+  sendUserPush,
   cleanupTokens
 };

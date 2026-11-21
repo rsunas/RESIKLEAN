@@ -11,6 +11,7 @@ const { validateTruckDimensions } = require('../utils/truckDimensions');
 const DailyCycleLog = require('../models/DailyCycleLog');
 const CapacityLog = require('../models/CapacityLog');
 const socketService = require('../services/socket.service');
+const { sendUserPush } = require('../services/notification.service');
 const { uploadPhoto, deletePhoto, getIdentityPhotoUrl } = require('../services/cloudinary.service');
 const { isValidBirthday } = require('../utils/birthday');
 const { sendSuccess, sendError } = require('../utils/response');
@@ -459,7 +460,7 @@ const updateReportStatus = async (req, res) => {
       req.params.reportId,
       update,
       { new: true }
-    ).populate('residentId', 'name email');
+    ).populate('residentId', 'name email pushTokens notificationsEnabled settings');
 
     if (!report) return sendError(res, 'Report not found', 404);
 
@@ -477,6 +478,12 @@ const updateReportStatus = async (req, res) => {
         report,
       });
     }
+
+    await sendUserPush(report.residentId, {
+      title: 'Complaint update',
+      body: `Your complaint is now ${report.status}.`,
+      data: { type: 'complaint', reportId: String(report._id), status: report.status },
+    }).catch(error => console.error('Complaint notification failed:', error.message));
 
     sendSuccess(res, report);
   } catch (err) {

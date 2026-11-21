@@ -24,7 +24,7 @@ async function notifyPublished(item) {
   emitToResidents('announcement:new', residents.map(user => String(user._id)), publicItem(item));
   const { manilaParts, formatTime } = await shared();
   const tokens = new Set(residents.filter(user => user.notificationsEnabled !== false && user.settings?.notifications?.pushEnabled !== false && user.settings?.notifications?.announcements !== false).flatMap(user => (user.pushTokens || []).filter(token => token.isEnabled !== false).map(token => token.token)));
-  await sendPushNotifications([...tokens].map(to => ({ to, sound: 'default', title: `Service advisory: ${item.areaLabel} · ${formatTime(manilaParts(item.scheduledFor).time)}`, body: item.message, data: { type: 'announcement', announcementId: String(item._id) } })));
+  await sendPushNotifications([...tokens].map(to => ({ to, sound: 'default', badge: 1, title: `Service advisory: ${item.areaLabel} · ${formatTime(manilaParts(item.scheduledFor).time)}`, body: item.message, data: { type: 'announcement', announcementId: String(item._id) } })));
 }
 async function fields(body, existing) {
   const { scheduledDate, manilaParts, generateMessage } = await shared();

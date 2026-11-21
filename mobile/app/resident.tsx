@@ -1,3 +1,4 @@
+import { PhoneNotificationControls } from '@/components/phone-notification-controls';
 import { AppSelect } from '@/components/app-select';
 import { WASTE_CATEGORY_OPTIONS, wasteCategoryLabel } from '@/lib/waste-categories';
 import { useNetworkRecovery } from '@/hooks/use-network-recovery';
@@ -38,7 +39,8 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Card } from 'heroui-native';
 import { House, MessageCircleWarning, Newspaper, UserRound } from 'lucide-react-native';
 import { BrandMark } from '@/components/brand-mark';
-import { cancelScheduledCollectionReminders, scheduleCollectionReminders, setCollectionReminderPreference } from '@/lib/notifications';
+import { cancelScheduledCollectionReminders, scheduleCollectionReminders, setAppNotificationBadgeCount, setCollectionReminderPreference } from '@/lib/notifications';
+import Storage from 'expo-sqlite/kv-store';
 import { clearSession, getSession, saveSession, type AuthSession } from '@/lib/session';
 import { type ApiWasteType, type LegacyScheduleData, type ScheduleData, type UpcomingCollection } from '@/types/resident-schedule';
 import {
@@ -59,6 +61,7 @@ type ResidentReference = {
 type ApiReport = {
   wasteCategory?: string;
   _id: string;
+  updatedAt?: string;
   residentId?: string | ResidentReference;
   barangay: string;
   description: string;
@@ -422,7 +425,7 @@ function RealtimeStatus({ status }: { status: SocketStatus }) {
   );
 }
 
-function BottomNavigation({ activeTab, onChange }: { activeTab: ResidentTab; onChange: (tab: ResidentTab) => void }) {
+function BottomNavigation({ activeTab, onChange, unreadAnnouncements = 0, unreadComplaints = 0 }: { activeTab: ResidentTab; onChange: (tab: ResidentTab) => void; unreadAnnouncements?: number; unreadComplaints?: number }) {
   const insets = useSafeAreaInsets();
   const pill = useSlidingTabPill(activeTab);
   const tabs = [
@@ -440,7 +443,7 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: ResidentTab; onC
         const Icon = tab.icon;
         return (
           <Pressable motionDisabled onLayout={(event) => pill.itemLayout(tab.key, event)} accessibilityRole="tab" accessibilityState={{ selected: active }} key={tab.key} onPress={() => onChange(tab.key)} style={styles.navItem}>
-            <View onLayout={(event) => pill.iconLayout(tab.key, event)} style={styles.navIcon}><Icon color={active ? '#086B42' : '#5A6761'} size={22} strokeWidth={1.8} /></View>
+            <View onLayout={(event) => pill.iconLayout(tab.key, event)} style={styles.navIcon}><Icon color={active ? '#086B42' : '#5A6761'} size={22} strokeWidth={1.8} />{tab.key === 'schedule' && unreadAnnouncements > 0 ? <View style={styles.navBadge}><Text style={styles.navBadgeText}>{unreadAnnouncements > 99 ? '99+' : unreadAnnouncements}</Text></View> : null}{tab.key === 'report' && unreadComplaints > 0 ? <View style={styles.navBadge}><Text style={styles.navBadgeText}>{unreadComplaints > 99 ? '99+' : unreadComplaints}</Text></View> : null}</View>
             <Text style={[styles.navText, active && styles.navTextActive]}>{tab.label}</Text>
           </Pressable>
         );
@@ -543,6 +546,12 @@ export default function ResidentScreen() {
   const [announcementHasMore, setAnnouncementHasMore] = useState(false);
   const [announcementLoading, setAnnouncementLoading] = useState(false);
   const [announcementError, setAnnouncementError] = useState('');
+  const [unreadAnnouncements, setUnreadAnnouncements] = useState(0);
+  const [unreadComplaints, setUnreadComplaints] = useState(0);
+  const unreadAnnouncementSeenRef = useRef<string | null>(null);
+  const unreadComplaintSeenRef = useRef<string | null>(null);
+  const countedAnnouncementUpdatesRef = useRef(new Set<string>());
+  const countedComplaintUpdatesRef = useRef(new Set<string>());
   const announcementCursorRef = useRef<string | null>(null);
   const [pastReports, setPastReports] = useState<ApiReport[]>([]);
   const [selectedReport, setSelectedReport] = useState<ApiReport | null>(null);
@@ -636,13 +645,25 @@ export default function ResidentScreen() {
     try {
       const { response, payload: result } = await requestJson<ApiResponse<ApiReport[]>>(`${API_URL}/resident/reports`, { headers: { Authorization: `Bearer ${token}` } });
       if (!response.ok || !result.success) throw new Error(result.error || 'Unable to load your reports.');
-      setPastReports(result.data || []);
+      const reports = result.data || [];
+      setPastReports(reports);
+      const newest = reports.map(report => report.updatedAt || report.createdAt).filter(Boolean).sort().at(-1) || null;
+      if (unreadComplaintSeenRef.current === null) unreadComplaintSeenRef.current = newest;
+      else if (activeTab !== 'report') {
+        const fresh = reports.filter(report => {
+          const timestamp = report.updatedAt || report.createdAt || '';
+          const key = `${normalizeId(report._id)}:${timestamp}`;
+          return timestamp > unreadComplaintSeenRef.current! && !countedComplaintUpdatesRef.current.has(key);
+        });
+        fresh.forEach(report => countedComplaintUpdatesRef.current.add(`${normalizeId(report._id)}:${report.updatedAt || report.createdAt || ''}`));
+        if (fresh.length) setUnreadComplaints(current => current + fresh.length);
+      }
     } catch (error) {
       setReportError(error instanceof Error ? error.message : 'Unable to load your reports.');
     } finally {
       setIsLoadingReports(false);
     }
-  }, []);
+  }, [activeTab]);
 
   const loadAnnouncements = useCallback(async (token: string, reset = true) => {
     if (!API_URL) return;
@@ -651,9 +672,44 @@ export default function ResidentScreen() {
       const cursor = reset ? '' : announcementCursorRef.current ? `&cursor=${encodeURIComponent(announcementCursorRef.current)}` : '';
       const { response, payload: result } = await requestJson<ApiResponse<AnnouncementPage>>(`${API_URL}/announcements?scope=${announcementScope}&limit=10${cursor}`, { headers: { Authorization: `Bearer ${token}` } });
       if (!response.ok || !result.success || !result.data) throw new Error(result.error || 'Unable to load announcements.');
-      setAnnouncements(current => reset ? result.data!.items : [...current, ...result.data!.items]); announcementCursorRef.current = result.data.nextCursor || null; setAnnouncementCursor(result.data.nextCursor || null); setAnnouncementHasMore(Boolean(result.data.hasMore));
+      const items = result.data!.items;
+      setAnnouncements(current => reset ? items : [...current, ...items]);
+      const newest = items.map(item => item.publishedAt).filter(Boolean).sort().at(-1) || null;
+      if (unreadAnnouncementSeenRef.current === null) unreadAnnouncementSeenRef.current = newest;
+      else if (activeTab !== 'schedule') {
+        const fresh = items.filter(item => {
+          const key = `${item.id}:${item.publishedAt || ''}`;
+          return (item.publishedAt || '') > unreadAnnouncementSeenRef.current! && !countedAnnouncementUpdatesRef.current.has(key);
+        });
+        fresh.forEach(item => countedAnnouncementUpdatesRef.current.add(`${item.id}:${item.publishedAt || ''}`));
+        if (fresh.length) setUnreadAnnouncements(current => current + fresh.length);
+      }
+      announcementCursorRef.current = result.data.nextCursor || null; setAnnouncementCursor(result.data.nextCursor || null); setAnnouncementHasMore(Boolean(result.data.hasMore));
     } catch (error) { setAnnouncementError(error instanceof Error ? error.message : 'Unable to load announcements.'); } finally { setAnnouncementLoading(false); }
-  }, [announcementScope]);
+  }, [activeTab, announcementScope]);
+
+  useEffect(() => {
+    const owner = session?.user._id || session?.user.id || session?.user.email;
+    if (!owner) return;
+    void Storage.getItem(`resiklean:announcement-seen:${owner}`).then(value => { unreadAnnouncementSeenRef.current = value; });
+    void Storage.getItem(`resiklean:complaint-seen:${owner}`).then(value => { unreadComplaintSeenRef.current = value; });
+  }, [session?.user._id, session?.user.email, session?.user.id]);
+
+  useEffect(() => {
+    const owner = session?.user._id || session?.user.id || session?.user.email;
+    if (!owner) return;
+    const markSeen = async (kind: 'announcement' | 'complaint', timestamp: string | null) => {
+      if (!timestamp) return;
+      if (kind === 'announcement') { setUnreadAnnouncements(0); countedAnnouncementUpdatesRef.current.clear(); } else { setUnreadComplaints(0); countedComplaintUpdatesRef.current.clear(); }
+      const key = `resiklean:${kind}-seen:${owner}`;
+      await Storage.setItem(key, timestamp);
+      if (kind === 'announcement') unreadAnnouncementSeenRef.current = timestamp; else unreadComplaintSeenRef.current = timestamp;
+    };
+    if (activeTab === 'schedule') void markSeen('announcement', announcements.map(item => item.publishedAt).filter(Boolean).sort().at(-1) || null);
+    if (activeTab === 'report') void markSeen('complaint', pastReports.map(report => report.updatedAt || report.createdAt).filter(Boolean).sort().at(-1) || null);
+  }, [activeTab, announcements, pastReports, session?.user._id, session?.user.email, session?.user.id]);
+
+  useEffect(() => { void setAppNotificationBadgeCount(unreadAnnouncements + unreadComplaints); }, [unreadAnnouncements, unreadComplaints]);
 
   useEffect(() => {
     let isMounted = true;
@@ -764,6 +820,7 @@ export default function ResidentScreen() {
 
   useEffect(() => {
     if (tab === 'schedule' || tab === 'announcements' || tab === 'news') setActiveTab('schedule');
+    if (tab === 'report') setActiveTab('report');
   }, [tab]);
 
   useEffect(() => {
@@ -803,6 +860,14 @@ export default function ResidentScreen() {
       }
 
       setPastReports((current) => mergeRealtimeReport(current, payload));
+      if (activeTab !== 'report') {
+        const timestamp = incomingReport.updatedAt || incomingReport.createdAt || new Date().toISOString();
+        const key = `${reportId}:${timestamp}`;
+        if (!countedComplaintUpdatesRef.current.has(key)) {
+          countedComplaintUpdatesRef.current.add(key);
+          setUnreadComplaints(current => current + 1);
+        }
+      }
       setSelectedReport((current) => {
         if (!current || normalizeId(current._id) !== reportId) return current;
         return {
@@ -816,12 +881,27 @@ export default function ResidentScreen() {
     const handleMessageEvent = (payload: ComplaintSocketPayload) => {
       const reportId = normalizeId(payload.reportId);
       const selectedId = selectedReportIdRef.current;
-      if (!reportId || !selectedId || reportId !== selectedId || !payload.message) return;
+      if (!reportId || !payload.message) return;
+      if (activeTab !== 'report' || !selectedId || reportId !== selectedId) {
+        const key = `${reportId}:${normalizeId(payload.message._id || payload.message.id) || payload.message.createdAt || ''}`;
+        if (!countedComplaintUpdatesRef.current.has(key)) {
+          countedComplaintUpdatesRef.current.add(key);
+          setUnreadComplaints(current => current + 1);
+        }
+      }
+      if (!selectedId || reportId !== selectedId) return;
       setReportMessages((current) => mergeReportMessages(current, payload.message));
     };
     const handleAnnouncementEvent = (payload: Announcement) => {
       if (!payload?.id) return;
       setAnnouncements(current => current.some(item => item.id === payload.id) ? current : [{ ...payload, affectsMyArea: announcementScope === 'mine' ? true : payload.affectsMyArea }, ...current]);
+      if (activeTab !== 'schedule') {
+        const key = `${payload.id}:${payload.publishedAt || ''}`;
+        if (!countedAnnouncementUpdatesRef.current.has(key)) {
+          countedAnnouncementUpdatesRef.current.add(key);
+          setUnreadAnnouncements(current => current + 1);
+        }
+      }
     };
 
     socket.on('connect', handleConnect);
@@ -843,7 +923,7 @@ export default function ResidentScreen() {
       socket.disconnect();
       if (socketRef.current === socket) socketRef.current = null;
     };
-  }, [announcementScope, loadReports, session?.token, session?.user._id, session?.user.id, networkRevision]);
+  }, [activeTab, announcementScope, loadReports, session?.token, session?.user._id, session?.user.id, networkRevision]);
 
   useEffect(() => {
     setProfileName(session?.user.name || '');
@@ -1398,6 +1478,7 @@ export default function ResidentScreen() {
 
   const homeScreen = (
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      <PhoneNotificationControls role="resident" />
       <HomeSectionLabel first label="Next collection" />
       {isLoadingSchedule && schedule ? <ActivityIndicator accessibilityLabel="Loading" color="#0A7F4F" /> : null}
       <SkeletonRegion state={scheduleSkeleton} placeholder={<View style={styles.nextCollectionSkeleton}><SkeletonBlock height={170} radius={24} /></View>}>
@@ -1583,7 +1664,7 @@ export default function ResidentScreen() {
         </View>
       )}
       <View style={[styles.content, isDarkTheme && { backgroundColor: '#101815' }, activeTab !== 'home' && { paddingTop: insets.top }]}><TabTransition activeKey={activeTab}>{tabScreen}</TabTransition></View>
-      <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
+      <BottomNavigation activeTab={activeTab} onChange={setActiveTab} unreadAnnouncements={unreadAnnouncements} unreadComplaints={unreadComplaints} />
       {renderReportDetails()}
       <SignOutConfirmModal visible={isSignOutConfirmVisible} onCancel={() => setIsSignOutConfirmVisible(false)} onConfirm={completeSignOut} />
       <PrivacyPolicyModal visible={isPrivacyVisible} onClose={() => setIsPrivacyVisible(false)} />
@@ -1611,6 +1692,8 @@ const styles = StyleSheet.create({
   heroWasteText: { color: '#FFFFFF', fontSize: 14 },
   newComplaintFooter: { backgroundColor: '#FFFFFF', paddingHorizontal: 20, paddingVertical: 12 },
   navIcon: { width: 56, height: 32, borderRadius: 16, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+  navBadge: { position: 'absolute', right: -8, top: -7, minWidth: 17, height: 17, borderRadius: 9, backgroundColor: '#C92E3D', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3 },
+  navBadgeText: { color: '#FFFFFF', fontSize: 10, fontWeight: '800' },
   navIconActive: { backgroundColor: '#E3F4EB' },
   safeArea: { flex: 1, backgroundColor: '#FFFFFF' },
   residentHeader: { backgroundColor: '#FFFFFF' },

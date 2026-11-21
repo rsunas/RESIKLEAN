@@ -34,6 +34,10 @@ async function main() {
   let now = Date.parse('2026-11-18T06:00:00+08:00');
   let failEnd = false;
   let permissionGranted = true;
+  let canAskAgain = true;
+  let requests = 0;
+  let channels = [];
+  let grantOnRequest = false;
   const originalNow = Date.now;
   Date.now = () => now;
   const imports = {
@@ -43,18 +47,20 @@ async function main() {
       getItem: async key => storage.get(key) ?? null,
       setItem: async (key, value) => { storage.set(key, value); },
     } },
-    'expo-notifications/build/NotificationChannelManager.types': { AndroidImportance: { HIGH: 4 } },
+    'expo-notifications/build/NotificationChannelManager.types': { AndroidImportance: { HIGH: 4, NONE: 0 } },
     'expo-notifications/build/NotificationPermissions': {
-      getPermissionsAsync: async () => ({ granted: permissionGranted }),
-      requestPermissionsAsync: async () => ({ granted: permissionGranted }),
+      getPermissionsAsync: async () => ({ granted: permissionGranted, canAskAgain }),
+      requestPermissionsAsync: async () => { requests++; if (grantOnRequest) permissionGranted = true; return { granted: permissionGranted }; },
     },
     'expo-notifications/build/Notifications.types': { SchedulableTriggerInputTypes: { DATE: 'date' } },
     'expo-notifications/build/NotificationsHandler': { setNotificationHandler: () => {} },
+    'expo-notifications/build/getNotificationChannelsAsync': { default: async () => channels },
+    'expo-notifications/build/setBadgeCountAsync': { default: async () => true },
     'expo-notifications/build/setNotificationChannelAsync': { default: async () => {} },
     'expo-notifications/build/getAllScheduledNotificationsAsync': { default: async () => [...pending.values()] },
     'expo-notifications/build/cancelScheduledNotificationAsync': { default: async id => { pending.delete(id); } },
     'expo-notifications/build/scheduleNotificationAsync': { default: async notification => {
-      if (failEnd && notification.content.data.phase === 'end') throw new Error('OS failure');
+      if (failEnd && notification.content.data?.phase === 'end') throw new Error('OS failure');
       sent.push(notification);
       if (notification.trigger.date) pending.set(notification.identifier, notification);
       return notification.identifier;
@@ -114,6 +120,33 @@ async function main() {
     permissionGranted = true;
     await api.scheduleCollectionReminders([], 'Abella', 'resident-a');
     assert.equal(pending.size, 0, 'empty schedule is safe');
+    reset();
+    now = Date.parse('2026-11-18T06:00:00+08:00');
+    channels = [{ id: 'collection-reminders', importance: 0 }];
+    await reconcile();
+    assert.equal(sent.length, 0, 'blocked category must not consume reminder receipts');
+    assert.equal((await api.getPhoneNotificationStatus('resident')).allowed, false);
+    channels[0].importance = 4;
+    await reconcile();
+    assert.equal(sent.length, 2, 'enabling category restores catch-up and upcoming reminders');
+    const driverChannel = { id: 'app:resiklean-driver-route-proximity', importance: 0 };
+    channels.push(driverChannel);
+    assert.equal((await api.getPhoneNotificationStatus('driver', true)).allowed, false);
+    await assert.rejects(api.sendPhoneNotificationTest('driver', true), /blocked/);
+    driverChannel.importance = 2;
+    await api.sendPhoneNotificationTest('driver', true);
+    assert.equal(sent.at(-1).trigger.channelId, driverChannel.id, 'test the actual GPS service category');
+    assert.equal(sent.at(-1).content.title, 'ResiKlean notification test');
+    permissionGranted = false;
+    const before = requests;
+    await api.ensureNotificationPermissionsAsync();
+    assert.equal(requests, before, 'automatic checks must not repeatedly prompt');
+    grantOnRequest = true;
+    assert.equal(await api.ensureNotificationPermissionsAsync({ requestAgain: true }), true);
+    assert.equal(requests, before + 1, 'Enable button can retry a previously dismissed prompt');
+    permissionGranted = false; canAskAgain = false;
+    assert.equal(await api.ensureNotificationPermissionsAsync({ requestAgain: true }), false);
+    assert.equal(requests, before + 1, 'permanent denial requires settings, not another prompt');
     console.log('Collection reminder checks passed: windows, overnight dates, catch-up, deduplication, restarts, cancellation, settings, isolation and retries.');
   } finally { Date.now = originalNow; }
 }

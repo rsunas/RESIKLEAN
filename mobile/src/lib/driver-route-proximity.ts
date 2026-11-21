@@ -268,6 +268,12 @@ const emitStatus = (status: RoutePresenceStatus) => {
   statusListeners.forEach((listener) => listener(status));
 };
 
+const hasStartedRouteUpdates = async () => {
+  if (Platform.OS === 'web') return false;
+  try { return await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK); }
+  catch { return false; }
+};
+
 // Serialize native batches, foreground samples, setup and teardown. An obsolete
 // batch cannot write into a new route/session after a stop or account change.
 let trackingOperations: Promise<unknown> = Promise.resolve();
@@ -291,7 +297,7 @@ async function readDetection() {
 const processPresence = async (location: Location.LocationObject, expected?: { collectorId?: string; routeId: string }, backgroundBatch = false) => {
   const config = await getConfig();
   if (!config || (expected && (config.collectorId !== expected.collectorId || config.routeId !== expected.routeId))) return;
-  if (trackingSuppressed || !await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK)) return;
+  if (trackingSuppressed || !await hasStartedRouteUpdates()) return;
   const session = await getSession();
   if (!session?.token || session.user.role !== 'collector' || (session.user._id || session.user.id) !== config.collectorId) return;
   const detection = await readDetection();
@@ -432,7 +438,7 @@ export async function getRouteProximityStatus(): Promise<RoutePresenceStatus> {
   const status = await getStoredStatus();
   if (Platform.OS === 'web' || !await TaskManager.isAvailableAsync()) return status;
   const config = await getConfig();
-  const enabled = !trackingSuppressed && Boolean(config) && await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK);
+  const enabled = !trackingSuppressed && Boolean(config) && await hasStartedRouteUpdates();
   const detection = await readDetection();
   const signal = !status.lastCheckedAt || Date.now() - Date.parse(status.lastCheckedAt) > ROUTE_MAX_FIX_AGE_MS ? 'stale' : detection.signal;
   // Status reads never restart tracking. Foreground auto-arm checks consent,
@@ -510,7 +516,7 @@ export function enableRouteProximityTracking(config: RouteTrackingConfig, { requ
       const database = await getDatabase();
       await database.execAsync('DELETE FROM driver_route_tracking_config; DELETE FROM driver_route_detection; DELETE FROM driver_route_presence_state;');
       await finishDriverTrailSession();
-      if (await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK)) await Location.stopLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK);
+      if (await hasStartedRouteUpdates()) await Location.stopLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK);
       return unavailable(message);
     };
     if (cancelled()) return unavailable('Monitoring was stopped.');
@@ -528,11 +534,15 @@ export function enableRouteProximityTracking(config: RouteTrackingConfig, { requ
     if (cancelled()) return unavailable('Monitoring was stopped.');
     if (background.status !== 'granted') return permissionDenied('Allow location all the time in Settings, then enable automatic route monitoring.');
     if (AppState.currentState !== 'active') return unavailable('Return to the app to start automatic route monitoring.');
-    if (requestPermissions) await ensureNotificationPermissionsAsync().catch(() => false);
+    // The foreground-service status notification must be prepared on every
+    // restart, including when Android restores an unfinished trip after the
+    // app was minimized or the process was recreated.
+    await ensureNotificationPermissionsAsync().catch(() => false);
+    if (cancelled()) return unavailable('Monitoring was stopped.');
+    if (AppState.currentState !== 'active') return unavailable('Return to the app to finish starting trip recording.');
 
     const database = await getDatabase();
     const previous = await getConfig();
-    const running = await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK);
     const sameRoute = previous?.collectorId === config.collectorId && previous?.routeId === config.routeId
       && JSON.stringify(previous?.routePath ?? null) === JSON.stringify(config.routePath ?? null);
     try {
@@ -551,7 +561,10 @@ export function enableRouteProximityTracking(config: RouteTrackingConfig, { requ
       if (cancelled()) return unavailable('Monitoring was stopped.');
       trackingSuppressed = false;
       await persistRouteTrackingConfig(config);
-      if (!running) {
+      // A persisted task registration does not prove its Android foreground
+      // service survived process recreation. Updating the existing task options
+      // rebinds the service without stopping GPS or discarding the saved trip.
+      {
         await Location.startLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK, {
           accuracy: Location.Accuracy.High,
           timeInterval: 5_000,
@@ -576,7 +589,7 @@ export function enableRouteProximityTracking(config: RouteTrackingConfig, { requ
     } catch {
       await database.execAsync('DELETE FROM driver_route_tracking_config; DELETE FROM driver_route_detection; DELETE FROM driver_route_presence_state;');
       await finishDriverTrailSession();
-      if (await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK)) {
+      if (await hasStartedRouteUpdates()) {
         await Location.stopLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK);
       }
       return unavailable('Android could not start route monitoring. Open the app and try Enable again.');
@@ -603,7 +616,7 @@ export function stopRouteProximityTracking({ forgetConfiguration = false }: { fo
     await database.execAsync('DELETE FROM driver_route_tracking_config; DELETE FROM driver_route_detection;');
     if (forgetConfiguration) await database.execAsync('DELETE FROM driver_route_presence_state;');
     await finishDriverTrailSession();
-    if (Platform.OS !== 'web' && await Location.hasStartedLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK)) {
+    if (Platform.OS !== 'web' && await hasStartedRouteUpdates()) {
       await Location.stopLocationUpdatesAsync(DRIVER_ROUTE_PROXIMITY_TASK);
     }
     emitStatus({ enabled: false, state: 'unknown' });

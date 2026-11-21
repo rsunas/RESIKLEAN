@@ -16,15 +16,15 @@ const { startRouteFinishCountdown } = exportsObject;
 let finished = 0;
 const seconds = [];
 startRouteFinishCountdown(value => seconds.push(value), () => { finished += 1; });
-assert.deepEqual(seconds, [5]);
-for (let i = 0; i < 4; i += 1) tick();
-assert.deepEqual(seconds, [5, 4, 3, 2, 1]);
-assert.equal(finished, 0, 'must not finish before five seconds');
+assert.deepEqual(seconds, [3]);
+for (let i = 0; i < 2; i += 1) tick();
+assert.deepEqual(seconds, [3, 2, 1]);
+assert.equal(finished, 0, 'must not finish before three seconds');
 tick();
 assert.equal(finished, 1);
 tick();
 assert.equal(finished, 1, 'cannot submit twice');
-for (const cancelAfter of [0, 1, 4]) {
+for (const cancelAfter of [0, 1, 2]) {
   const cancel = startRouteFinishCountdown(() => {}, () => { finished += 1; });
   for (let i = 0; i < cancelAfter; i += 1) tick();
   cancel();
@@ -32,4 +32,4 @@ for (const cancelAfter of [0, 1, 4]) {
   assert.equal(finished, 1, 'cancel must prevent submission, including a queued timer callback');
 }
 assert.equal(cleared, 4);
-console.log('PASS: five-second grace period, cancellation at 0/1/4 seconds, and single submission.');
+console.log('PASS: three-second grace period, cancellation at 0/1/2 seconds, and single submission.');

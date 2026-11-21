@@ -1,3 +1,4 @@
+import { PhoneNotificationControls } from '@/components/phone-notification-controls';
 import { DriverRouteLayers, DriverStopLayers } from '@/components/driver-map-layers';
 import { buildMapStops } from '@/lib/driver-map-presentation';
 import { useAppReducedMotion } from '@/hooks/use-app-reduced-motion';
@@ -469,6 +470,9 @@ export default function CollectorScreen() {
   const emptyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTogglingMonitoringRef = useRef(false);
   const monitoringSuspendedRef = useRef(false);
+  const finishRouteFlowRef = useRef(false);
+  finishRouteFlowRef.current = isFinishRouteConfirmVisible || isSubmittingRoute;
+  const driverDataRequestRef = useRef(0);
   const monitoringRequestRef = useRef(0);
   const autoMonitoringAttemptsRef = useRef(new Set<string>());
   const historyLoadRequestRef = useRef(0);
@@ -638,6 +642,9 @@ export default function CollectorScreen() {
   }, []);
 
   const loadDriverData = useCallback(async (token: string, cachedCollectorId?: string) => {
+    if (finishRouteFlowRef.current) return;
+    const requestId = ++driverDataRequestRef.current;
+    const stale = () => requestId !== driverDataRequestRef.current || finishRouteFlowRef.current;
     if (!API_URL) {
       setLoadError('EXPO_PUBLIC_API_URL is not configured.');
       setIsLoading(false);
@@ -658,6 +665,7 @@ export default function CollectorScreen() {
         request('/collector/route/progress'),
         request('/collector/capacity/latest'),
       ]);
+      if (stale()) return;
       const profilePayload = profileResult.payload as ApiResponse<AccountUser>;
       const routePayload = routeResult.payload as ApiResponse<DriverRoute>;
       const progressPayload = progressResult.payload as ApiResponse<RouteProgress>;
@@ -680,6 +688,7 @@ export default function CollectorScreen() {
         await clearCachedAssignedRoute(cachedCollectorId);
       } else if (routeResult.response.ok && routePayload.success && routePayload.data) {
         const completionPending = cachedCollectorId && await isRouteCompletionQueued(routePayload.data._id, cachedCollectorId);
+        if (stale()) return;
         if (completionPending) {
           setAssignedRoute(null);
           setProgress(null);
@@ -703,6 +712,7 @@ export default function CollectorScreen() {
       setLoadError(errors.length ? errors[0] : null);
       setIsOffline(false);
     } catch {
+      if (stale()) return;
       setIsOffline(true);
       let cachedRoute: DriverRoute | null = null;
       try {
@@ -712,6 +722,7 @@ export default function CollectorScreen() {
       }
       if (cachedRoute) {
         const isCompleted = cachedCollectorId ? await isRouteCompletionQueued(cachedRoute._id, cachedCollectorId) : false;
+        if (stale()) return;
         if (isCompleted) {
           setAssignedRoute(null);
           setProgress(null);
@@ -997,6 +1008,9 @@ export default function CollectorScreen() {
 
   const submitRoute = async () => {
     if (!session?.token || !assignedRoute || isSubmittingRoute) return;
+    finishRouteFlowRef.current = true;
+    driverDataRequestRef.current += 1;
+    setIsLoading(false);
     setIsFinishRouteConfirmVisible(true);
   };
 
@@ -1243,11 +1257,11 @@ export default function CollectorScreen() {
     let isMounted = true;
 
     const syncGeofences = async () => {
-      if (isLoading || !session || !API_URL) return;
+      if (isLoading || !session || !API_URL || finishRouteFlowRef.current) return;
 
       try {
         const enabled = await getDriverGeofencingStatus();
-        if (!isMounted) return;
+        if (!isMounted || finishRouteFlowRef.current) return;
         setIsGeofencingEnabled(enabled);
 
         if (!enabled || loadError) return;
@@ -1264,9 +1278,10 @@ export default function CollectorScreen() {
 
     void syncGeofences();
     return () => { isMounted = false; };
-  }, [geofenceStops, isLoading, loadError, session]);
+  }, [geofenceStops, isLoading, loadError, session, isFinishRouteConfirmVisible, isSubmittingRoute]);
 
   const enableBackgroundGeofencing = useCallback(async ({ automatic = false }: { automatic?: boolean } = {}) => {
+    if (finishRouteFlowRef.current) return;
     if (isTogglingMonitoringRef.current || monitoringSuspendedRef.current) return;
     if (!collectorId || !assignedRoute?._id || !monitoringEligible) {
       setGeofencingMessage('An assigned route is needed to start a trip. Refresh your assignment and try again.');
@@ -1282,9 +1297,10 @@ export default function CollectorScreen() {
     setGeofencingMessage(null);
     try {
       const preference = await getRouteMonitoringPreference(collectorId);
-      if (!contextIsCurrent()) return;
+      if (!contextIsCurrent() || finishRouteFlowRef.current) return;
       let newlyConsented = false;
       const currentTracking = await getRouteProximityStatus();
+      if (finishRouteFlowRef.current) return;
       const sameActiveTrip = currentTracking.enabled && currentTracking.routeId === assignedRoute._id;
       // A saved configuration belongs to an unfinished trip. It survives an
       // app/process close and may be restarted from the cached assignment while
@@ -1297,10 +1313,11 @@ export default function CollectorScreen() {
           if (!automaticTripPromptEligible || activeTab !== 'map' || editingProfile || preference.pausedDay === monitoringDay()) return;
           if (!await claimTripStartPrompt(collectorId, assignedRoute._id)) return;
         }
-        if (!contextIsCurrent()) return;
+        if (!contextIsCurrent() || finishRouteFlowRef.current) return;
       }
       if ((!automatic || !sameActiveTrip) && !(automatic && sameSavedTrip)) {
         if (!automatic) await claimTripStartPrompt(collectorId, assignedRoute._id);
+        if (finishRouteFlowRef.current) return;
         const accepted = await requestMonitoringConsent();
         if (!contextIsCurrent()) return;
         await setRouteMonitoringConsent(collectorId, accepted);
@@ -1313,7 +1330,7 @@ export default function CollectorScreen() {
         newlyConsented = true;
         setIsUpdatingGeofence(true);
       }
-      if (!contextIsCurrent() || AppState.currentState !== 'active') return;
+      if (!contextIsCurrent() || finishRouteFlowRef.current || AppState.currentState !== 'active') return;
       // An explicit Start trip resumes today's paused detector. Automatic checks
       // never clear the driver's pause or keep asking for revoked permissions.
       if (!automatic) await setRouteMonitoringConsent(collectorId, true);
@@ -1329,6 +1346,7 @@ export default function CollectorScreen() {
       // GPS startup is complete. Optional stop zones/map-pack reads must not lock End trip.
       setRoutePresence(previous => ({...previous, enabled: routeResult.enabled}));
       setIsUpdatingGeofence(false);
+      if (finishRouteFlowRef.current) return;
       if (routeResult.enabled && API_URL && geofenceStops.length) {
         const stopResult = await enableDriverGeofencing({ apiUrl: API_URL, stops: geofenceStops });
         setIsGeofencingEnabled(stopResult.enabled);
@@ -1398,6 +1416,7 @@ export default function CollectorScreen() {
   }, []);
 
   useEffect(() => {
+    if (isFinishRouteConfirmVisible || isSubmittingRoute) return;
     if (Platform.OS === 'web' || isLoading || isUpdatingGeofence || !collectorId || monitoringSuspendedRef.current || AppState.currentState !== 'active') return;
     if (!monitoringEligible) {
       // An unavailable assignment or route submission must not keep the detector running.
@@ -1409,7 +1428,7 @@ export default function CollectorScreen() {
     autoMonitoringAttemptsRef.current.clear();
     autoMonitoringAttemptsRef.current.add(attemptKey);
     void enableBackgroundGeofencing({ automatic: true });
-  }, [activeTab, editingProfile, assignedRoute?._id, autoMonitoringRevision, collectorId, enableBackgroundGeofencing, isLoading, isUpdatingGeofence, loadError, monitoringEligible]);
+  }, [activeTab, editingProfile, assignedRoute?._id, autoMonitoringRevision, collectorId, enableBackgroundGeofencing, isLoading, isUpdatingGeofence, loadError, monitoringEligible, isFinishRouteConfirmVisible, isSubmittingRoute]);
 
   const toggleOfflineMap = useCallback(async () => {
     if (!assignedRoute?.routePath) {
@@ -1671,6 +1690,7 @@ export default function CollectorScreen() {
                 <Text style={[styles.tripButtonText, routePresence.enabled && {color:'#086B42'}]}>{isUpdatingGeofence ? 'Please wait...' : routePresence.enabled ? 'End trip' : 'Start trip'}</Text>
               </Pressable>
             </View>
+            <PhoneNotificationControls role="driver" tracking={routePresence.enabled} compact />
             {pendingRouteLogs > 0 && <Text style={styles.geofenceQueueText}>{pendingRouteLogs} route log{pendingRouteLogs === 1 ? '' : 's'} queued for sync{failedRouteLogs ? ` (${failedRouteLogs} need attention)` : ''}.</Text>}
           </View>
         )}
@@ -1889,6 +1909,7 @@ export default function CollectorScreen() {
   const profileScreen = (
     <View style={styles.profileScreen}>
       <ScrollView contentContainerStyle={styles.profileScrollContent} showsVerticalScrollIndicator={false}>
+        <PhoneNotificationControls role="driver" tracking={routePresence.enabled} />
         <SkeletonRegion state={profileSkeleton} placeholder={<SkeletonBlock height={226} radius={24} />}>
         <View style={styles.collectorProfileCard}>
           <CollectorGradient />
@@ -2175,7 +2196,7 @@ export default function CollectorScreen() {
         onRequestClose={() => setRouteActionMessage(null)}
         statusBarTranslucent
         transparent
-        visible={Boolean(routeActionMessage)}
+        visible={Boolean(routeActionMessage) && !isFinishRouteConfirmVisible}
       >
         <View style={styles.finishRouteBackdrop}>
           <View style={styles.finishRouteCard}>

@@ -1,6 +1,8 @@
-/** Gives the driver five full seconds to cancel before any trip data changes. */
+export const ROUTE_FINISH_COUNTDOWN_SECONDS = 3;
+
+/** Gives the driver three full seconds to cancel before any trip data changes. */
 export function startRouteFinishCountdown(onTick: (seconds: number) => void, onFinish: () => void) {
-  let remaining = 5;
+  let remaining = ROUTE_FINISH_COUNTDOWN_SECONDS;
   let cancelled = false;
   onTick(remaining);
   const timer = setInterval(() => {

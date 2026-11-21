@@ -169,13 +169,6 @@ function PreferenceTabs({ value, onChange, options }: {
   );
 }
 
-function ThemePills({ value, onChange }: { value: Theme; onChange: (theme: Theme) => void }) {
-  return <PreferenceTabs value={value} onChange={(next) => onChange(next as Theme)} options={[
-    { key: 'light', label: 'Light', icon: 'sun' },
-    { key: 'dark', label: 'Dark', icon: 'moon' },
-  ]} />;
-}
-
 function LanguageSelector({ value, onChange }: { value: Language; onChange: (language: Language) => void }) {
   return <PreferenceTabs value={value} onChange={(next) => onChange(next as Language)} options={[
     { key: 'en', label: 'English', flag: '🇵🇭' },
@@ -530,12 +523,6 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
     [apiUrl, session.token, session.user, loadSettings, updatePreferences],
   );
 
-  const setTheme = (theme: Theme) => {
-    setSettings((prev) => ({ ...prev, theme }));
-    updatePreferences({ theme });
-    void patchSettings({ theme });
-  };
-
   const setLanguage = (language: Language) => {
     setSettings((prev) => ({ ...prev, language }));
     updatePreferences({ language });
@@ -654,20 +641,6 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
             </View>
 
             {/* ── Appearance ──────────────────────────────────── */}
-            <SectionHeader label="Appearance" />
-            <View style={[ss.card, appTheme === 'dark' && { backgroundColor: '#1A2420' }]}>
-              <View style={ss.cardRowNoBorder}>
-                <View style={[ss.settingIcon, { backgroundColor: '#e8f4ff' }]}>
-                  <Feather color="#2f70d7" name="sun" size={16} />
-                </View>
-                <View style={{ flex: 1, marginLeft: 12 }}>
-                  <Text style={ss.settingText}>Theme</Text>
-                  <Text style={ss.settingSubtext}>Choose your preferred color scheme</Text>
-                </View>
-              </View>
-              <ThemePills onChange={setTheme} value={settings.theme} />
-            </View>
-
             {/* ── Language ────────────────────────────────────── */}
             <SectionHeader label="Language" />
             <View style={[ss.card, appTheme === 'dark' && { backgroundColor: '#1A2420' }]}>

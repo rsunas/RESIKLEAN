@@ -23,7 +23,17 @@ function timeMinutes(value: string): number | null {
 export function collectionDateKey(value: string): string | null {
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? new Date(timestamp + 8 * 3600000).toISOString().slice(0, 10) : null;
+  if (!Number.isFinite(timestamp)) return null;
+  // The API may return either a date-only value or an ISO instant. Convert an
+  // instant to the collection calendar in Naga instead of adding eight hours
+  // manually (which double-shifts values that already contain +08:00).
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date(timestamp));
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+  return year && month && day ? `${year}-${month}-${day}` : null;
 }
 
 export function buildCollectionReminderPlan(collections: UpcomingCollection[], ownerId: string, location: string): CollectionReminder[] {
