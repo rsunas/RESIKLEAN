@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "772576251632",
+    "project_id": "resiklean-39e6f",
+    "storage_bucket": "resiklean-39e6f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:772576251632:android:77ab8dc74714eec7397c35",
+        "android_client_info": {
+          "package_name": "com.resiklean.mobile"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAXgQqUBd8Xcohpj_5PKUGRAJJOyfkiTHQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

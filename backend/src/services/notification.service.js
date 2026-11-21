@@ -29,7 +29,12 @@ const sendPushNotifications = async (messages) => {
 
   // 2. The Expo push notification service accepts batches of notifications so
   // that you don't need to send 1000 requests to send 1000 notifications.
-  const chunks = expo.chunkPushNotifications(validMessages);
+  const chunks = expo.chunkPushNotifications(validMessages.map(message => ({
+    ...message,
+    priority: message.priority || 'high',
+    channelId: message.channelId || (message.data?.type === 'announcement'
+      ? 'announcements' : message.data?.type === 'complaint' ? 'complaint-updates' : undefined),
+  })));
   const tickets = [];
 
   // 3. Send the chunks to the Expo push notification service with retry logic
@@ -41,7 +46,7 @@ const sendPushNotifications = async (messages) => {
       try {
         attempts++;
         let ticketChunk = await expo.sendPushNotificationsAsync(chunk);
-        tickets.push(...ticketChunk);
+        tickets.push(...ticketChunk.map((ticket, index) => ({ ticket, to: chunk[index].to })));
         success = true;
       } catch (error) {
         console.error(`[Expo Push] Error sending chunk (Attempt ${attempts}/${MAX_RETRIES}):`, error.message);
@@ -59,10 +64,10 @@ const sendPushNotifications = async (messages) => {
   // later on, but we'll handle immediate 'DeviceNotRegistered' errors here.
   const invalidTokens = [];
 
-  for (let i = 0; i < tickets.length; i++) {
-    const ticket = tickets[i];
-    if (ticket.status === 'error' && ticket.details && ticket.details.error === 'DeviceNotRegistered') {
-      invalidTokens.push(validMessages[i].to);
+  for (const { ticket, to } of tickets) {
+    if (ticket.status === 'error') {
+      console.error('[Expo Push] Rejected notification:', ticket.details?.error || 'UnknownError', ticket.message);
+      if (ticket.details?.error === 'DeviceNotRegistered') invalidTokens.push(to);
     }
   }
 

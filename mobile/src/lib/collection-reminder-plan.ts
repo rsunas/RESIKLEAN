@@ -52,7 +52,7 @@ export function buildCollectionReminderPlan(collections: UpcomingCollection[], o
       const startAt = midnight + start * 60000;
       const endAt = midnight + (end + (end < start ? 1440 : 0)) * 60000;
       // Time values (rather than list index) keep identity stable on refresh/reorder.
-      const base = `collection-reminder:v2:${encodeURIComponent(ownerId)}:${encodeURIComponent(location.trim().toLowerCase())}:${day}:${collection.wasteType}:${start}-${end}`;
+      const base = `collection-reminder:v3:${encodeURIComponent(ownerId)}:${encodeURIComponent(location.trim().toLowerCase())}:${day}:${collection.wasteType}:${start}-${end}`;
       for (const phase of ['start', 'end'] as const) {
         const id = `${base}:${phase}`;
         reminders.set(id, { id, date: collection.date, wasteType: collection.wasteType, window, phase, dueAt: phase === 'start' ? startAt : endAt, expiresAt: endAt });

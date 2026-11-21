@@ -122,10 +122,11 @@ async function main() {
     assert.equal(pending.size, 0, 'empty schedule is safe');
     reset();
     now = Date.parse('2026-11-18T06:00:00+08:00');
-    channels = [{ id: 'collection-reminders', importance: 0 }];
+    channels = [{ id: 'collection-reminders-v2', importance: 0 }];
     await reconcile();
     assert.equal(sent.length, 0, 'blocked category must not consume reminder receipts');
     assert.equal((await api.getPhoneNotificationStatus('resident')).allowed, false);
+    assert.equal(await api.ensureNotificationPermissionsAsync({ checkCollectionChannel: false }), true, 'muting collections must not block registration for announcements and complaints');
     channels[0].importance = 4;
     await reconcile();
     assert.equal(sent.length, 2, 'enabling category restores catch-up and upcoming reminders');

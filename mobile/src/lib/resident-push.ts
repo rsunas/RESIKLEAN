@@ -9,7 +9,8 @@ const TOKEN_KEY = 'resident-expo-push-token';
 
 export async function registerResidentPush(apiUrl: string, token: string) {
   if (Platform.OS === 'web' || !isDevice || Constants.appOwnership === 'expo') return;
-  if (!await ensureNotificationPermissionsAsync()) return;
+  // Muting collection reminders must not prevent registration for other updates.
+  if (!await ensureNotificationPermissionsAsync({ checkCollectionChannel: false })) return;
   const projectId = Constants.expoConfig?.extra?.eas?.projectId || Constants.easConfig?.projectId;
   if (!projectId) throw new Error('Push notifications need an EAS project ID.');
   const { default: getExpoPushTokenAsync } = await import('expo-notifications/build/getExpoPushTokenAsync');

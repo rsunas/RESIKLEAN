@@ -1,4 +1,3 @@
-import { PhoneNotificationControls } from '@/components/phone-notification-controls';
 import { AppSelect } from '@/components/app-select';
 import { WASTE_CATEGORY_OPTIONS, wasteCategoryLabel } from '@/lib/waste-categories';
 import { useNetworkRecovery } from '@/hooks/use-network-recovery';
@@ -534,8 +533,21 @@ export default function ResidentScreen() {
   const [showAllUpcoming, setShowAllUpcoming] = useState(false);
   const [session, setSession] = useState<AuthSession | null>(null);
   useEffect(() => {
-    if (API_URL && session?.token) void registerResidentPush(API_URL, session.token)
-      .catch(error => console.warn('Resident push registration failed:', error instanceof Error ? error.message : 'Unknown error'));
+    const apiUrl = API_URL;
+    const token = session?.token;
+    if (!apiUrl || !token) return;
+    let running = false;
+    const register = async () => {
+      if (running || AppState.currentState !== 'active') return;
+      running = true;
+      try { await registerResidentPush(apiUrl, token); }
+      catch (error) { console.warn('Resident push registration failed:', error instanceof Error ? error.message : 'Unknown error'); }
+      finally { running = false; }
+    };
+    void register();
+    const subscription = AppState.addEventListener('change', state => { if (state === 'active') void register(); });
+    const retry = setInterval(() => { void register(); }, 5 * 60 * 1000);
+    return () => { subscription.remove(); clearInterval(retry); };
   }, [session?.token, networkRevision]);
   const [schedule, setSchedule] = useState<ScheduleData | null>(null);
   const [isLoadingSchedule, setIsLoadingSchedule] = useState(false);
@@ -882,8 +894,8 @@ export default function ResidentScreen() {
       const reportId = normalizeId(payload.reportId);
       const selectedId = selectedReportIdRef.current;
       if (!reportId || !payload.message) return;
-      if (activeTab !== 'report' || !selectedId || reportId !== selectedId) {
-        const key = `${reportId}:${normalizeId(payload.message._id || payload.message.id) || payload.message.createdAt || ''}`;
+      if (payload.message.senderRole !== 'resident' && (activeTab !== 'report' || !selectedId || reportId !== selectedId)) {
+        const key = `${reportId}:${normalizeId(payload.message._id) || payload.message.createdAt || ''}`;
         if (!countedComplaintUpdatesRef.current.has(key)) {
           countedComplaintUpdatesRef.current.add(key);
           setUnreadComplaints(current => current + 1);
@@ -1478,7 +1490,6 @@ export default function ResidentScreen() {
 
   const homeScreen = (
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-      <PhoneNotificationControls role="resident" />
       <HomeSectionLabel first label="Next collection" />
       {isLoadingSchedule && schedule ? <ActivityIndicator accessibilityLabel="Loading" color="#0A7F4F" /> : null}
       <SkeletonRegion state={scheduleSkeleton} placeholder={<View style={styles.nextCollectionSkeleton}><SkeletonBlock height={170} radius={24} /></View>}>
@@ -1691,9 +1702,9 @@ const styles = StyleSheet.create({
   heroWastePill: { backgroundColor: 'rgba(13,46,39,0.45)' },
   heroWasteText: { color: '#FFFFFF', fontSize: 14 },
   newComplaintFooter: { backgroundColor: '#FFFFFF', paddingHorizontal: 20, paddingVertical: 12 },
-  navIcon: { width: 56, height: 32, borderRadius: 16, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
-  navBadge: { position: 'absolute', right: -8, top: -7, minWidth: 17, height: 17, borderRadius: 9, backgroundColor: '#C92E3D', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3 },
-  navBadgeText: { color: '#FFFFFF', fontSize: 10, fontWeight: '800' },
+  navIcon: { width: 56, height: 32, overflow: 'visible', alignItems: 'center', justifyContent: 'center' },
+  navBadge: { position: 'absolute', right: 0, top: 0, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: '#C92E3D', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3, zIndex: 1 },
+  navBadgeText: { color: '#FFFFFF', fontSize: 10, lineHeight: 12, includeFontPadding: false, fontWeight: '800' },
   navIconActive: { backgroundColor: '#E3F4EB' },
   safeArea: { flex: 1, backgroundColor: '#FFFFFF' },
   residentHeader: { backgroundColor: '#FFFFFF' },

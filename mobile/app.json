@@ -12,10 +12,12 @@
     },
     "android": {
       "package": "com.resiklean.mobile",
+      "googleServicesFile": "./google-services.json",
       "predictiveBackGestureEnabled": false,
       "largeHeap": true,
       "permissions": [
-        "android.permission.CAMERA"
+        "android.permission.CAMERA",
+        "android.permission.POST_NOTIFICATIONS"
       ]
     },
     "web": {
@@ -48,7 +50,7 @@
       [
         "expo-notifications",
         {
-          "defaultChannel": "collection-reminders",
+          "defaultChannel": "collection-reminders-v2",
           "color": "#07815f"
         }
       ],

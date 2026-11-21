@@ -15,8 +15,12 @@ import { buildCollectionReminderPlan, shouldScheduleReminder } from './collectio
 import { Platform } from 'react-native';
 import type { UpcomingCollection } from '@/types/resident-schedule';
 
-export const COLLECTION_NOTIFICATION_CHANNEL_ID = 'collection-reminders';
-const COLLECTION_REMINDER_PREFIX = 'collection-reminder:';
+export const COLLECTION_NOTIFICATION_CHANNEL_ID = 'collection-reminders-v2';
+export const ANNOUNCEMENT_NOTIFICATION_CHANNEL_ID = 'announcements';
+export const COMPLAINT_NOTIFICATION_CHANNEL_ID = 'complaint-updates';
+const COLLECTION_REMINDER_PREFIX = 'collection-reminder:v3:';
+const LEGACY_COLLECTION_REMINDER_PREFIX = 'collection-reminder:v2:';
+const isCollectionReminderIdentifier = (identifier: string) => identifier.startsWith(COLLECTION_REMINDER_PREFIX) || identifier.startsWith(LEGACY_COLLECTION_REMINDER_PREFIX);
 
 export function setAppNotificationBadgeCount(count: number) {
   if (Platform.OS === 'web') return Promise.resolve(false);
@@ -34,7 +38,7 @@ setNotificationHandler({
 });
 
 let requestedPermission = false;
-export async function ensureNotificationPermissionsAsync({ requestAgain = false }: { requestAgain?: boolean } = {}): Promise<boolean> {
+export async function ensureNotificationPermissionsAsync({ requestAgain = false, checkCollectionChannel = true }: { requestAgain?: boolean; checkCollectionChannel?: boolean } = {}): Promise<boolean> {
   if (Platform.OS === 'web') return false;
   try {
     if (Platform.OS === 'android') {
@@ -47,6 +51,12 @@ export async function ensureNotificationPermissionsAsync({ requestAgain = false 
         showBadge: true,
         enableVibrate: true,
       });
+      for (const [id, name] of [[ANNOUNCEMENT_NOTIFICATION_CHANNEL_ID, 'Announcements'], [COMPLAINT_NOTIFICATION_CHANNEL_ID, 'Complaint updates']]) {
+        await setNotificationChannelAsync(id, {
+          name, importance: AndroidImportance.HIGH, sound: 'default',
+          showBadge: true, enableVibrate: true,
+        });
+      }
     }
 
     const permission = await getPermissionsAsync();
@@ -59,7 +69,7 @@ export async function ensureNotificationPermissionsAsync({ requestAgain = false 
     if (!granted) return false;
     // App permission and channel permission are separate on Android. Do not
     // mark reminders as scheduled while their channel is disabled by the user.
-    if (Platform.OS === 'android') {
+    if (Platform.OS === 'android' && checkCollectionChannel) {
       const channels = await getNotificationChannelsAsync();
       if (channels.some(channel => channel.id === COLLECTION_NOTIFICATION_CHANNEL_ID && channel.importance === AndroidImportance.NONE)) return false;
     }
@@ -91,7 +101,7 @@ async function cancelReminders() {
   const receipts = await readReceipts();
   const now = Date.now();
   for (const notification of await getAllScheduledNotificationsAsync()) {
-    if (!notification.identifier.startsWith(COLLECTION_REMINDER_PREFIX)) continue;
+    if (!isCollectionReminderIdentifier(notification.identifier)) continue;
     await cancelScheduledNotificationAsync(notification.identifier);
     if (receipts[notification.identifier] > now) delete receipts[notification.identifier];
   }
@@ -131,7 +141,7 @@ export function scheduleCollectionReminders(collections: UpcomingCollection[], l
     const pending = new Set<string>();
     for (const notification of scheduled) {
       const id = notification.identifier;
-      if (!id.startsWith(COLLECTION_REMINDER_PREFIX)) continue;
+      if (!isCollectionReminderIdentifier(id)) continue;
       if (!wanted.has(id)) {
         await cancelScheduledNotificationAsync(id);
         if (receipts[id] > now) delete receipts[id];
@@ -142,7 +152,7 @@ export function scheduleCollectionReminders(collections: UpcomingCollection[], l
     await Storage.setItem(RECEIPTS_KEY, JSON.stringify(receipts));
     let count = 0;
     // Reserve room for other notifications under the iOS pending notification limit.
-    let slots = Math.max(0, 60 - scheduled.filter(item => !item.identifier.startsWith(COLLECTION_REMINDER_PREFIX) || pending.has(item.identifier)).length);
+    let slots = Math.max(0, 60 - scheduled.filter(item => !isCollectionReminderIdentifier(item.identifier) || pending.has(item.identifier)).length);
     for (const reminder of plan) {
       if (!shouldScheduleReminder(reminder, now, receipts[reminder.id], pending.has(reminder.id))) continue;
       const immediate = reminder.dueAt <= now;
@@ -191,7 +201,7 @@ export async function getPhoneNotificationStatus(role: 'resident' | 'driver', tr
   if (role === 'driver') return { allowed: true, channelId: channel?.id, message: tracking
     ? 'Trip recording is enabled. Its notification may appear under silent notifications.'
     : 'Start a trip to show the GPS recording notification.' };
-  const pending = (await getAllScheduledNotificationsAsync()).filter(item => item.identifier.startsWith(COLLECTION_REMINDER_PREFIX)).length;
+  const pending = (await getAllScheduledNotificationsAsync()).filter(item => isCollectionReminderIdentifier(item.identifier)).length;
   return { allowed: true, channelId: channel?.id, message: pending
     ? `${pending} collection reminders scheduled on this phone.`
     : 'No upcoming reminders scheduled. Check your collection schedule and reminder settings.' };
