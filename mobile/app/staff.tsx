@@ -342,6 +342,7 @@ function auditPhotoMetadata(photo: AuditPhoto) {
 }
 
 function AuditPhotoField({ disabled, label, loading, onPress, photo }: { disabled: boolean; label: string; loading?: boolean; onPress: () => void; photo: AuditPhoto | null }) {
+  const isDarkTheme = useAppTheme() === 'dark';
   return (
     <View style={styles.photoSlot}>
       <Pressable
@@ -349,7 +350,7 @@ function AuditPhotoField({ disabled, label, loading, onPress, photo }: { disable
         accessibilityRole="button"
         disabled={disabled}
         onPress={onPress}
-        style={[styles.photoField, photo && styles.photoFieldAttached, disabled && styles.photoFieldDisabled]}>
+        style={[styles.photoField, isDarkTheme && { backgroundColor: '#192A22', borderColor: '#2D4438' }, photo && styles.photoFieldAttached, disabled && styles.photoFieldDisabled]}>
         {photo ? (
           <ExpoImage
             accessibilityLabel={`${label} proof photo attached`}
@@ -360,15 +361,15 @@ function AuditPhotoField({ disabled, label, loading, onPress, photo }: { disable
           />
         ) : null}
         <View style={[styles.photoOverlay, photo && styles.photoOverlayAttached]}>
-          <View style={[styles.cameraBadge, photo && styles.cameraBadgeAttached, loading && styles.cameraBadgeLoading]}>
+          <View style={[styles.cameraBadge, isDarkTheme && { backgroundColor: '#21372C' }, photo && styles.cameraBadgeAttached, loading && styles.cameraBadgeLoading]}>
             {loading
               ? <ActivityIndicator color="#07815f" size="small" />
               : <Feather color={photo ? '#ffffff' : '#07815f'} name={photo ? 'check' : 'camera'} size={21} />}
           </View>
-          <Text style={[styles.photoTitle, photo && styles.photoOverlayTitle]}>
+          <Text style={[styles.photoTitle, isDarkTheme && { color: '#F1F6F3' }, photo && styles.photoOverlayTitle]}>
             {loading ? `Opening camera...` : photo ? `${label} photo attached` : `Capture ${label} photo`}
           </Text>
-          <Text style={[styles.photoCaption, photo && styles.photoCaptionAttached]}>{photo ? `${formatFileSize(photo.size)} · Ready` : 'JPEG, PNG or WebP · 5 MB max'}</Text>
+          <Text style={[styles.photoCaption, isDarkTheme && { color: '#B4C4BB' }, photo && styles.photoCaptionAttached]}>{photo ? `${formatFileSize(photo.size)} · Ready` : 'JPEG, PNG or WebP · 5 MB max'}</Text>
         </View>
       </Pressable>
     </View>
@@ -376,17 +377,19 @@ function AuditPhotoField({ disabled, label, loading, onPress, photo }: { disable
 }
 
 function SelectField({ disabled = false, loading = false, error, icon, label, onChange, options, placeholder, value }: { disabled?: boolean; loading?: boolean; error?: string; icon: 'truck' | 'map-pin' | 'user' | 'trending-up'; label: string; onChange: (value: string) => void; options: AppSelectOption[]; placeholder: string; value: string }) {
+  const isDarkTheme = useAppTheme() === 'dark';
   const skeleton = useSkeletonVisible(loading, options.length > 0, error);
-  return <SkeletonRegion state={skeleton} placeholder={<View style={styles.selectSkeleton}><Text style={styles.measurementLabel}>{label}</Text><SkeletonBlock height={56} radius={16} /></View>}><StaffSearchSelect disabled={disabled} leadingIcon={icon} label={label} onChange={onChange} options={options} placeholder={placeholder} value={value} /></SkeletonRegion>;
+  return <SkeletonRegion state={skeleton} placeholder={<View style={styles.selectSkeleton}><Text style={[styles.measurementLabel, isDarkTheme && { color: '#B4C4BB' }]}>{label}</Text><SkeletonBlock height={56} radius={16} /></View>}><StaffSearchSelect disabled={disabled} leadingIcon={icon} label={label} onChange={onChange} options={options} placeholder={placeholder} value={value} /></SkeletonRegion>;
 }
 
 function MeasurementField({ label, value }: { label: string; value: string }) {
+  const isDarkTheme = useAppTheme() === 'dark';
   return (
     <View style={styles.measurementField}>
-      <Text style={styles.measurementLabel}>{label}</Text>
-      <View style={styles.measurementInputWrap}>
-        <Feather color="#95a49d" name="lock" size={12} />
-        <Text accessibilityLabel={`${label}, locked`} style={styles.measurementValue}>{value || '—'}</Text>
+      <Text style={[styles.measurementLabel, isDarkTheme && { color: '#B4C4BB' }]}>{label}</Text>
+      <View style={[styles.measurementInputWrap, isDarkTheme && { backgroundColor: '#192A22' }]}>
+        <Feather color={isDarkTheme ? '#85DCB0' : '#95a49d'} name="lock" size={12} />
+        <Text accessibilityLabel={`${label}, locked`} style={[styles.measurementValue, isDarkTheme && { color: '#F1F6F3' }]}>{value || '—'}</Text>
       </View>
     </View>
   );
@@ -394,6 +397,8 @@ function MeasurementField({ label, value }: { label: string; value: string }) {
 
 function BottomNavigation({ activeTab, onChange }: { activeTab: Tab; onChange: (tab: Tab) => void }) {
   const insets = useSafeAreaInsets();
+  const appTheme = useAppTheme();
+  const isDark = appTheme === 'dark';
   const pill = useSlidingTabPill(activeTab);
   const items: { key: Tab; label: string; icon: 'clipboard' | 'activity' | 'user' }[] = [
     { key: 'input', label: 'Input', icon: 'clipboard' },
@@ -402,7 +407,7 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: Tab; onChange: (
   ];
 
   return (
-    <View style={[styles.bottomNav, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+    <View style={[styles.bottomNav, isDark && { backgroundColor: '#0D1914', borderTopColor: '#203228' }, { paddingBottom: Math.max(insets.bottom, 8) }]}>
       {pill.indicator}
       {items.map((item) => {
         const active = activeTab === item.key;
@@ -418,7 +423,7 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: Tab; onChange: (
             <View onLayout={(event) => pill.iconLayout(item.key, event)} collapsable={false} style={styles.navIcon}>
               <Feather color={active ? '#086B42' : '#5A6761'} name={item.icon} size={21} />
             </View>
-            <Text style={[styles.navLabel, active && styles.navLabelActive]}>{item.label}</Text>
+            <Text style={[styles.navLabel, isDark && { color: '#B4C4BB' }, active && (isDark ? { color: '#85DCB0' } : styles.navLabelActive)]}>{item.label}</Text>
           </Pressable>
         );
       })}
@@ -1240,8 +1245,8 @@ export default function StaffScreen() {
 
   const renderInput = () => (
     <ScrollView contentContainerStyle={styles.inputScrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-      <Text style={styles.inputEyebrow}>NEW MEASUREMENT</Text>
-      <Text style={styles.inputTitle}>Volumetric Input</Text>
+      <Text style={[styles.inputEyebrow, isDarkTheme && { color: '#85DCB0' }]}>NEW MEASUREMENT</Text>
+      <Text style={[styles.inputTitle, isDarkTheme && { color: '#F1F6F3' }]}>Volumetric Input</Text>
       {isOffline && (
         <View style={styles.offlineBanner}>
           <Feather color="#5C3B00" name="wifi-off" size={18} />
@@ -1268,7 +1273,7 @@ export default function StaffScreen() {
           </Pressable>
       </View>}
       <View>
-        <Text style={styles.formSectionTitle}>Load details</Text>
+        <Text style={[styles.formSectionTitle, isDarkTheme && { color: '#F1F6F3' }]}>Load details</Text>
         <SelectField
           loading={isLoadingTrucks}
           error={truckLoadError}
@@ -1319,43 +1324,41 @@ export default function StaffScreen() {
         />
         {driverLoadError && drivers.length === 0 ? <Text style={styles.truckLoadError}>{driverLoadError}</Text> : null}
 
-        <Text style={[styles.formSectionTitle, styles.sectionSpacing]}>Height of pile</Text>
-        <View style={styles.modeSelector}>
+        <Text style={[styles.formSectionTitle, styles.sectionSpacing, isDarkTheme && { color: '#F1F6F3' }]}>Height of pile</Text>
+        <View style={[styles.modeSelector, isDarkTheme && { backgroundColor: '#192A22' }]}>
           {([['three-point', '3-Point Height (cm)'], ['single-pile', 'Single Pile Height (m)']] as const).map(([mode, label]) => (
             <Pressable key={mode} onPress={() => { setMeasurementMode(mode); setTonnagePreview(null); }} style={[styles.modeOption, measurementMode === mode && styles.modeOptionSelected]}>
-              <Text style={[styles.modeOptionText, measurementMode === mode && styles.modeOptionTextSelected]}>{label}</Text>
+              <Text style={[styles.modeOptionText, isDarkTheme && { color: '#B4C4BB' }, measurementMode === mode && styles.modeOptionTextSelected]}>{label}</Text>
             </Pressable>
           ))}
         </View>
-        <Text style={styles.helperText}>{measurementMode === 'three-point' ? 'Measure total pile height from the truck bed floor in centimetres.' : 'Enter the extra mound height above the truck wall height in metres.'}</Text>
+        <Text style={[styles.helperText, isDarkTheme && { color: '#B4C4BB' }]}>{measurementMode === 'three-point' ? 'Measure total pile height from the truck bed floor in centimetres.' : 'Enter the extra mound height above the truck wall height in metres.'}</Text>
         {measurementMode === 'three-point' ? <View style={styles.measurementRow}>
           {(['front', 'middle', 'back'] as const).map(position => (
             <View key={position} style={styles.measurementField}>
-              <Text style={styles.measurementLabel}>{position[0].toUpperCase() + position.slice(1)} (cm)</Text>
+              <Text style={[styles.measurementLabel, isDarkTheme && { color: '#B4C4BB' }]}>{position[0].toUpperCase() + position.slice(1)} (cm)</Text>
               <TextInput accessibilityLabel={`${position} pile height in centimetres`} keyboardType="decimal-pad"
-                value={pileHeights[position]} placeholder="0" style={[styles.notesInput, { minHeight: 48 }]}
+                value={pileHeights[position]} placeholder="0" placeholderTextColor={isDarkTheme ? '#5A6761' : undefined} style={[styles.notesInput, { minHeight: 48 }, isDarkTheme && { backgroundColor: '#21372C', color: '#F1F6F3' }]}
                 onChangeText={value => { setPileHeights(current => ({ ...current, [position]: value })); setTonnagePreview(null); }} />
             </View>
           ))}
-        </View> : <View style={styles.fieldGroup}><Text style={styles.measurementLabel}>Pile Height (m)</Text><TextInput accessibilityLabel="pile height in metres" keyboardType="decimal-pad" value={pileHeightM} onChangeText={value => { setPileHeightM(value); setTonnagePreview(null); }} placeholder="0" style={styles.notesInput} /></View>}
-        <Text style={[styles.formSectionTitle, styles.sectionSpacing]}>Measurements</Text>
+        </View> : <View style={styles.fieldGroup}><Text style={[styles.measurementLabel, isDarkTheme && { color: '#B4C4BB' }]}>Pile Height (m)</Text><TextInput accessibilityLabel="pile height in metres" keyboardType="decimal-pad" value={pileHeightM} onChangeText={value => { setPileHeightM(value); setTonnagePreview(null); }} placeholder="0" placeholderTextColor={isDarkTheme ? '#5A6761' : undefined} style={[styles.notesInput, isDarkTheme && { backgroundColor: '#21372C', color: '#F1F6F3' }]} /></View>}
+        <Text style={[styles.formSectionTitle, styles.sectionSpacing, isDarkTheme && { color: '#F1F6F3' }]}>Measurements</Text>
         <View style={styles.measurementRow}>
           <MeasurementField label="Length (m)" value={length} />
           <MeasurementField label="Width (m)" value={width} />
           <MeasurementField label="Height (m)" value={height} />
         </View>
-        <Text style={styles.helperText}>{selectedTruck ? `Dimensions are locked to the admin registration for ${truckPlate}.` : 'Register a truck in the dashboard, then reopen this screen to select it.'}</Text>
-
-
+        <Text style={[styles.helperText, isDarkTheme && { color: '#B4C4BB' }]}>{selectedTruck ? `Dimensions are locked to the admin registration for ${truckPlate}.` : 'Register a truck in the dashboard, then reopen this screen to select it.'}</Text>
 
         <Pressable
           accessibilityLabel="Calculate estimated tonnage"
           accessibilityRole="button"
           disabled={!selectedTruck}
           onPress={previewTonnage}
-          style={[styles.calculateButton, !selectedTruck && styles.calculateButtonDisabled]}>
-          <MaterialCommunityIcons color={selectedTruck ? '#07815f' : '#91a19a'} name="calculator-variant-outline" size={20} />
-          <Text style={[styles.calculateButtonLabel, !selectedTruck && styles.calculateButtonLabelDisabled]}>Calculate Tonnage</Text>
+          style={[styles.calculateButton, isDarkTheme && { backgroundColor: '#192A22' }, !selectedTruck && styles.calculateButtonDisabled]}>
+          <MaterialCommunityIcons color={selectedTruck ? (isDarkTheme ? '#85DCB0' : '#07815f') : '#91a19a'} name="calculator-variant-outline" size={20} />
+          <Text style={[styles.calculateButtonLabel, isDarkTheme && { color: '#85DCB0' }, !selectedTruck && styles.calculateButtonLabelDisabled]}>Calculate Tonnage</Text>
         </Pressable>
 
         {message === 'Select a truck with complete registered dimensions before calculating tonnage.' ? (
@@ -1365,11 +1368,11 @@ export default function StaffScreen() {
           </View>
         ) : null}
         {tonnagePreview ? (
-          <View accessibilityRole="summary" style={styles.tonnagePreview}>
+          <View accessibilityRole="summary" style={[styles.tonnagePreview, isDarkTheme && { backgroundColor: '#192A22' }]}>
             <View style={styles.tonnagePreviewDetails}>
               <Text style={styles.tonnagePreviewLabel}>ESTIMATED TONNAGE</Text>
-              <Text style={styles.tonnagePreviewValue}>{formatTonnage(tonnagePreview.tonnes).replace(/ t$/, '')}<Text style={styles.tonnageUnit}> t</Text></Text>
-              <Text style={styles.tonnagePreviewFormula}>{tonnagePreview.measurementMode === 'three-point'
+              <Text style={[styles.tonnagePreviewValue, isDarkTheme && { color: '#85DCB0' }]}>{formatTonnage(tonnagePreview.tonnes).replace(/ t$/, '')}<Text style={styles.tonnageUnit}> t</Text></Text>
+              <Text style={[styles.tonnagePreviewFormula, isDarkTheme && { color: '#B4C4BB' }]}>{tonnagePreview.measurementMode === 'three-point'
                 ? `Average height ${tonnagePreview.avgHeightM?.toFixed(2)} m · Total volume ${tonnagePreview.totalVolumeM3.toFixed(2)} m³ × 294 kg/m³`
                 : `Base ${tonnagePreview.baseVolumeM3.toFixed(2)} m³ + slope ${tonnagePreview.slopeCubicM.toFixed(2)} m³ = ${tonnagePreview.totalVolumeM3.toFixed(2)} m³ × 294 kg/m³`}</Text>
             </View>
@@ -1377,8 +1380,8 @@ export default function StaffScreen() {
         ) : null}
 
         <View style={styles.fieldGroup}>
-          <Text style={styles.formSectionTitle}>Proof photos (optional)</Text>
-          <Text style={styles.photoInstruction}>Submit the original images. They will not be cropped before upload.</Text>
+          <Text style={[styles.formSectionTitle, isDarkTheme && { color: '#F1F6F3' }]}>Proof photos (optional)</Text>
+          <Text style={[styles.photoInstruction, isDarkTheme && { color: '#B4C4BB' }]}>Submit the original images. They will not be cropped before upload.</Text>
           <View style={[styles.photoRow, fontScale > 1.3 && { flexDirection: 'column' }]}>
           <AuditPhotoField
             disabled={isSubmitting || isOpeningAuditCamera}
@@ -1398,14 +1401,14 @@ export default function StaffScreen() {
         </View>
 
         <View style={styles.fieldGroup}>
-          <Text style={[styles.formSectionTitle, { marginBottom: 12 }]}>Notes</Text>
+          <Text style={[styles.formSectionTitle, isDarkTheme && { color: '#F1F6F3' }, { marginBottom: 12 }]}>Notes</Text>
           <TextInput
             accessibilityLabel="Notes"
             multiline
             onChangeText={setNotes}
             placeholder="Add an observation about this load"
             placeholderTextColor="#5A6761"
-            style={styles.notesInput}
+            style={[styles.notesInput, isDarkTheme && { backgroundColor: '#21372C', color: '#F1F6F3' }]}
             textAlignVertical="top"
             value={notes}
           />
@@ -1423,8 +1426,8 @@ export default function StaffScreen() {
   const renderHistory = () => (
     <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.historyScrollContent} showsVerticalScrollIndicator={false}>
       <View style={styles.historyTitleRow}>
-        <Text style={styles.historyPageTitle}>Submission history</Text>
-        <Text style={styles.recordCount}>{historyLoading ? 'Loading…' : `${visibleHistory.length < history.length ? `${visibleHistory.length} of ` : ''}${history.length} ${history.length === 1 ? 'record' : 'records'}`}</Text>
+        <Text style={[styles.historyPageTitle, isDarkTheme && { color: '#F1F6F3' }]}>Submission history</Text>
+        <Text style={[styles.recordCount, isDarkTheme && { color: '#B4C4BB' }]}>{historyLoading ? 'Loading…' : `${visibleHistory.length < history.length ? `${visibleHistory.length} of ` : ''}${history.length} ${history.length === 1 ? 'record' : 'records'}`}</Text>
       </View>
 
       {pendingSync > 0 && (
@@ -1481,18 +1484,18 @@ export default function StaffScreen() {
           key={submission.id}
           onPress={() => setSelectedSubmission(submission)}
           style={styles.historyCardPressable}>
-          <View style={styles.historyCard}>
+          <View style={[styles.historyCard, isDarkTheme && { backgroundColor: '#192A22' }]}>
             <View style={styles.historyTopRow}>
               <View style={styles.historyMain}>
-                <NativeText numberOfLines={1} ellipsizeMode="tail" style={[styles.historyBarangay, (!submission.barangay || submission.barangay === 'No area assigned') && styles.historyMissingArea]}>{submission.barangay || 'No area assigned'}</NativeText>
-                <NativeText numberOfLines={1} ellipsizeMode="tail" style={styles.historyDriver}>{submission.driver} · {submission.submittedAt}{submission.status === 'Pending' ? ' · Pending sync' : ''}</NativeText>
+                <NativeText numberOfLines={1} ellipsizeMode="tail" style={[styles.historyBarangay, isDarkTheme && { color: '#F1F6F3' }, (!submission.barangay || submission.barangay === 'No area assigned') && styles.historyMissingArea]}>{submission.barangay || 'No area assigned'}</NativeText>
+                <NativeText numberOfLines={1} ellipsizeMode="tail" style={[styles.historyDriver, isDarkTheme && { color: '#B4C4BB' }]}>{submission.driver} · {submission.submittedAt}{submission.status === 'Pending' ? ' · Pending sync' : ''}</NativeText>
               </View>
               <View style={styles.historyRight}>
                 <NativeText numberOfLines={1} style={styles.tonnage}>{formatHistoryTonnage(submission.tonnes)}</NativeText>
-                <Feather color="#5A6761" name="chevron-right" size={20} />
+                <Feather color={isDarkTheme ? '#85DCB0' : '#5A6761'} name="chevron-right" size={20} />
               </View>
             </View>
-            <View style={styles.historyMeasurements}>
+            <View style={[styles.historyMeasurements, isDarkTheme && { borderTopColor: '#203228' }]}>
               {[
                 ['Pile volume', submission.slope],
                 ['Length', `${submission.length} m`],
@@ -1500,9 +1503,9 @@ export default function StaffScreen() {
                 ['Height', `${submission.height} m`],
               ].map(([label, value]) => (
                 <View key={label} style={styles.historyMeasurementColumn}>
-                  <NativeText numberOfLines={1} style={styles.historyMeasurementLabel}>{label}</NativeText>
+                  <NativeText numberOfLines={1} style={[styles.historyMeasurementLabel, isDarkTheme && { color: '#B4C4BB' }]}>{label}</NativeText>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.historyNumberScroll}>
-                    <NativeText accessibilityLabel={`${label}: ${value}`} numberOfLines={1} style={styles.historyMeasurementValue}>{value}</NativeText>
+                    <NativeText accessibilityLabel={`${label}: ${value}`} numberOfLines={1} style={[styles.historyMeasurementValue, isDarkTheme && { color: '#F1F6F3' }]}>{value}</NativeText>
                   </ScrollView>
                 </View>
               ))}
@@ -1548,7 +1551,7 @@ export default function StaffScreen() {
         </SkeletonRegion>
 
         <View style={styles.accountCard}>
-          <Text style={styles.accountHeading}>Account details</Text>
+          <Text style={[styles.accountHeading, isDarkTheme && { color: '#F1F6F3' }]}>Account details</Text>
           <SkeletonRegion state={profileSkeleton} placeholder={<SkeletonRows kind="account" count={4} />}>
           {profileError ? <Text accessibilityRole="alert" style={styles.dataError}>{profileError}</Text> : null}
           {profile || !profileError ? <>
@@ -1560,7 +1563,7 @@ export default function StaffScreen() {
           </SkeletonRegion>
         </View>
 
-        <Pressable accessibilityRole="button" onPress={() => setEditingProfile(true)} style={{ minHeight: 56, borderRadius: 16, backgroundColor: '#E3F4EB', flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, marginTop: 20 }}><Feather name="edit-2" size={20} color="#086B42"/><Text style={{ color: '#086B42', fontSize: 16, fontWeight: '600' }}>Edit profile</Text></Pressable>
+        <Pressable accessibilityRole="button" onPress={() => setEditingProfile(true)} style={[{ minHeight: 56, borderRadius: 16, backgroundColor: '#E3F4EB', flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, marginTop: 20 }, isDarkTheme && { backgroundColor: '#192A22' }]}><Feather name="edit-2" size={20} color={isDarkTheme ? '#85DCB0' : '#086B42'}/><Text style={{ color: isDarkTheme ? '#85DCB0' : '#086B42', fontSize: 16, fontWeight: '600' }}>Edit profile</Text></Pressable>
         <ProfileSettingsRow onSignOut={completeSignOut} />
         <Pressable accessibilityRole="button" onPress={signOut} style={styles.signOutButton}>
           <Feather color="#B3261E" name="log-out" size={20} />
@@ -1584,12 +1587,12 @@ export default function StaffScreen() {
   return (
     <SafeAreaView edges={['left', 'right']} style={[styles.safeArea, isDarkTheme && { backgroundColor: '#101815' }]}>
       <StatusBar backgroundColor={isDarkTheme ? '#101815' : '#ffffff'} style={isDarkTheme ? 'light' : 'dark'} translucent={false} />
-        <View style={[styles.header, { paddingTop: insets.top }]}>
+        <View style={[styles.header, isDarkTheme && { backgroundColor: '#101815' }, { paddingTop: insets.top }]}>
           <View style={styles.brandHeader}>
             <BrandMark height={48} width={150} />
             <View style={styles.headerCopy}>
-              <NativeText numberOfLines={1} ellipsizeMode="tail" adjustsFontSizeToFit style={styles.headerTitle}>{profile?.role ? formatRole(profile.role) : 'Staff'}</NativeText>
-              <NativeText numberOfLines={1} ellipsizeMode="tail" adjustsFontSizeToFit style={styles.headerSubtitle}>Tonnage Audit</NativeText>
+              <NativeText numberOfLines={1} ellipsizeMode="tail" adjustsFontSizeToFit style={[styles.headerTitle, isDarkTheme && { color: '#F1F6F3' }]}>{profile?.role ? formatRole(profile.role) : 'Staff'}</NativeText>
+              <NativeText numberOfLines={1} ellipsizeMode="tail" adjustsFontSizeToFit style={[styles.headerSubtitle, isDarkTheme && { color: '#B4C4BB' }]}>Tonnage Audit</NativeText>
             </View>
           </View>
         </View>
@@ -1608,15 +1611,16 @@ export default function StaffScreen() {
 }
 
 function ProfileAccountRow({ icon, label, value, last = false }: { icon: 'id-card' | 'phone' | 'mail' | 'map-pin' | 'clock'; label: string; value: string; last?: boolean }) {
+  const isDarkTheme = useAppTheme() === 'dark';
   const placeholder = value === 'Not provided' || value === 'Not assigned';
   return (
-    <View style={[styles.profileAccountRow, last && { borderBottomWidth: 0 }]}>
-      <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.profileAccountIcon}>
+    <View style={[styles.profileAccountRow, isDarkTheme && { borderBottomColor: '#203228' }, last && { borderBottomWidth: 0 }]}>
+      <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.profileAccountIcon, isDarkTheme && { backgroundColor: '#21372C' }]}>
         {icon === 'id-card' ? <MaterialCommunityIcons name="card-account-details-outline" size={20} color="#0A7F4F" /> : <Feather name={icon} size={20} color="#0A7F4F" />}
       </View>
       <View style={styles.profileAccountCopy}>
-        <Text style={styles.profileAccountLabel}>{label}</Text>
-        <Text style={[styles.profileAccountValue, placeholder && styles.profileAccountPlaceholder]}>{value}</Text>
+        <Text style={[styles.profileAccountLabel, isDarkTheme && { color: '#B4C4BB' }]}>{label}</Text>
+        <Text style={[styles.profileAccountValue, isDarkTheme && { color: '#F1F6F3' }, placeholder && styles.profileAccountPlaceholder]}>{value}</Text>
       </View>
     </View>
   );

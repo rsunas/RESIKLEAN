@@ -418,6 +418,8 @@ function RealtimeStatus({ status }: { status: SocketStatus }) {
 
 function BottomNavigation({ activeTab, onChange, unreadAnnouncements = 0, unreadComplaints = 0 }: { activeTab: ResidentTab; onChange: (tab: ResidentTab) => void; unreadAnnouncements?: number; unreadComplaints?: number }) {
   const insets = useSafeAreaInsets();
+  const appTheme = useAppTheme();
+  const isDark = appTheme === 'dark';
   const pill = useSlidingTabPill(activeTab);
   const tabs = [
     { key: 'home' as const, label: 'Home', icon: House },
@@ -427,15 +429,15 @@ function BottomNavigation({ activeTab, onChange, unreadAnnouncements = 0, unread
   ];
 
   return (
-    <View style={[styles.bottomNav, { minHeight: 78 + insets.bottom, paddingBottom: insets.bottom }]}>
+    <View style={[styles.bottomNav, isDark && { backgroundColor: '#0D1914', borderTopColor: '#203228' }, { minHeight: 78 + insets.bottom, paddingBottom: insets.bottom }]}>
       {pill.indicator}
       {tabs.map((tab) => {
         const active = activeTab === tab.key;
         const Icon = tab.icon;
         return (
           <Pressable motionDisabled onLayout={(event) => pill.itemLayout(tab.key, event)} accessibilityRole="tab" accessibilityState={{ selected: active }} key={tab.key} onPress={() => onChange(tab.key)} style={styles.navItem}>
-            <View onLayout={(event) => pill.iconLayout(tab.key, event)} style={styles.navIcon}><Icon color={active ? '#086B42' : '#5A6761'} size={22} strokeWidth={1.8} />{tab.key === 'schedule' && unreadAnnouncements > 0 ? <View style={styles.navBadge}><Text style={styles.navBadgeText}>{unreadAnnouncements > 99 ? '99+' : unreadAnnouncements}</Text></View> : null}{tab.key === 'report' && unreadComplaints > 0 ? <View style={styles.navBadge}><Text style={styles.navBadgeText}>{unreadComplaints > 99 ? '99+' : unreadComplaints}</Text></View> : null}</View>
-            <Text style={[styles.navText, active && styles.navTextActive]}>{tab.label}</Text>
+            <View onLayout={(event) => pill.iconLayout(tab.key, event)} style={styles.navIcon}><Icon color={active ? (isDark ? '#85DCB0' : '#086B42') : (isDark ? '#B4C4BB' : '#5A6761')} size={22} strokeWidth={1.8} />{tab.key === 'schedule' && unreadAnnouncements > 0 ? <View style={styles.navBadge}><Text style={styles.navBadgeText}>{unreadAnnouncements > 99 ? '99+' : unreadAnnouncements}</Text></View> : null}{tab.key === 'report' && unreadComplaints > 0 ? <View style={styles.navBadge}><Text style={styles.navBadgeText}>{unreadComplaints > 99 ? '99+' : unreadComplaints}</Text></View> : null}</View>
+            <Text style={[styles.navText, isDark && { color: '#B4C4BB' }, active && (isDark ? { color: '#85DCB0' } : styles.navTextActive)]}>{tab.label}</Text>
           </Pressable>
         );
       })}
@@ -444,10 +446,11 @@ function BottomNavigation({ activeTab, onChange, unreadAnnouncements = 0, unread
 }
 
 function HomeSectionLabel({ label, onViewAll, first = false }: { label: string; onViewAll?: () => void; first?: boolean }) {
+  const isDarkTheme = useAppTheme() === 'dark';
   return (
     <View style={[styles.homeSectionRow, first && styles.homeFirstSection]}>
       <View style={styles.homeSectionContent}>
-        <Text style={[styles.homeSectionLabel, (label === "Today's collection" || label === "Weekly schedule") && { fontSize: GUIDE_UI.font.heading }]}>{label}</Text>
+        <Text style={[styles.homeSectionLabel, isDarkTheme && { color: '#F1F6F3' }, (label === "Today's collection" || label === "Weekly schedule") && { fontSize: GUIDE_UI.font.heading }]}>{label}</Text>
         {onViewAll ? (
           <Pressable accessibilityRole="button" onPress={onViewAll} style={styles.viewAllButton}>
             <Text style={styles.viewAll}>View All</Text>
@@ -459,10 +462,11 @@ function HomeSectionLabel({ label, onViewAll, first = false }: { label: string; 
 }
 
 function AnnouncementCard({ item }: { item: Announcement }) {
+  const isDarkTheme = useAppTheme() === 'dark';
   const isNew = item.publishedAt ? Date.now() - new Date(item.publishedAt).getTime() < 24 * 60 * 60 * 1000 : false;
   const relative = item.publishedAt ? formatDate(item.publishedAt, { month: 'short', day: 'numeric' }) : '';
   return (
-    <View style={styles.newsCard}>
+    <View style={[styles.newsCard, isDarkTheme && { backgroundColor: '#192A22' }]}>
       {item.imageUrl ? <ExpoImage accessibilityLabel={`${item.reason} announcement image`} contentFit="cover" source={{ uri: item.imageUrl }} style={styles.newsThumbnail} /> : <View style={[styles.newsThumbnail, styles.announcementArtwork]}><Text style={styles.announcementArtworkText}>SERVICE ADVISORY</Text></View>}
       <View style={styles.newsCopy}><View style={styles.announcementMeta}><Text style={styles.newsCategory}>{item.areaLabel}</Text>{isNew ? <Text style={styles.announcementNew}>NEW</Text> : null}<Text style={styles.newsDate}>{relative}</Text></View><Text style={styles.newsHeadline}>{item.message}</Text></View>
     </View>
@@ -470,6 +474,7 @@ function AnnouncementCard({ item }: { item: Announcement }) {
 }
 
 function ReportList({ reports, onSelect, showPhoto, animate = false }: { reports: ApiReport[]; onSelect: (report: ApiReport) => void; showPhoto?: boolean; animate?: boolean }) {
+  const isDarkTheme = useAppTheme() === 'dark';
   if (!reports.length) {
     return <Text style={styles.complaintsEmpty}>No complaints yet. Tap + to message SWMO Support.</Text>;
   }
@@ -483,7 +488,7 @@ function ReportList({ reports, onSelect, showPhoto, animate = false }: { reports
           accessibilityRole="button"
           key={report._id}
           onPress={() => onSelect(report)}
-          style={styles.complaintRowPressable}>
+          style={[styles.complaintRowPressable, isDarkTheme && { borderBottomColor: '#203228' }]}>
           <View style={styles.complaintRow}>
             {showPhoto ? (
               <View style={styles.reportThumbnail}>
@@ -492,11 +497,11 @@ function ReportList({ reports, onSelect, showPhoto, animate = false }: { reports
                   : <Feather color="#07815f" name="image" size={18} />}
               </View>
             ) : (
-              <View style={styles.complaintIcon}><Feather color="#0A7F4F" name="message-circle" size={20} /></View>
+              <View style={[styles.complaintIcon, isDarkTheme && { backgroundColor: '#173E2D' }]}><Feather color={isDarkTheme ? '#85DCB0' : '#0A7F4F'} name="message-circle" size={20} /></View>
             )}
             <View style={styles.complaintCopy}>
-              <Text numberOfLines={1} style={styles.complaintSubject}>{getReportSubject(report)}</Text>
-              <Text numberOfLines={1} style={styles.complaintPreview}>{formatDate(report.createdAt, { month: 'short', day: 'numeric', year: 'numeric' })} · {getReportBody(report)}</Text>
+              <Text numberOfLines={1} style={[styles.complaintSubject, isDarkTheme && { color: '#F1F6F3' }]}>{getReportSubject(report)}</Text>
+              <Text numberOfLines={1} style={[styles.complaintPreview, isDarkTheme && { color: '#B4C4BB' }]}>{formatDate(report.createdAt, { month: 'short', day: 'numeric', year: 'numeric' })} · {getReportBody(report)}</Text>
               <Text style={styles.complaintPreview}>Waste category: {wasteCategoryLabel(report.wasteCategory)}</Text>
               <View style={styles.complaintMeta}><StatusPill status={report.status} /></View>
             </View>
@@ -1546,7 +1551,7 @@ export default function ResidentScreen() {
 
         {renderPhotoProofSection()}
 
-        <TextInput multiline onChangeText={setDescription} placeholder="What happened? Write a message..." placeholderTextColor="#9aa69f" style={styles.reportChatDraftInput} value={description} />
+        <TextInput multiline onChangeText={setDescription} placeholder="What happened? Write a message..." placeholderTextColor="#5A6761" selectionColor="#0A7F4F" style={styles.reportChatDraftInput} value={description} />
         {reportMessage ? <Text accessibilityRole="alert" style={reportMessage.includes('submitted') ? styles.successMessage : styles.errorMessage}>{reportMessage}</Text> : null}
         <View style={styles.reportChatComposerActions}><Pressable disabled={isCapturingPhoto} onPress={capturePhoto} style={[styles.retakeButton, isCapturingPhoto && styles.disabledButton]}>{isCapturingPhoto ? <ActivityIndicator color="#07815f" size="small" /> : <Feather color="#07815f" name="camera" size={15} />}<Text style={styles.retakeText}>{isCapturingPhoto ? 'Opening camera...' : selectedPhoto ? 'Retake photo' : 'Take photo'}</Text></Pressable><Pressable disabled={isSubmitting} onPress={submitReport} style={[styles.submitButton, isSubmitting && styles.disabledButton]}>{isSubmitting ? <ActivityIndicator color="#ffffff" /> : <><Feather color="#ffffff" name="send" size={15} /><Text style={styles.submitButtonText}>Send report</Text></>}</Pressable></View>
       </Card>
@@ -1561,7 +1566,7 @@ export default function ResidentScreen() {
   );
 
   const reportScreen = isCreatingReport ? (
-    <View style={styles.complaintsPage}>
+    <View style={[styles.complaintsPage, isDarkTheme && { backgroundColor: '#101815' }]}>
       <View style={styles.newComplaintHeader}>
         <Pressable accessibilityLabel="Back to complaints" accessibilityRole="button" onPress={() => { setIsCreatingReport(false); setReportMessage(''); setAiDetection({ status: 'idle' }); }} style={styles.newComplaintBack}>
           <Feather color="#07815f" name="chevron-left" size={23} />
@@ -1589,11 +1594,11 @@ export default function ResidentScreen() {
       </View>
     </View>
   ) : (
-    <View style={styles.complaintsPage}>
+    <View style={[styles.complaintsPage, isDarkTheme && { backgroundColor: '#101815' }]}>
       <View style={styles.complaintsHeader}>
         <View style={{ flex: 1, minWidth: 0 }}>
-          <Text style={styles.complaintsTitle}>Complaints</Text>
-          <Text style={styles.complaintsSubtitle}>Direct line to SWMO Support</Text>
+          <Text style={[styles.complaintsTitle, isDarkTheme && { color: '#F1F6F3' }]}>Complaints</Text>
+          <Text style={[styles.complaintsSubtitle, isDarkTheme && { color: '#B4C4BB' }]}>Direct line to SWMO Support</Text>
         </View>
         <Pressable accessibilityLabel="New complaint" accessibilityRole="button" onPress={() => { setReportSubject(''); setWasteCategory(''); setDescription(''); setSelectedPhoto(null); setPhotoMetadata(null); setAiDetection({ status: 'idle' }); setReportMessage(''); setIsCreatingReport(true); }} style={styles.complaintPlusButton}>
           <Feather color="#ffffff" name="plus" size={24} />
@@ -1602,7 +1607,7 @@ export default function ResidentScreen() {
       <RealtimeStatus status={socketStatus} />
       <ScrollView contentContainerStyle={styles.complaintsListContent} showsVerticalScrollIndicator={false}>
         {reportMessage ? <ToastMotion><Text accessibilityRole="alert" style={reportMessage.startsWith('Complaint sent') ? styles.successMessage : styles.errorMessage}>{reportMessage}</Text></ToastMotion> : null}
-        <View style={styles.complaintsListCard}>
+        <View style={[styles.complaintsListCard, isDarkTheme && { backgroundColor: '#101815' }]}>
           {isLoadingReports && pastReports.length > 0 ? <ActivityIndicator accessibilityLabel="Loading" color="#0A7F4F" /> : null}
           <SkeletonRegion state={reportsSkeleton} placeholder={<SkeletonRows kind="complaint" count={7} />}>
           {reportError ? <Text style={styles.errorMessage}>{reportError}</Text> : null}
@@ -1615,7 +1620,7 @@ export default function ResidentScreen() {
 
   const profileScreen = (
     <ScrollView contentContainerStyle={styles.profileContent} showsVerticalScrollIndicator={false}>
-      <Text accessibilityRole="header" style={styles.profileTitle}>Profile</Text>
+      <Text accessibilityRole="header" style={[styles.profileTitle, isDarkTheme && { color: '#F1F6F3' }]}>Profile</Text>
       {<View style={styles.profileHero}>
           <LinearGradient pointerEvents="none" colors={['#24846E', '#0D2E27']} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={styles.collectionGradient} />
           <View pointerEvents="none" style={styles.gradientContrast} />
@@ -1695,7 +1700,7 @@ const styles = StyleSheet.create({
   heroWastePill: { backgroundColor: 'rgba(13,46,39,0.45)' },
   heroWasteText: { color: '#FFFFFF', fontSize: 14 },
   newComplaintFooter: { backgroundColor: '#FFFFFF', paddingHorizontal: 20, paddingVertical: 12 },
-  navIcon: { width: 56, height: 32, overflow: 'visible', alignItems: 'center', justifyContent: 'center' },
+  navIcon: { width: 56, height: 32, borderRadius: 16, overflow: 'visible', alignItems: 'center', justifyContent: 'center' },
   navBadge: { position: 'absolute', right: 0, top: 0, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: '#C92E3D', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3, zIndex: 1 },
   navBadgeText: { color: '#FFFFFF', fontSize: 10, lineHeight: 12, includeFontPadding: false, fontWeight: '800' },
   navIconActive: { backgroundColor: '#E3F4EB' },
@@ -1828,7 +1833,7 @@ const styles = StyleSheet.create({
   reportAttachmentImage: { height: '100%', width: '100%' },
   reportAttachmentOverlay: { alignItems: 'center', backgroundColor: 'rgba(18,50,36,0.76)', bottom: 0, flexDirection: 'row', gap: 6, left: 0, paddingHorizontal: 10, paddingVertical: 7, position: 'absolute', right: 0 },
   reportAttachmentOverlayText: { color: '#ffffff', fontSize: 10, fontWeight: '700' },
-  reportChatDraftInput: { backgroundColor: '#f9fbfa', borderColor: '#dbe5df', borderRadius: 12, borderWidth: 1, color: '#243f31', fontSize: 12, marginTop: 11, minHeight: 64, padding: 11, textAlignVertical: 'top' },
+  reportChatDraftInput: { backgroundColor: '#F1F5F3', borderColor: '#dbe5df', borderRadius: 12, borderWidth: 1, color: '#121A16', fontSize: 14, marginTop: 11, minHeight: 64, padding: 12, textAlignVertical: 'top' },
   photoMetadataHint: { alignItems: 'center', flexDirection: 'row', gap: 6, marginTop: 8 },
   photoMetadataHintText: { color: '#6f8277', flex: 1, fontSize: 9, lineHeight: 13 },
   reportChatComposerActions: { flexDirection: 'row', gap: 9, marginTop: 11 },
@@ -1961,7 +1966,7 @@ const styles = StyleSheet.create({
   reportChatBody: { color: '#294236', fontSize: 11, lineHeight: 16, marginTop: 3 },
   reportChatTime: { color: '#829087', fontSize: 8, marginTop: 4 },
   reportChatComposer: { alignItems: 'center', flexDirection: 'row', gap: 7, marginTop: 10 },
-  reportChatInput: { backgroundColor: '#ffffff', borderColor: '#dbe5df', borderRadius: 9, borderWidth: 1, color: '#294236', flex: 1, fontSize: 11, minHeight: 38, paddingHorizontal: 9 },
+  reportChatInput: { backgroundColor: '#F1F5F3', borderColor: '#dbe5df', borderRadius: 12, borderWidth: 1, color: '#121A16', flex: 1, fontSize: 14, minHeight: 40, paddingHorizontal: 12 },
   reportChatSend: { alignItems: 'center', backgroundColor: '#07815f', borderRadius: 9, justifyContent: 'center', minHeight: 38, paddingHorizontal: 12 },
   reportChatSendText: { color: '#ffffff', fontSize: 10, fontWeight: '800' },
   bottomNav: { backgroundColor: '#FFFFFF', borderTopColor: '#E3EAE6', borderTopWidth: 1, flexDirection: 'row', paddingTop: 8 },

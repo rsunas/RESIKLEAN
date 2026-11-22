@@ -342,6 +342,8 @@ function CollectorGradient() {
 
 function BottomNavigation({ activeTab, onChange }: { activeTab: CollectorTab; onChange: (tab: CollectorTab) => void }) {
   const insets = useSafeAreaInsets();
+  const appTheme = useAppTheme();
+  const isDark = appTheme === 'dark';
   const pill = useSlidingTabPill(activeTab);
   const tabs: Array<{ key: CollectorTab; label: string; icon: 'map-pin' | 'clock' | 'user' }> = [
     { key: 'map', label: 'Map', icon: 'map-pin' },
@@ -350,11 +352,11 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: CollectorTab; on
   ];
 
   return (
-    <View style={[styles.bottomNav, { paddingBottom: Math.max(8, insets.bottom) }]}>
+    <View style={[styles.bottomNav, isDark && { backgroundColor: '#0D1914', borderTopColor: '#203228' }, { paddingBottom: Math.max(8, insets.bottom) }]}>
       {pill.indicator}
       {tabs.map((tab) => {
         const active = activeTab === tab.key;
-        return <Pressable motionDisabled onLayout={(event) => pill.itemLayout(tab.key, event)} accessibilityRole="tab" accessibilityState={{ selected: active }} key={tab.key} onPress={() => onChange(tab.key)} style={styles.navItem}><View onLayout={(event) => pill.iconLayout(tab.key, event)} collapsable={false} style={styles.navIconPill}><Feather color={active ? '#086B42' : '#5A6761'} name={tab.icon} size={21} /></View><Text numberOfLines={1} adjustsFontSizeToFit style={[styles.navText, active && styles.navTextActive]}>{tab.label}</Text></Pressable>;
+        return <Pressable motionDisabled onLayout={(event) => pill.itemLayout(tab.key, event)} accessibilityRole="tab" accessibilityState={{ selected: active }} key={tab.key} onPress={() => onChange(tab.key)} style={styles.navItem}><View onLayout={(event) => pill.iconLayout(tab.key, event)} collapsable={false} style={styles.navIconPill}><Feather color={active ? (isDark ? '#85DCB0' : '#086B42') : (isDark ? '#B4C4BB' : '#5A6761')} name={tab.icon} size={21} /></View><Text numberOfLines={1} adjustsFontSizeToFit style={[styles.navText, isDark && { color: '#B4C4BB' }, active && (isDark ? { color: '#85DCB0' } : styles.navTextActive)]}>{tab.label}</Text></Pressable>;
       })}
     </View>
   );
@@ -400,8 +402,9 @@ function StreetRow({ street, last = false }: { street: Street; last?: boolean })
 }
 
 function AccountDetail({ label, value }: { label: string; value: string }) {
+  const isDarkTheme = useAppTheme() === 'dark';
   const icons: Record<string, React.ComponentProps<typeof Feather>['name']> = { 'Employee ID': 'credit-card', Contact: 'phone', Email: 'mail', Shift: 'clock', 'Assigned route': 'git-branch', 'Assigned truck': 'truck' };
-  return <View style={styles.accountRow}><View style={styles.detailIconBadge}><Feather name={icons[label]} size={20} color="#0A7F4F" /></View><View style={styles.flexText}><Text style={styles.accountLabel}>{label}</Text><Text style={[styles.accountValue, value === 'Not provided' && styles.placeholderValue]}>{value}</Text></View></View>;
+  return <View style={[styles.accountRow, isDarkTheme && { backgroundColor: '#192A22' }]}><View style={styles.detailIconBadge}><Feather name={icons[label]} size={20} color="#0A7F4F" /></View><View style={styles.flexText}><Text style={[styles.accountLabel, isDarkTheme && { color: '#B4C4BB' }]}>{label}</Text><Text style={[styles.accountValue, isDarkTheme && { color: '#F1F6F3' }, value === 'Not provided' && styles.placeholderValue]}>{value}</Text></View></View>;
 }
 
 export default function CollectorScreen() {
@@ -1832,7 +1835,7 @@ export default function CollectorScreen() {
           {historyGroups.length ? visibleHistoryGroups.map((group, index) => (
             <RevealRow key={group.id} animate={revealHistory} index={index}>
             <Pressable accessibilityRole="button" key={group.id} onPress={() => openHistoryDetail(group)} style={styles.historyCardWrap}>
-              <View style={styles.historyCard}>
+              <View style={[styles.historyCard, isDarkTheme && { backgroundColor: '#192A22' }]}>
                 <View style={styles.historyCardMap}>
                   {MAPBOX_ACCESS_TOKEN ? (
                     <Mapbox.MapView key={group.id} scaleBarEnabled={false} styleURL={isDarkTheme ? Mapbox.StyleURL.Dark : Mapbox.StyleURL.Street} style={styles.historyMapPreview} logoEnabled attributionEnabled logoPosition={{ bottom: 4, left: 4 }} attributionPosition={{ top: 4, right: 4 }} scrollEnabled={false} pitchEnabled={false} rotateEnabled={false} zoomEnabled={false}>
@@ -1957,7 +1960,7 @@ export default function CollectorScreen() {
           </SkeletonRegion>
         </View>
 
-        <Pressable accessibilityRole="button" onPress={() => setEditingProfile(true)} style={{ minHeight: 56, borderRadius: 16, backgroundColor: '#E3F4EB', flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, marginTop: 20 }}><Feather name="edit-2" size={20} color="#086B42"/><Text style={{ color: '#086B42', fontSize: 16, fontWeight: '600' }}>Edit profile</Text></Pressable>
+        <Pressable accessibilityRole="button" onPress={() => setEditingProfile(true)} style={[{ minHeight: 56, borderRadius: 16, backgroundColor: '#E3F4EB', flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, marginTop: 20 }, isDarkTheme && { backgroundColor: '#192A22' }]}><Feather name="edit-2" size={20} color={isDarkTheme ? '#85DCB0' : '#086B42'} /><Text style={{ color: isDarkTheme ? '#85DCB0' : '#086B42', fontSize: 16, fontWeight: '600' }}>Edit profile</Text></Pressable>
         <ProfileSettingsRow onSignOut={completeSignOut} />
         <Pressable accessibilityRole="button" onPress={signOut} style={styles.signOutButton}>
           <Feather color="#B3261E" name="log-out" size={20} />
@@ -2013,7 +2016,7 @@ export default function CollectorScreen() {
   return (
     <SafeAreaView edges={['left', 'right']} style={[styles.safeArea, isDarkTheme && { backgroundColor: '#101815' }]}>
       <StatusBar backgroundColor={isDarkTheme ? '#101815' : '#ffffff'} style={isDarkTheme ? 'light' : 'dark'} translucent={false} />
-      <View style={[styles.header, { paddingTop: insets.top }]}><View style={styles.brandHeader}><BrandMark height={48} width={150} /><View style={styles.headerCopy}><Text numberOfLines={1} adjustsFontSizeToFit style={styles.headerTitle}>{collectorName || 'Driver'}</Text><Text numberOfLines={1} adjustsFontSizeToFit style={styles.headerSubtitle}>Route Driver</Text></View></View></View>
+      <View style={[styles.header, isDarkTheme && { backgroundColor: '#101815' }, { paddingTop: insets.top }]}><View style={styles.brandHeader}><BrandMark height={48} width={150} /><View style={styles.headerCopy}><Text numberOfLines={1} adjustsFontSizeToFit style={[styles.headerTitle, isDarkTheme && { color: '#F1F6F3' }]}>{collectorName || 'Driver'}</Text><Text numberOfLines={1} adjustsFontSizeToFit style={[styles.headerSubtitle, isDarkTheme && { color: '#B4C4BB' }]}>Route Driver</Text></View></View></View>
       <View style={[styles.content, isDarkTheme && { backgroundColor: '#101815' }]}><TabTransition activeKey={activeTab}>{activeTab === 'map' ? mapScreen : activeTab === 'history' ? historyScreen : profileScreen}</TabTransition></View>
       <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
       <Modal animationType="slide" onRequestClose={() => isHistoryMapExpanded ? setIsHistoryMapExpanded(false) : setIsHistoryDetailVisible(false)} presentationStyle="fullScreen" visible={isHistoryDetailVisible}>

@@ -49,7 +49,7 @@ export function ResidentComplaintConversation({residentName = 'Resident',residen
   }, [sending,error,draft,pending?.state]);
   const submit = () => { if (!draft.trim() || sending) return; setPending({body:draft.trim(),state:'sending'}); void send(); };
   const scrollToLatest = () => {if (scrollNeeded.current) {thread.current?.scrollToEnd({animated:false});scrollNeeded.current=false;}};
-  return <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={s.sheet}>
+  return <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={s.sheet}>
     <View style={s.header}>
       <Pressable accessibilityRole="button" accessibilityLabel="Back to complaints" onPress={onClose} style={s.back}><Feather name="chevron-left" size={24} color="#086B42" /></Pressable>
       <View style={s.heading}><Text style={s.eyebrow}>SWMO SUPPORT</Text>{loading ? <SkeletonBlock height={26} width="90%" /> : <Text numberOfLines={1} ellipsizeMode="tail" style={s.subject}>{subject}</Text>}
@@ -103,14 +103,14 @@ export function ResidentComplaintConversation({residentName = 'Resident',residen
     </ScrollView>
     <View style={[s.composer,{paddingBottom:keyboardOpen ? 12 : Math.max(28,bottomInset + 12)}]}>
       <Pressable accessibilityRole="button" accessibilityLabel="Attachments unavailable. Messages currently support text only." accessibilityState={{disabled:true}} disabled style={s.attach}><Feather name="paperclip" size={22} color="#5A6761"/></Pressable>
-      <TextInput accessibilityLabel="Message collection team" multiline maxLength={1000} value={draft} onChangeText={setDraft} placeholder="Write a message…" placeholderTextColor="#5A6761" style={s.input}/>
+      <TextInput accessibilityLabel="Message collection team" multiline maxLength={1000} value={draft} onChangeText={setDraft} placeholder="Write a message..." selectionColor="#0A7F4F" placeholderTextColor="#5A6761" style={s.input}/>
       <Pressable accessibilityRole="button" accessibilityLabel={sending ? 'Sending message' : 'Send message'} disabled={sending || !draft.trim()} onPress={submit} style={[s.send,(sending || !draft.trim()) && s.disabled]}><Feather name="send" size={22} color="white"/></Pressable>
     </View>
     <MotionModal transparent visible={photoOpen} onRequestClose={() => setPhotoOpen(false)} animationType="fade"><View style={s.lightbox}><Pressable accessibilityRole="button" accessibilityLabel="Close photo" onPress={() => setPhotoOpen(false)} style={s.photoClose}><Feather name="x" color="white" size={24}/></Pressable>{report.photoUrl ? <Image source={{uri:report.photoUrl}} contentFit="contain" accessibilityLabel="Full complaint photo" style={s.fullPhoto}/> : null}</View></MotionModal>
   </KeyboardAvoidingView>;
 }
 const s=StyleSheet.create({
- sheet:{height:'90%',backgroundColor:'white',borderTopLeftRadius:24,borderTopRightRadius:24,overflow:'hidden'},
+ sheet:{flex:1,maxHeight:'90%',backgroundColor:'white',borderTopLeftRadius:24,borderTopRightRadius:24,overflow:'hidden'},
  header:{flexDirection:'row',alignItems:'center',gap:8,paddingTop:16,paddingBottom:12,paddingLeft:8,paddingRight:16,flexShrink:0},back:{width:44,height:44,alignItems:'center',justifyContent:'center'},heading:{flex:1,minWidth:0,gap:4},eyebrow:{color:'#0A7F4F',fontSize:11,fontWeight:'700',letterSpacing:1.32},subject:{color:'#121A16',fontSize:24,fontWeight:'700'},
  status:{backgroundColor:'#E8F0FE',borderRadius:10,paddingVertical:6,paddingHorizontal:12,flexDirection:'row',alignItems:'center',gap:6,alignSelf:'flex-start',maxWidth:'100%',marginTop:4},statusText:{fontSize:13,lineHeight:19,fontWeight:'600',color:'#1A56C4',flexShrink:1},statusDot:{width:7,height:7,borderRadius:4,backgroundColor:'#1A56C4',flexShrink:0},statusResolved:{backgroundColor:'#E3F4EB'},statusRejected:{backgroundColor:'#FCEAE8'},green:{backgroundColor:'#0A7F4F'},red:{backgroundColor:'#B3261E'},greenText:{color:'#086B42'},redText:{color:'#B3261E',fontSize:13},
  trackerWrap:{paddingHorizontal:20,paddingBottom:12,borderBottomWidth:1,borderBottomColor:'transparent',flexShrink:0},trackerBorder:{borderBottomColor:'#E3EAE6'},tracker:{paddingTop:14,paddingHorizontal:12,paddingBottom:12,borderRadius:20,backgroundColor:'#F4F6F5'},trackerTitle:{color:'#5A6761',fontSize:11,fontWeight:'700',letterSpacing:1.1,marginBottom:12},steps:{flexDirection:'row'},step:{flex:1,alignItems:'center'},middleStep:{flex:1.5},circle:{width:25,height:25,borderRadius:13,backgroundColor:'#E8EDEA',alignItems:'center',justifyContent:'center'},connector:{height:3,position:'absolute',left:'50%',width:'100%',top:11,backgroundColor:'#DCE4DF'},stepLabel:{color:'#5A6761',fontSize:12,lineHeight:18,fontWeight:'500',textAlign:'center',marginTop:8,paddingHorizontal:2},completedLabel:{fontWeight:'700',color:'#121A16'},compactTracker:{minHeight:44,paddingVertical:10,flexDirection:'row',alignItems:'center',gap:12},segments:{flexDirection:'row',gap:4,flex:1},segment:{height:6,flex:1,borderRadius:3,backgroundColor:'#DCE4DF'},compactLabel:{color:'#35463F',fontSize:13,fontWeight:'600',flexShrink:1,maxWidth:'65%'},

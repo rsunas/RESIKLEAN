@@ -621,7 +621,7 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
           <Pressable accessibilityLabel="Back" hitSlop={10} onPress={onClose} style={ss.headerBack}>
             <Feather color="#07815f" name="chevron-left" size={22} />
           </Pressable>
-          <Text style={ss.headerTitle}>Settings</Text>
+          <Text style={[ss.headerTitle, appTheme === 'dark' && { color: '#F1F6F3' }]}>Settings</Text>
           <View style={ss.headerBack}>{isSavingSettings ? <ActivityIndicator color="#0A7F4F" size="small" /> : null}</View>
         </View>
 
