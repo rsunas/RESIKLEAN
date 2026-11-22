@@ -32,7 +32,9 @@ import { MotionPressable as Pressable, MotionModal as Modal, TabTransition, useS
 import { SignOutConfirmModal } from '@/components/sign-out-confirm-modal';
 import { PrivacyPolicyModal } from '@/components/signup-privacy';
 import { ResidentSettingsModal } from '@/components/resident-settings-modal';
-import { SegregationGuide } from '@/components/segregation-guide';
+import { SegregationGuide, useSegregationGuide } from '@/components/segregation-guide';
+import { ResidentTodayCollection } from '@/components/resident-today-collection';
+import { getGuideCategory, GUIDE_UI } from '@/constants/segregation-guide';
 import { SkeletonBlock, SkeletonRegion, SkeletonRows, useSkeletonVisible } from '@/components/loading-skeleton';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Card } from 'heroui-native';
@@ -49,6 +51,9 @@ import {
 } from '@/lib/camera-recovery';
 import { optimizeProofPhoto, proofCameraOptions } from '@/lib/proof-photo';
 import { registerResidentPush } from '@/lib/resident-push';
+import { collectionDateKey } from '@/lib/collection-reminder-plan';
+import { getTodayCollections, getWeeklyCollections } from '@/lib/today-collections';
+import { ResidentWeeklySchedule } from '@/components/resident-weekly-schedule';
 
 type ResidentTab = 'home' | 'schedule' | 'report' | 'profile';
 
@@ -150,19 +155,6 @@ function formatFileSize(bytes?: number | null) {
 function dateKey(value: string | Date) {
   const date = value instanceof Date ? value : new Date(value);
   return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
-}
-
-function getCurrentWeekDates() {
-  const today = new Date();
-  today.setHours(12, 0, 0, 0);
-  const mondayOffset = (today.getDay() + 6) % 7;
-  today.setDate(today.getDate() - mondayOffset);
-
-  return Array.from({ length: 7 }, (_, index) => {
-    const date = new Date(today);
-    date.setDate(today.getDate() + index);
-    return date;
-  });
 }
 
 function startOfMonth(date: Date) {
@@ -387,7 +379,7 @@ function StatusPill({ status }: { status: string }) {
   const label = normalized === 'pending'
     ? 'Pending'
     : normalized === 'verified' || normalized === 'scheduled'
-      ? 'Acknowledged-Scheduled'
+      ? 'Acknowledged / Scheduled'
       : normalized === 'resolved'
         ? 'Resolved'
         : 'Rejected';
@@ -455,7 +447,7 @@ function HomeSectionLabel({ label, onViewAll, first = false }: { label: string; 
   return (
     <View style={[styles.homeSectionRow, first && styles.homeFirstSection]}>
       <View style={styles.homeSectionContent}>
-        <Text style={styles.homeSectionLabel}>{label}</Text>
+        <Text style={[styles.homeSectionLabel, (label === "Today's collection" || label === "Weekly schedule") && { fontSize: GUIDE_UI.font.heading }]}>{label}</Text>
         {onViewAll ? (
           <Pressable accessibilityRole="button" onPress={onViewAll} style={styles.viewAllButton}>
             <Text style={styles.viewAll}>View All</Text>
@@ -522,9 +514,18 @@ export default function ResidentScreen() {
   const isDarkTheme = appTheme === 'dark';
   const networkRevision = useNetworkRecovery();
   const router = useRouter();
-  const { tab, notificationId } = useLocalSearchParams<{ tab?: string; notificationId?: string }>();
+  const { tab, notificationId, guide: guideParam } = useLocalSearchParams<{ tab?: string; notificationId?: string; guide?: string }>();
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<ResidentTab>(tab === 'schedule' ? 'schedule' : 'home');
+  const { selected: selectedGuide, openGuide, closeGuide } = useSegregationGuide();
+  useEffect(() => {
+    const category = getGuideCategory(guideParam || '');
+    if (category) {
+      setActiveTab('home');
+      openGuide(category.id);
+      router.setParams({ guide: undefined });
+    }
+  }, [guideParam, openGuide, router]);
   useEffect(() => {
     if (tab === 'home' && notificationId) setActiveTab('home');
   }, [notificationId, tab]);
@@ -550,6 +551,13 @@ export default function ResidentScreen() {
     return () => { subscription.remove(); clearInterval(retry); };
   }, [session?.token, networkRevision]);
   const [schedule, setSchedule] = useState<ScheduleData | null>(null);
+  const [todayDate, setTodayDate] = useState(() => collectionDateKey(new Date().toISOString())!);
+  useEffect(() => {
+    const refreshDay = () => setTodayDate(collectionDateKey(new Date().toISOString())!);
+    const timer = setInterval(refreshDay, 60000);
+    const subscription = AppState.addEventListener('change', state => { if (state === 'active') refreshDay(); });
+    return () => { clearInterval(timer); subscription.remove(); };
+  }, []);
   const [isLoadingSchedule, setIsLoadingSchedule] = useState(false);
   const [scheduleError, setScheduleError] = useState('');
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -573,6 +581,8 @@ export default function ResidentScreen() {
   const [reportError, setReportError] = useState('');
   const [selectedPhoto, setSelectedPhoto] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [photoMetadata, setPhotoMetadata] = useState<ApiReport['photoMetadata'] | null>(null);
+  const [photoMetadataExpanded, setPhotoMetadataExpanded] = useState(true);
+  useEffect(() => { setPhotoMetadataExpanded(true); }, [selectedPhoto?.uri]);
   const [aiDetection, setAiDetection] = useState<{
     status: 'idle' | 'scanning' | 'done' | 'error';
     verified?: boolean;
@@ -608,7 +618,6 @@ export default function ResidentScreen() {
   const scheduleSkeleton = useSkeletonVisible(isLoadingSchedule, Boolean(schedule), scheduleError, session?.user.id);
   const reportsSkeleton = useSkeletonVisible(isLoadingReports, pastReports.length > 0, reportError, session?.user.id);
   const revealReports = useFirstLoadReveal(isLoadingReports, pastReports.length > 0, reportsSkeleton.pending, session?.user._id || session?.user.id);
-  const revealSchedule = useFirstLoadReveal(isLoadingSchedule, Boolean(schedule), scheduleSkeleton.pending, session?.user._id || session?.user.id);
 
   const loadSchedule = useCallback(async (token: string, residentLocation?: string) => {
     if (!residentLocation) {
@@ -1204,10 +1213,12 @@ export default function ResidentScreen() {
 
         {/* Photo Metadata Grid */}
         <View style={styles.metadataSection}>
-          <View style={styles.metadataHeader}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Photo metadata" accessibilityState={{ expanded: photoMetadataExpanded }} onPress={() => setPhotoMetadataExpanded(value => !value)} style={styles.metadataHeader}>
             <Feather color="#61746a" name="info" size={12} />
             <Text style={styles.metadataSectionTitle}>PHOTO METADATA</Text>
-          </View>
+            <MotionChevron expanded={photoMetadataExpanded}><Feather color="#61746a" name="chevron-down" size={18} /></MotionChevron>
+          </Pressable>
+          <AccordionBody expanded={photoMetadataExpanded}>
           <View style={styles.metadataGrid}>
             <View style={styles.metadataItem}>
               <View style={styles.metadataIconWrap}>
@@ -1271,6 +1282,7 @@ export default function ResidentScreen() {
               </View>
             </View>
           </View>
+          </AccordionBody>
         </View>
       </View>
     );
@@ -1435,15 +1447,7 @@ export default function ResidentScreen() {
 
   const signOut = () => setIsSignOutConfirmVisible(true);
 
-  const currentWeekDates = getCurrentWeekDates();
-  const currentWeekStart = new Date(currentWeekDates[0]);
-  currentWeekStart.setHours(0, 0, 0, 0);
-  const currentWeekEnd = new Date(currentWeekDates[currentWeekDates.length - 1]);
-  currentWeekEnd.setHours(23, 59, 59, 999);
-  const weeklyCollections = (schedule?.upcomingCollections || []).filter((collection) => {
-    const date = new Date(collection.date);
-    return date >= currentWeekStart && date <= currentWeekEnd;
-  });
+  const weeklyCollections = useMemo(() => getWeeklyCollections(schedule, todayDate), [schedule, todayDate]);
   const upcomingCollections = useMemo(() => schedule?.upcomingCollections || [], [schedule?.upcomingCollections]);
   const reminderOwnerId = session?.user._id || session?.user.id || session?.user.email;
   useEffect(() => {
@@ -1481,39 +1485,27 @@ export default function ResidentScreen() {
   }, [isSettingsVisible, location, reminderOwnerId, schedule, session?.token, session?.user.role, upcomingCollections]);
 
   const visibleUpcomingCollections = showAllUpcoming ? upcomingCollections : upcomingCollections.slice(0, 3);
-  const nextCollectionEntry = schedule?.upcomingCollections.find((collection) => (
-    schedule.nextCollection && dateKey(collection.date) === dateKey(schedule.nextCollection)
-  ));
-  const nextTimeWindows = nextCollectionEntry?.timeWindows
-    || schedule?.schedules.find((entry) => entry.wasteType === schedule.nextWasteType)?.timeWindows
-    || [];
+  const todayCollections = getTodayCollections(schedule, todayDate);
 
   const homeScreen = (
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-      <HomeSectionLabel first label="Next collection" />
+      <HomeSectionLabel first label="Today's collection" />
       {isLoadingSchedule && schedule ? <ActivityIndicator accessibilityLabel="Loading" color="#0A7F4F" /> : null}
-      <SkeletonRegion state={scheduleSkeleton} placeholder={<View style={styles.nextCollectionSkeleton}><SkeletonBlock height={170} radius={24} /></View>}>
-      <View style={styles.nextCollectionCard}>
-        <LinearGradient pointerEvents="none" colors={toWasteLabel(schedule?.nextWasteType) === 'Non-Biodegradable' ? ['#286AC4', '#102D54'] : ['#24846E', '#0D2E27']} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={styles.collectionGradient} />
-        <View pointerEvents="none" style={styles.gradientContrast} />
-        {schedule?.nextCollection ? <>
-          <Text style={styles.nextDate}>{formatDate(schedule.nextCollection, { weekday: 'long', month: 'long', day: 'numeric' })}</Text>
-          <View style={styles.nextInfoRow}><WastePill hero type={toWasteLabel(schedule.nextWasteType)} /><Text style={styles.nextTime}>{nextTimeWindows.length ? nextTimeWindows.join(' · ') : 'Time unavailable'}</Text></View>
-        </> : <Text style={styles.nextDate}>{scheduleError ? 'Schedule unavailable' : 'No upcoming collection'}</Text>}
-        <View style={styles.darkDivider} />
-        <Text style={styles.reminder}>Segregate food waste, garden waste, and paper into green bags.</Text>
+      <SkeletonRegion state={scheduleSkeleton} placeholder={<View style={styles.nextCollectionSkeleton}><SkeletonBlock height={270} radius={24} /></View>}>
+      <View style={styles.todayCardSpacing}>
+        <ResidentTodayCollection today={todayDate} collections={todayCollections} unavailable={Boolean(scheduleError || !schedule)} openGuide={openGuide} />
       </View>
       </SkeletonRegion>
 
       <HomeSectionLabel label="Weekly schedule" />
       <View style={styles.homeFlatList}>
-        <SkeletonRegion state={scheduleSkeleton} placeholder={<SkeletonRows kind="weekly" count={5} />}>
+        <SkeletonRegion state={scheduleSkeleton} placeholder={<SkeletonRows kind="weekly" count={3} />}>
         {scheduleError ? <Text style={styles.errorMessage}>{scheduleError}</Text> : null}
-        {weeklyCollections.length ? weeklyCollections.map((collection, index) => <RevealRow key={collection.date} animate={revealSchedule} index={index}><View style={styles.weeklyRow}><Text style={styles.rowDay}>{collection.dayName}</Text><WastePill type={toWasteLabel(collection.wasteType)} /></View></RevealRow>) : !scheduleError ? <Text style={styles.emptyScheduleText}>No collections scheduled this week.</Text> : null}
+        {weeklyCollections.length ? <ResidentWeeklySchedule key={`${schedule?.location}-${todayDate}`} collections={weeklyCollections} today={todayDate} /> : !scheduleError ? <Text style={styles.emptyScheduleText}>No collections scheduled this week.</Text> : null}
         </SkeletonRegion>
       </View>
 
-      <SegregationGuide collections={weeklyCollections} />
+      <SegregationGuide selected={selectedGuide} openGuide={openGuide} closeGuide={closeGuide} />
 
       <HomeSectionLabel label="My recent reports" onViewAll={() => setActiveTab('report')} />
       {isLoadingReports && pastReports.length > 0 ? <ActivityIndicator accessibilityLabel="Loading" color="#0A7F4F" /> : null}
@@ -1694,7 +1686,8 @@ export default function ResidentScreen() {
 }
 
 const styles = StyleSheet.create({
-  nextCollectionSkeleton: { marginTop: 12 },
+  nextCollectionSkeleton: { marginTop: 14 },
+  todayCardSpacing: { marginTop: 14 },
   homeFlatList: { marginTop: 8 },
   viewAllButton: { minHeight: 44, justifyContent: 'center' },
   collectionGradient: { ...StyleSheet.absoluteFillObject, borderRadius: 24 },
@@ -1791,8 +1784,6 @@ const styles = StyleSheet.create({
   homeSectionLabel: { color: '#121A16', fontSize: 20, fontWeight: '700', flex: 1 },
   loadingSchedule: { marginTop: 14 },
   emptyScheduleText: { color: '#89978f', fontSize: 11, marginTop: 13 },
-  weeklyRow: { alignItems: 'center', borderBottomColor: '#E3EAE6', borderBottomWidth: 1, flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 8, minHeight: 56, paddingVertical: 10 },
-  rowDay: { color: '#121A16', fontSize: 16, fontWeight: '600' },
   wastePill: { alignItems: 'center', alignSelf: 'flex-start', borderRadius: 10, flexDirection: 'row', gap: 6, paddingHorizontal: 10, paddingVertical: 6, maxWidth: '100%' },
   bioPill: { backgroundColor: '#E3F4EB' },
   nonBioPill: { backgroundColor: '#E8F0FE' },
@@ -2008,8 +1999,8 @@ const styles = StyleSheet.create({
   aiPendingBanner: { alignItems: 'center', backgroundColor: '#f4f7f5', borderColor: '#dce5df', borderRadius: 12, borderWidth: 1, flexDirection: 'row', gap: 8, padding: 10 },
   aiPendingText: { color: '#596e63', fontSize: 11 },
   metadataSection: { borderTopColor: '#edf2ef', borderTopWidth: 1, marginTop: 10, padding: 12 },
-  metadataHeader: { alignItems: 'center', flexDirection: 'row', gap: 5, marginBottom: 8 },
-  metadataSectionTitle: { color: '#63786e', fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
+  metadataHeader: { alignItems: 'center', flexDirection: 'row', gap: 5, minHeight: 44 },
+  metadataSectionTitle: { color: '#63786e', flex: 1, fontSize: 10, fontWeight: '800', letterSpacing: 0.5 },
   metadataGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   metadataItem: { alignItems: 'center', backgroundColor: '#f8fbf9', borderColor: '#e2eae5', borderRadius: 10, borderWidth: 1, flexDirection: 'row', flexGrow: 1, gap: 8, minWidth: '47%', padding: 9 },
   metadataIconWrap: { alignItems: 'center', backgroundColor: '#e6f6ee', borderRadius: 13, height: 26, justifyContent: 'center', width: 26 },

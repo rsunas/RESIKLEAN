@@ -2,7 +2,7 @@
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),assert=require('node:assert/strict');
 const {execFileSync}=require('node:child_process');const {pathToFileURL}=require('node:url');
 const ts=require('typescript'),React=require('react'),RN=require('react-native-web');const {renderToStaticMarkup}=require('react-dom/server');
-let pendingState=null,photoExpanded=false,sendCalls=0;
+let pendingState=null,photoExpanded=false,sendCalls=0,detailsExpanded=true,metadataExpanded=false;
 let scale=1,keyboard=false,reduced=false,cursor=0,styles,events={},effects=[],scrolls=0,changes=[],animations=0;
 const isStyle=(style,target)=>style===target||(Array.isArray(style)&&style.some(value=>isStyle(value,target)));
 const View=props=>{const tag=['header','trackerWrap','composer','sheet','details','own'].find(key=>isStyle(props.style,styles[key]));return React.createElement(RN.View,{...props,dataSet:tag?{qa:tag}:undefined});};
@@ -13,11 +13,11 @@ new Function('exports',ts.transpileModule(fs.readFileSync(path.join(__dirname,'.
 const mocks={
  '@/lib/waste-categories':categoryExports,
  './resident-avatar':{ResidentAvatar:()=>null},
- react:{...React,useState:initial=>{const i=cursor++;return [i===0?keyboard:i===2?photoExpanded:i===3?pendingState:initial,value=>changes.push({i,value})];},useRef:()=>({current:{scrollToEnd(){scrolls++;}}}),useEffect:effect=>effects.push(effect)},
+ react:{...React,useState:initial=>{const i=cursor++;return [i===0?keyboard:i===2?photoExpanded:i===3?pendingState:i===4?detailsExpanded:i===5?metadataExpanded:initial,value=>changes.push({i,value})];},useRef:()=>({current:{scrollToEnd(){scrolls++;}}}),useEffect:effect=>effects.push(effect)},
  'react-native':{...RN,View,Text,KeyboardAvoidingView:View,Keyboard:{addListener:(name,callback)=>{events[name]=callback;return {remove(){}};}},LayoutAnimation:{Types:{easeInEaseOut:'ease'},configureNext(){animations++;}}},
  'expo/node_modules/@expo/vector-icons':{Feather:Icon,MaterialCommunityIcons:Icon},
  'expo-image':{Image:({style,accessibilityLabel})=>React.createElement(RN.View,{style,accessibilityLabel})},
- '@/components/app-motion':{MotionPressable:RN.Pressable,MotionModal:({visible,children})=>visible?children:null},
+ '@/components/app-motion':{MotionPressable:RN.Pressable,MotionModal:({visible,children})=>visible?children:null,MotionChevron:({children})=>children,AccordionBody:({expanded,children})=>expanded?children:null},
  '@/components/loading-skeleton':{SkeletonBlock:()=>React.createElement(RN.View,{style:{height:26}}),SkeletonRows:()=>React.createElement(Text,null,'Loading messages')},
  '@/hooks/use-app-reduced-motion':{useAppReducedMotion:()=>reduced},
 };
@@ -40,7 +40,13 @@ pendingState={body:'Retry this message',state:'sending'};props.error='Could not 
 pendingState={body:'Retry this message',state:'failed'};assert.ok(renderToStaticMarkup(tree()).includes('Failed to send. Your message is kept below.'));
 photoExpanded=true;assert.ok(renderToStaticMarkup(tree()).includes('Close photo'));photoExpanded=false;pendingState=null;props.error='';props.draft='';
 const cases=[];
+detailsExpanded=false;assert.ok(!renderToStaticMarkup(tree()).includes('Detected bag count'));
+metadataExpanded=true;assert.ok(renderToStaticMarkup(tree()).includes('GPS 13.62313'));
+metadataExpanded=false;assert.ok(!renderToStaticMarkup(tree()).includes('GPS 13.62313'));detailsExpanded=true;
 for(const font of [1,1.6])for(const open of [false,true]){scale=font;keyboard=open;const html=renderToStaticMarkup(tree());assert.equal((html.match(/Original report note/g)||[]).length,1);assert.ok(!html.includes('Manual Review'));cases.push(`<section data-scale="${font}" data-keyboard="${open}" style="width:360px;height:${open?400:720}px;display:flex;flex-direction:column;justify-content:flex-end">${html}</section>`);}
+report.status='scheduled';scale=1;keyboard=false;
+const scheduledHtml=renderToStaticMarkup(tree());assert.ok(scheduledHtml.includes('Acknowledged / Scheduled'));
+cases.push(`<section data-scale="1" data-keyboard="false" style="width:320px;height:720px;display:flex;flex-direction:column;justify-content:flex-end">${scheduledHtml}</section>`);
 props.messages=[];props.loading=true;scale=1;keyboard=false;assert.ok(renderToStaticMarkup(tree()).includes('Loading messages'));props.loading=false;assert.ok(renderToStaticMarkup(tree()).includes('No messages yet.'));
 const checks=()=>{const failures=[];for(const section of document.querySelectorAll('section')){const sheet=section.querySelector('[data-qa=sheet]'),header=section.querySelector('[data-qa=header]'),tracker=section.querySelector('[data-qa=trackerWrap]'),composer=section.querySelector('[data-qa=composer]');const r=sheet.getBoundingClientRect(),c=composer.getBoundingClientRect();if(c.bottom>r.bottom+1)failures.push('Composer outside sheet');if(section.scrollWidth>361)failures.push('Horizontal overflow');if(c.top-tracker.getBoundingClientRect().bottom<60)failures.push('Thread too short');const scroller=tracker.nextElementSibling;scroller.scrollTop=100;const before=tracker.getBoundingClientRect().top;scroller.scrollTop=200;if(tracker.getBoundingClientRect().top!==before)failures.push('Tracker moved with thread');if(header.getBoundingClientRect().top<r.top-1)failures.push('Header outside sheet');}document.querySelector('#result').textContent=JSON.stringify(failures);};
 const dir=fs.mkdtempSync(path.join(os.tmpdir(),'resident-conversation-'));const file=path.join(dir,'test.html');fs.writeFileSync(file,`<html><head><meta charset="utf-8"><style>${RN.StyleSheet.getSheet().textContent}</style></head><body>${cases.join('')}<pre id="result"></pre><script>(${checks})()</script></body></html>`);

@@ -1,20 +1,28 @@
-import { useMemo, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { Modal, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { Feather, MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-icons';
-import type { ComponentProps } from 'react';
+import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText as Text } from '@/components/app-text';
-import { SEGREGATION_CATEGORIES, type SegregationCategory } from '@/constants/segregation-guide';
-import type { UpcomingCollection } from '@/types/resident-schedule';
+import { useAppReducedMotion } from '@/hooks/use-app-reduced-motion';
+import { useClosingValue } from '@/components/app-motion';
+import { SEGREGATION_CATEGORIES, GUIDE_ITEMS, GUIDE_UI as UI, getGuideCategory, type GuideItemId, type GuideCategoryId, type SegregationCategory } from '@/constants/segregation-guide';
+import { BIN_IMAGES, ITEM_IMAGES, prefetchGuideBins } from '@/constants/guide-images';
 
-type CategoryIcon = ComponentProps<typeof MaterialCommunityIcons>['name'];
+export function useSegregationGuide() {
+  const [selected, setSelected] = useState<SegregationCategory | null>(null);
+  const openGuide = useCallback((id: GuideCategoryId) => setSelected(getGuideCategory(id) ?? null), []);
+  const closeGuide = useCallback(() => setSelected(null), []);
+  useEffect(() => { void prefetchGuideBins(); }, []);
+  return { selected, openGuide, closeGuide };
+}
 
 function CategoryCard({ category, onPress }: { category: SegregationCategory; onPress: () => void }) {
   return <Pressable accessibilityRole="button" accessibilityLabel={`${category.title}, opens details`} onPress={onPress} style={({ pressed }) => [styles.cardPressable, pressed && styles.cardPressed]}>
     <LinearGradient colors={category.gradient} start={{ x: 0.2, y: 0 }} end={{ x: 0.8, y: 1 }} style={styles.categoryCard}>
       <View style={styles.cardTopRow}>
-        <View style={styles.cardIcon}><MaterialCommunityIcons name={category.icon as CategoryIcon} color="#FFFFFF" size={22} /></View>
+        <View style={styles.cardIcon}><MaterialCommunityIcons name={category.icon} color="#FFFFFF" size={22} /></View>
         <Feather name="chevron-right" color="#FFFFFF" size={18} />
       </View>
       <Text style={styles.cardTitle}>{category.title}</Text>
@@ -23,56 +31,62 @@ function CategoryCard({ category, onPress }: { category: SegregationCategory; on
   </Pressable>;
 }
 
-export function SegregationGuide({ collections }: { collections: UpcomingCollection[] }) {
-  const [selected, setSelected] = useState<SegregationCategory | null>(null);
-  const insets = useSafeAreaInsets();
-  const collectionDays = useMemo(() => {
-    if (!selected?.collectionType) return [];
-    return [...new Set(collections.filter(item => item.wasteType === selected.collectionType).map(item => item.dayName.slice(0, 3)))];
-  }, [collections, selected]);
+function GuideItem({ id, category, excluded, width }: { id: GuideItemId; category: SegregationCategory; excluded?: boolean; width: number }) {
+  const item = GUIDE_ITEMS[id];
+  const photo = ITEM_IMAGES[id];
+  return <View accessible accessibilityLabel={`${item.label}, ${excluded ? 'does not go' : 'goes'} in this bin`} style={[styles.item, { width }]}>
+    <View style={[styles.circle, { backgroundColor: excluded ? UI.mutedCircle : category.tint }]}>
+      {photo ? <View style={[styles.photoFrame, excluded && Platform.OS !== 'ios' && { filter: 'grayscale(1)' }]}><Image source={photo} contentFit="cover" cachePolicy="memory-disk" style={[styles.itemPhoto, excluded && { opacity: 0.6 }]} /></View> : <View style={styles.itemIcon}>
+        <MaterialCommunityIcons name={item.icon} size={54} color={excluded ? UI.mutedIcon : UI.ink} style={styles.outlineIcon} />
+        <MaterialCommunityIcons name={item.icon} size={48} color={excluded ? '#CBD3CE' : category.fill} />
+      </View>}
+      {excluded ? <View style={styles.excludedBadge}><Feather name="x" size={15} color={UI.white} /></View> : null}
+    </View>
+    <Text style={[styles.itemLabel, excluded && { color: UI.muted }]}>{item.label}</Text>
+  </View>;
+}
 
+export function SegregationGuide({ selected: activeCategory, openGuide, closeGuide }: ReturnType<typeof useSegregationGuide>) {
+  const selected = useClosingValue(activeCategory);
+  const insets = useSafeAreaInsets();
+  const { width, height, fontScale } = useWindowDimensions();
+  const reduced = useAppReducedMotion();
+  // Keep the circles 76px; use two columns on very narrow screens or large text.
+  const columns = width < 350 || fontScale > 1.3 ? 2 : 4;
+  const itemWidth = (width - 44 - (columns - 1) * 4) / columns;
+  const largeText = fontScale > 1.2;
+  const narrow = width < 420;
   return <>
     <View style={styles.section}>
       <Text accessibilityRole="header" style={styles.sectionTitle}>Segregation guide</Text>
       <Text style={styles.sectionSubtitle}>Tap a category to see what goes where.</Text>
       <View style={styles.grid}>
-        {SEGREGATION_CATEGORIES.map(category => <CategoryCard key={category.id} category={category} onPress={() => setSelected(category)} />)}
+        {SEGREGATION_CATEGORIES.map(category => <CategoryCard key={category.id} category={category} onPress={() => openGuide(category.id)} />)}
       </View>
     </View>
-    <Modal animationType="fade" onRequestClose={() => setSelected(null)} statusBarTranslucent transparent visible={selected !== null}>
+    <Modal animationType={reduced ? 'fade' : 'slide'} onRequestClose={closeGuide} statusBarTranslucent transparent visible={activeCategory !== null}>
       {selected ? <View style={styles.modalRoot}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Close segregation guide" onPress={() => setSelected(null)} style={styles.backdrop} />
-        <View accessibilityViewIsModal style={[styles.sheet, { paddingBottom: Math.max(24, insets.bottom) }]}>
-          <View style={styles.handle} />
-          <ScrollView showsVerticalScrollIndicator={false} style={styles.sheetScroll} contentContainerStyle={styles.sheetContent}>
-            <View style={styles.sheetHeader}>
-              <View style={[styles.sheetIcon, { backgroundColor: selected.fill }]}><MaterialCommunityIcons name={selected.icon as CategoryIcon} color="#FFFFFF" size={26} /></View>
-              <View style={styles.sheetHeadingCopy}>
-                <Text accessibilityRole="header" style={[styles.sheetTitle, { color: selected.dark }]}>{selected.title}</Text>
-                <Text style={styles.sheetSubtitle}>{selected.subtitle}</Text>
-              </View>
-              <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={() => setSelected(null)} style={styles.closeButton}><Feather name="x" size={24} color="#121A16" /></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Close segregation guide" onPress={closeGuide} style={styles.backdrop} />
+        <View accessibilityViewIsModal accessibilityLabel={`${selected.title} guide`} style={[styles.sheet, { maxHeight: height - Math.max(insets.top, 16) }]}>
+          <View style={[styles.sheetHeader, { backgroundColor: selected.fill }, largeText && { minHeight: 150, paddingTop: 145 }]}>
+            <View style={styles.handle} />
+            <View style={[styles.sheetHeadingCopy, { marginRight: largeText ? 0 : narrow ? 132 : 165 }]}>
+              <Text accessibilityRole="header" style={[styles.sheetTitle, { fontSize: narrow ? 23 : UI.font.sheetTitle }]}>{selected.title}</Text>
+              {selected.id === 'hazardous' ? <View style={styles.warning}><Feather name="alert-triangle" size={18} color={UI.white} /><Text style={styles.warningText}>Handle with care</Text></View> : null}
             </View>
-            {selected.id === 'hazardous' ? <View style={[styles.warningBanner, { backgroundColor: selected.tint }]}>
-              <MaterialCommunityIcons name="alert-outline" size={22} color={selected.dark} />
-              <Text style={[styles.warningText, { color: selected.dark }]}>Handle with care. Do not burn, flush or crush these items.</Text>
-            </View> : null}
-            <Text style={styles.groupLabel}>GOES HERE</Text>
-            <View style={styles.chips}>
-              {selected.goesHere.map(item => <View key={item} style={[styles.chip, { backgroundColor: selected.tint }]}><Feather name="check" size={16} color={selected.dark} /><Text style={[styles.chipText, { color: selected.dark }]}>{item}</Text></View>)}
+            <Image accessible={false} accessibilityElementsHidden source={BIN_IMAGES[selected.id]} contentFit="contain" cachePolicy="memory-disk" style={[styles.bin, narrow && { width: 128, height: 128, top: 40, right: 8 }]} />
+            <Pressable accessibilityRole="button" accessibilityLabel="Close" onPress={closeGuide} style={styles.closeButton}><Feather name="x" size={25} color={UI.white} /></Pressable>
+          </View>
+          <ScrollView showsVerticalScrollIndicator style={styles.sheetScroll} contentContainerStyle={[styles.sheetContent, { paddingBottom: Math.max(28, insets.bottom + 16) }]}>
+            <Text style={styles.groupLabel}>Goes in this bin</Text>
+            <View style={styles.items}>{selected.goesHere.map(id => <GuideItem key={id} id={id} category={selected} width={itemWidth} />)}</View>
+            <Text style={styles.groupLabel}>Not in this bin</Text>
+            <View style={styles.items}>{selected.keepOut.map(id => <GuideItem key={id} id={id} category={selected} excluded width={itemWidth} />)}</View>
+            <View style={[styles.tipStrip, { borderLeftColor: selected.fill }]}>
+              <MaterialCommunityIcons name="lightbulb-outline" color={selected.dark} size={24} />
+              <Text style={styles.tipText}>{selected.tip}</Text>
             </View>
-            <Text style={styles.groupLabel}>KEEP OUT</Text>
-            <View style={styles.chips}>
-              {selected.keepOut.map(item => <View key={item} style={styles.keepOutChip}><Feather name="x" size={16} color="#A6231D" /><Text style={styles.keepOutText}>{item}</Text></View>)}
-            </View>
-            {collectionDays.length ? <>
-              <Text style={styles.groupLabel}>COLLECTED ON</Text>
-              <View style={styles.chips}>{collectionDays.map(day => <View key={day} style={[styles.dayPill, { backgroundColor: selected.dark }]}><Text style={styles.dayText}>{day}</Text></View>)}</View>
-            </> : null}
-            <Text style={styles.groupLabel}>TIPS</Text>
-            <View style={styles.tips}>{selected.tips.map(tip => <View key={tip} style={styles.tipRow}><View style={[styles.tipDot, { backgroundColor: selected.fill }]} /><Text style={styles.tipText}>{tip}</Text></View>)}</View>
           </ScrollView>
-          <Pressable accessibilityRole="button" onPress={() => setSelected(null)} style={[styles.gotItButton, { backgroundColor: selected.dark }]}><Text style={styles.gotItText}>Got it</Text></Pressable>
         </View>
       </View> : null}
     </Modal>
@@ -92,31 +106,28 @@ const styles = StyleSheet.create({
   cardTitle: { color: '#FFFFFF', fontSize: 16, fontWeight: '700', marginTop: 2 },
   cardExamples: { color: 'rgba(255,255,255,0.88)', fontSize: 13, lineHeight: 18 },
   modalRoot: { flex: 1, justifyContent: 'flex-end' },
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(11,40,30,0.5)' },
-  sheet: { backgroundColor: '#FFFFFF', borderTopLeftRadius: 28, borderTopRightRadius: 28, maxHeight: '92%', paddingHorizontal: 22, paddingTop: 10 },
+  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: UI.backdrop },
+  sheet: { backgroundColor: UI.white, borderTopLeftRadius: UI.radius.sheet, borderTopRightRadius: UI.radius.sheet, overflow: 'hidden' },
+  sheetHeader: { minHeight: 150, paddingTop: 44, paddingHorizontal: 22, paddingBottom: 24, justifyContent: 'flex-end', flexShrink: 0, zIndex: 1 },
+  handle: { position: 'absolute', top: 10, alignSelf: 'center', backgroundColor: 'rgba(255,255,255,0.55)', borderRadius: 3, height: 5, width: 44 },
+  sheetHeadingCopy: { minWidth: 0 },
+  sheetTitle: { color: UI.white, fontWeight: '800' },
+  warning: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
+  warningText: { color: UI.white, fontSize: 14, fontWeight: '600', flexShrink: 1 },
+  bin: { position: 'absolute', top: 28, right: 20, width: 140, height: 140 },
+  closeButton: { position: 'absolute', top: 12, right: 4, alignItems: 'center', height: 44, justifyContent: 'center', width: 44, zIndex: 2 },
   sheetScroll: { flexShrink: 1 },
-  handle: { alignSelf: 'center', backgroundColor: '#CFD8D3', borderRadius: 3, height: 5, marginBottom: 20, width: 44 },
-  sheetContent: { paddingBottom: 16 },
-  sheetHeader: { alignItems: 'center', flexDirection: 'row', gap: 14 },
-  sheetIcon: { alignItems: 'center', borderRadius: 28, height: 52, justifyContent: 'center', width: 52 },
-  sheetHeadingCopy: { flex: 1, minWidth: 0 },
-  sheetTitle: { fontSize: 22, fontWeight: '700' },
-  sheetSubtitle: { color: '#4B5563', fontSize: 14, lineHeight: 20, marginTop: 2 },
-  closeButton: { alignItems: 'center', height: 44, justifyContent: 'center', width: 44 },
-  warningBanner: { alignItems: 'center', borderRadius: 16, flexDirection: 'row', gap: 10, marginTop: 20, padding: 14 },
-  warningText: { flex: 1, fontSize: 14, fontWeight: '600', lineHeight: 20 },
-  groupLabel: { color: '#4B5563', fontSize: 12, fontWeight: '700', letterSpacing: 1.4, marginBottom: 10, marginTop: 20 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { alignItems: 'center', borderRadius: 12, flexDirection: 'row', gap: 8, minHeight: 36, paddingHorizontal: 12, paddingVertical: 7 },
-  chipText: { fontSize: 14, fontWeight: '500' },
-  keepOutChip: { alignItems: 'center', backgroundColor: '#FFFFFF', borderColor: '#D9E2DD', borderRadius: 12, borderWidth: 1, flexDirection: 'row', gap: 8, minHeight: 36, paddingHorizontal: 12, paddingVertical: 7 },
-  keepOutText: { color: '#374151', fontSize: 14 },
-  dayPill: { alignItems: 'center', borderRadius: 12, justifyContent: 'center', minHeight: 36, minWidth: 52, paddingHorizontal: 12 },
-  dayText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
-  tips: { gap: 12 },
-  tipRow: { alignItems: 'flex-start', flexDirection: 'row', gap: 10 },
-  tipDot: { borderRadius: 4, height: 8, marginTop: 7, width: 8 },
-  tipText: { color: '#121A16', flex: 1, fontSize: 15, lineHeight: 22 },
-  gotItButton: { alignItems: 'center', borderRadius: 16, height: 52, justifyContent: 'center', marginBottom: 8, marginTop: 10 },
-  gotItText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  sheetContent: { paddingTop: 24, paddingHorizontal: 22, gap: 16 },
+  groupLabel: { color: UI.ink, fontSize: UI.font.group, fontWeight: '700', marginTop: 2 },
+  items: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 4, rowGap: 16, marginBottom: 6 },
+  item: { alignItems: 'center', gap: 8 },
+  circle: { width: 76, height: 76, borderRadius: 38, alignItems: 'center', justifyContent: 'center' },
+  itemIcon: { width: 56, height: 56, alignItems: 'center', justifyContent: 'center' },
+  outlineIcon: { position: 'absolute' },
+  photoFrame: { width: 76, height: 76, borderRadius: 38, overflow: 'hidden' },
+  itemPhoto: { width: 76, height: 76, borderRadius: 38 },
+  itemLabel: { color: UI.ink, fontSize: UI.font.item, fontWeight: '600', textAlign: 'center' },
+  excludedBadge: { position: 'absolute', top: -2, right: -2, width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: UI.white, backgroundColor: UI.danger, alignItems: 'center', justifyContent: 'center' },
+  tipStrip: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 14, borderLeftWidth: 4, borderTopLeftRadius: 4, borderBottomLeftRadius: 4, borderTopRightRadius: 14, borderBottomRightRadius: 14, backgroundColor: UI.tipSurface },
+  tipText: { color: UI.ink, flex: 1, fontSize: UI.font.tip, fontWeight: '600' },
 });

@@ -16,6 +16,35 @@ function load(name, imports = {}) {
 
 async function main() {
   const planner = load('collection-reminder-plan');
+  const { getTodayCollections, getWeeklyCollections } = load('today-collections', { './collection-reminder-plan': planner });
+  const schedule = {
+    schedules: [{ wasteType: 'biodegradable', days: ['Saturday'], timeWindows: ['4:00 PM - 8:00 PM'] }],
+    nextCollection: '2026-11-22', nextWasteType: 'non-biodegradable',
+    upcomingCollections: [{ date: '2026-11-22', wasteType: 'non-biodegradable', dayName: 'Sunday', timeWindows: [] }],
+  };
+  // A future nextCollection must never replace today's recurring schedule.
+  for (const instant of ['2026-11-21T08:00:00+08:00', '2026-11-21T23:59:00+08:00']) {
+    const today = getTodayCollections(schedule, planner.collectionDateKey(instant));
+    assert.equal(today.length, 1);
+    assert.equal(today[0].wasteType, 'biodegradable');
+    assert.deepEqual(today[0].timeWindows, ['4:00 PM - 8:00 PM']);
+  }
+  assert.deepEqual(getTodayCollections(schedule, planner.collectionDateKey('2026-11-21T16:00:00Z')), []);
+  assert.deepEqual(getTodayCollections(null, '2026-11-21'), []);
+  assert.equal(getTodayCollections({ ...schedule, schedules: [...schedule.schedules, { wasteType: 'non-biodegradable', days: ['Saturday'], timeWindows: [] }] }, '2026-11-21').length, 2);
+  assert.equal(getTodayCollections({ ...schedule, schedules: [] }, '2026-11-22').length, 1);
+  assert.deepEqual(getTodayCollections({ ...schedule, schedules: [] }, '2026-11-21'), []);
+  const weekPattern = { ...schedule, schedules: [
+    { wasteType: 'biodegradable', days: ['Tuesday', 'Wednesday', 'Friday', 'Saturday'], timeWindows: ['4:00 AM - 8:00 AM', '9:00 AM - 1:00 PM'] },
+    { wasteType: 'non-biodegradable', days: ['Thursday', 'Sunday'], timeWindows: ['4:00 PM - 8:00 PM', '9:00 PM - 1:00 AM'] },
+  ] };
+  const rollingWeek = getWeeklyCollections(weekPattern, '2026-11-21');
+  assert.deepEqual(rollingWeek.map(item => item.date), ['2026-11-21', '2026-11-22', '2026-11-24', '2026-11-25', '2026-11-26', '2026-11-27']);
+  assert.equal(rollingWeek[0].wasteType, 'biodegradable');
+  assert.deepEqual(rollingWeek[1].timeWindows, weekPattern.schedules[1].timeWindows);
+  assert.equal(getWeeklyCollections(weekPattern, '2026-11-23')[0].date, '2026-11-24');
+  assert.equal(getWeeklyCollections(weekPattern, '2026-12-31').at(-1).date, '2027-01-06');
+  assert.deepEqual(getWeeklyCollections(null, '2026-11-21'), []);
   const collection = { date: '2026-11-18', wasteType: 'biodegradable', dayName: 'Wednesday', timeWindows: ['4:00 AM–8:00 AM', '9:00 AM - 1:00 PM'] };
   const plan = planner.buildCollectionReminderPlan([collection], 'resident-a', 'Abella');
   assert.equal(plan.length, 4);
