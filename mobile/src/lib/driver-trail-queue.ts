@@ -356,7 +356,7 @@ export async function getLocalDriverTrailHistory(collectorId: string) {
       elevationGainFt: 0, elevationLossFt: 0, sessionId: session.client_session_id,
       sessionStartedAt: session.started_at, sessionEndedAt: session.ended_at || undefined,
       routeSnapshot, routePath, trailPath: buildTrailPath(points),
-      lastLocation: coordinates.at(-1), pendingSync: !session.synced_at, stopLogs: [],
+      lastLocation: coordinates.at(-1), pendingSync: !session.synced_at, syncFailed: !!session.last_error, stopLogs: [],
     };
   }));
 }
@@ -489,8 +489,16 @@ export function syncDriverTrailQueue(context: DriverTrailSyncContext) {
   return syncInFlight;
 }
 
-export function subscribeToDriverTrailSync(context: DriverTrailSyncContext, onSync?: (result: DriverTrailSyncResult) => void) {
-  const sync = async () => onSync?.(await syncDriverTrailQueue(context));
+export function subscribeToDriverTrailSync(
+  context: DriverTrailSyncContext,
+  onSync?: (result: DriverTrailSyncResult) => void,
+  onSyncing?: (syncing: boolean) => void,
+) {
+  const sync = async () => {
+    onSyncing?.(true);
+    try { onSync?.(await syncDriverTrailQueue(context)); }
+    finally { onSyncing?.(false); }
+  };
   const unsubscribe = NetInfo.addEventListener((state) => {
     if (state.isConnected && state.isInternetReachable !== false) void sync().catch(() => {});
   });

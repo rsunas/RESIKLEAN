@@ -1,9 +1,9 @@
-.notifications-intro { margin: -7px 0 24px; color: #5a6761; font-size: 14px; line-height: 1.6; }
+.notifications-intro { display: none; }
 .notifications-card { background: #fff; border: 1px solid #e3eae6; border-radius: 24px; overflow: hidden; }
 .notifications-card > .table-pagination { padding: 14px 24px; }
-.notifications-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; padding: 22px 24px; border-bottom: 1px solid #e3eae6; }
-.notifications-tabs { display: flex; padding: 4px; border-radius: 14px; background: #f1f5f3; }
-.notifications-tabs button { min-height: 40px; padding: 0 14px; font-weight: 600; border-radius: 10px; color: #5a6761; }
+.notifications-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 14px 20px; border-bottom: 1px solid #e3eae6; }
+.notifications-tabs { display: flex; padding: 3px; border-radius: 10px; background: #f1f5f3; }
+.notifications-tabs button { min-height: 36px; padding: 0 12px; font-size: 13px; font-weight: 600; border-radius: 8px; color: #5a6761; }
 .notifications-tabs button[aria-pressed="true"] { background: #fff; color: #086b42; box-shadow: 0 1px 4px #0d1e2417; }
 .notifications-mark-page { margin-left: auto; color: #086b42; font-weight: 600; }
 .notifications-feed { margin: 0; padding: 0; list-style: none; }
@@ -30,3 +30,33 @@
 .notifications-error { padding: 12px 24px; color: #a63024; background: #fff4f1; font-size: 14px; }
 .notifications-note { margin: 16px 4px; color: #6b7d73; font-size: 12px; line-height: 1.6; max-width: 850px; }
 @media (max-width: 700px) { .notifications-row { padding: 18px 16px; gap: 12px; flex-wrap: wrap; } .notifications-actions { margin-left: 56px; flex-direction: row; flex-wrap: wrap; } .notifications-toolbar { padding: 16px; } .notifications-mark-page { margin-left: 0; } }
+
+/* Make notification read actions look distinct from the conversation action. */
+.notifications-toolbar .notifications-mark-page {
+  min-height: 36px; padding: 0 12px; border: 1px solid #0a7f4f;
+  border-radius: 10px; background: #0a7f4f; color: #fff;
+  font-size: 13px; font-weight: 700; box-shadow: 0 2px 5px #0a7f4f20;
+}
+.notifications-toolbar .notifications-mark-page:hover:not(:disabled) {
+  background: #086b42; border-color: #086b42;
+}
+.notifications-toolbar .notifications-mark-page:disabled { opacity: .48; }
+.notifications-actions .notifications-mark-item {
+  min-height: 36px; padding: 0 12px; border: 1px solid #cfe5d9;
+  border-radius: 9px; background: #f4faf6; color: #08734b;
+  font-size: 12px; font-weight: 650;
+}
+.notifications-actions .notifications-mark-item:hover:not(:disabled) {
+  border-color: #84c5a2; background: #e6f5ec;
+}
+.notifications-actions .notifications-mark-item:disabled { opacity: .5; }
+.notifications-read-label {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  min-height: 32px; padding: 0 11px; border: 1px solid #e1e9e4;
+  border-radius: 999px; background: #f5f7f6; color: #65776d;
+  font-size: 12px; font-weight: 650;
+}
+
+html[data-theme="dark"] .notifications-toolbar .notifications-mark-page { background: #08734b; border-color: #3e9d72; color: #fff; }
+html[data-theme="dark"] .notifications-actions .notifications-mark-item { background: #203c30; border-color: #3b6650; color: #a8e2c0; }
+html[data-theme="dark"] .notifications-read-label { background: #25332c; border-color: #415249; color: #b9c8c0; }

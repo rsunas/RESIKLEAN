@@ -1,3 +1,4 @@
+import { UploadSyncBadge } from '@/components/upload-sync-badge';
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
 import { useEffect, useRef, useState } from 'react';
@@ -40,16 +41,11 @@ export function formatDetailsArea(area: StaffSubmissionDetailsData['barangay']) 
 }
 
 const formatMeasurement = (value: number) => value.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const STATUS_COLORS = {
-  Synced: { backgroundColor: '#E3F4EB', color: '#086B42' },
-  Pending: { backgroundColor: '#FFF4E0', color: '#5C3B00' },
-  Failed: { backgroundColor: '#FDECEA', color: '#B3261E' },
-};
-
-export function StaffSubmissionDetails({ submission, onClose, visible = true }: {
+export function StaffSubmissionDetails({ submission, onClose, visible = true, syncing = false }: {
   submission: StaffSubmissionDetailsData;
   onClose: () => void;
   visible?: boolean;
+  syncing?: boolean;
 }) {
   const insets = useSafeAreaInsets();
   // Preserve the legacy single-photo fallback, without replacing either real
@@ -79,7 +75,7 @@ export function StaffSubmissionDetails({ submission, onClose, visible = true }: 
   const markPhotoFailed = () => {
     if (photoUri) setFailedUris((previous) => new Set(previous).add(photoUri));
   };
-  const statusColors = STATUS_COLORS[submission.status];
+
   // Exactly the calculator's base volume (slope is added separately there).
   const volume = submission.totalVolumeM3 ?? submission.length * submission.width * submission.height;
   const slopeDisplay = submission.measurementMode === 'three-point'
@@ -125,10 +121,7 @@ export function StaffSubmissionDetails({ submission, onClose, visible = true }: 
           <View style={styles.titleCard}>
             <View style={styles.titleTopRow}>
               <Text style={styles.eyebrow}>AUDIT SUBMISSION</Text>
-              <View style={[styles.statusChip, { backgroundColor: statusColors.backgroundColor }]}>
-                <View style={[styles.statusDot, { backgroundColor: statusColors.color }]} />
-                <Text style={[styles.statusText, { color: statusColors.color }]}>{submission.status}</Text>
-              </View>
+              <UploadSyncBadge status={submission.status === 'Synced' ? 'synced' : syncing ? 'syncing' : submission.status === 'Failed' ? 'failed' : 'pending'} />
             </View>
             <Text accessibilityRole="header" style={styles.title}>Truck {submission.truckPlate}</Text>
             <Text style={styles.date}>{submission.submittedAt}</Text>

@@ -14,7 +14,10 @@ function PageInput({ page, pages, disabled, onChange, label }) {
 }
 
 export default function TablePagination({ page, pageSize, total, onPageChange, onPageSizeChange, pageSizeOptions = [7, 10, 20, 50], label = 'Staff activity', disabled = false }) {
+  total = Number.isFinite(Number(total)) ? Math.max(0, Math.trunc(Number(total))) : 0;
+  pageSize = Number.isFinite(Number(pageSize)) && Number(pageSize) >= 1 ? Math.trunc(Number(pageSize)) : 10;
   const pages = Math.max(1, Math.ceil(total / pageSize));
+  page = Number.isFinite(Number(page)) ? Math.max(1, Math.min(pages, Math.trunc(Number(page)))) : 1;
   const first = Math.max(1, Math.min(page - 2, pages - 4));
   const visible = Array.from({ length: Math.min(5, pages) }, (_, index) => first + index);
   return <div className="table-pagination">

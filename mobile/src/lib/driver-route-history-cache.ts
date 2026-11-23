@@ -57,7 +57,7 @@ export async function getRouteHistoryCache<T>(collectorId: string): Promise<T[]>
 }
 
 type HistoryPath = {type: 'LineString' | 'MultiLineString'; coordinates: unknown};
-type HistoryMapRecord = {id: string; date: string; routeId: string; routePath?: HistoryPath | null; trailPath?: HistoryPath | null; pendingSync?: boolean; sessionStartedAt?: string; sessionEndedAt?: string; routeSnapshot?: { name: string; routePath?: HistoryPath | null; barangay?: string[]; stops?: unknown[] } | null};
+type HistoryMapRecord = {id: string; date: string; routeId: string; routePath?: HistoryPath | null; trailPath?: HistoryPath | null; pendingSync?: boolean; syncFailed?: boolean; sessionStartedAt?: string; sessionEndedAt?: string; routeSnapshot?: { name: string; routePath?: HistoryPath | null; barangay?: string[]; stops?: unknown[] } | null};
 /** Merge by route/day, keeping separate trips separate and never erasing local paths. */
 export function mergeRouteHistory<T extends HistoryMapRecord>(primary: T[], fallback: T[]): T[] {
   const groups = new Map<string, T>();
@@ -76,9 +76,10 @@ export function mergeRouteHistory<T extends HistoryMapRecord>(primary: T[], fall
     // A saved trip snapshot outranks any live-route fields from older servers.
     // Prefer the snapshot that actually includes a path over a legacy name-only one.
     const routeSnapshot = record.routeSnapshot?.routePath ? record.routeSnapshot : previous.routeSnapshot?.routePath ? previous.routeSnapshot : record.routeSnapshot || previous.routeSnapshot;
+    const pendingSync = !!(previous.pendingSync || record.pendingSync);
     groups.set(key, {...previous, ...record, routePath: routeSnapshot ? routeSnapshot.routePath || null : record.routePath || previous.routePath, trailPath,
       ...(routeSnapshot ? { routeSnapshot, routeName: routeSnapshot.name, barangay: routeSnapshot.barangay || [], ...(routeSnapshot.stops ? { totalStops: routeSnapshot.stops.length } : {}) } : {}),
-      sessionStartedAt: starts[0], sessionEndedAt: ends.at(-1), pendingSync: !!(previous.pendingSync || record.pendingSync)});
+      sessionStartedAt: starts[0], sessionEndedAt: ends.at(-1), pendingSync, syncFailed: pendingSync && !!(previous.syncFailed || record.syncFailed)});
   }
   return [...groups.values()].sort((a, b) => b.date.localeCompare(a.date));
 }

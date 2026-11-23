@@ -423,8 +423,13 @@ export function syncStaffTruckloadQueue(context: StaffQueueSyncContext) {
 export function subscribeToStaffTruckloadSync(
   context: StaffQueueSyncContext,
   onSync?: (result: StaffQueueSyncResult) => void,
+  onSyncing?: (syncing: boolean) => void,
 ) {
-  const sync = async () => onSync?.(await syncStaffTruckloadQueue(context));
+  const sync = async () => {
+    onSyncing?.(true);
+    try { await onSync?.(await syncStaffTruckloadQueue(context)); }
+    finally { onSyncing?.(false); }
+  };
   const unsubscribe = NetInfo.addEventListener((state) => {
     if (state.isConnected && state.isInternetReachable !== false) void sync().catch(() => {});
   });

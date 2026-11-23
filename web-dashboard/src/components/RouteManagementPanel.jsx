@@ -76,6 +76,8 @@ export default function RouteManagementPanel({ token }) {
   const stopMarkers = useRef([]);
   const [routes, setRoutes] = useState([]);
   const [filter, setFilter] = useState('active');
+  const [areaFilter, setAreaFilter] = useState('all');
+  const [dayFilter, setDayFilter] = useState('all');
   const [query, setQuery] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -125,10 +127,14 @@ export default function RouteManagementPanel({ token }) {
   const visibleRoutes = useMemo(() => routes.filter((route) => {
     const matchesStatus = filter === 'all' || (filter === 'active' ? route.isActive : !route.isActive);
     const text = `${route.name} ${route.barangay.join(' ')} ${route.collectorName}`.toLowerCase();
-    return matchesStatus && (!query.trim() || text.includes(query.trim().toLowerCase()));
-  }), [filter, query, routes]);
+    return matchesStatus && (areaFilter === 'all' || route.barangay.includes(areaFilter))
+      && (dayFilter === 'all' || route.schedule.includes(Number(dayFilter)))
+      && (!query.trim() || text.includes(query.trim().toLowerCase()));
+  }), [filter, areaFilter, dayFilter, query, routes]);
+  const areaOptions = useMemo(() => [{ label: 'All areas', value: 'all' },
+    ...[...new Set(routes.flatMap(route => route.barangay))].sort().map(area => ({ label: area, value: area }))], [routes]);
 
-  const pagination = useTablePagination(visibleRoutes, JSON.stringify([query, filter]));
+  const pagination = useTablePagination(visibleRoutes, JSON.stringify([query, filter, areaFilter, dayFilter]));
 
   const removeMarkers = () => { stopMarkers.current.forEach((marker) => marker.remove()); stopMarkers.current = []; };
   const renderStops = useCallback(() => {
@@ -252,7 +258,12 @@ export default function RouteManagementPanel({ token }) {
   };
 
   return <section className="route-management-panel" aria-label="Route management">
-    <Card className="route-directory-card"><DisabledControls disabled={isLoading}><div className="route-directory-toolbar"><label className="truck-search-control"><RouteIcon name="map" size={16} /><input aria-label="Search routes" onChange={(event) => setQuery(event.target.value)} placeholder="Search route, barangay, or driver" value={query} /></label><Tabs className="route-filter-tabs" selectedKey={filter} onSelectionChange={key => setFilter(String(key))}><Tabs.List aria-label="Route status">{[['active', 'Active'], ['archived', 'Archived'], ['all', 'All']].map(([key, label]) => <Tabs.Tab id={key} key={key}>{label}<Tabs.Indicator /></Tabs.Tab>)}</Tabs.List></Tabs><Button className="primary-button route-add-button" onPress={() => openEditor()}><RouteIcon name="plus" size={16} />Add route</Button></div></DisabledControls>
+    <Card className="route-directory-card"><DisabledControls disabled={isLoading}><div className="route-directory-toolbar"><label className="truck-search-control"><RouteIcon name="map" size={16} /><input aria-label="Search routes" onChange={(event) => setQuery(event.target.value)} placeholder="Search route, barangay, or driver" value={query} /></label>      <div className="route-directory-filters" role="group" aria-label="Route filters">
+        <AppSelect aria-label="Filter routes by area" options={areaOptions} value={areaFilter} onChange={setAreaFilter} />
+        <AppSelect aria-label="Filter routes by schedule" options={[{ label: 'All schedule days', value: 'all' }, ...DAYS.map((day, index) => ({ label: day, value: String(index) }))]} value={dayFilter} onChange={setDayFilter} />
+        {(areaFilter !== 'all' || dayFilter !== 'all') && <Button className="outline-button" variant="secondary" onPress={() => { setAreaFilter('all'); setDayFilter('all'); }}>Clear filters</Button>}
+      </div><Tabs className="route-filter-tabs" selectedKey={filter} onSelectionChange={key => setFilter(String(key))}><Tabs.List aria-label="Route status">{[['active', 'Active'], ['archived', 'Archived'], ['all', 'All']].map(([key, label]) => <Tabs.Tab id={key} key={key}>{label}<Tabs.Indicator /></Tabs.Tab>)}</Tabs.List></Tabs><Button className="primary-button route-add-button" onPress={() => openEditor()}><RouteIcon name="plus" size={16} />Add route</Button></div>
+</DisabledControls>
       {notice && !editing ? <p className="route-management-notice">{notice}</p> : null}
       <div className="route-table-scroll"><table className="route-management-table"><thead><tr><th>Route</th><th>Barangay</th><th>Schedule</th><th>Driver</th><th>Status</th><th>Actions</th></tr></thead><LoadingTableBody loading={isLoading} hasData={routes.length > 0} error={error && !editing ? error : ''} onRetry={load} columns={6} rows={pagination.controls.pageSize}>{!visibleRoutes.length ? <tr><td colSpan="6" className="route-table-message">No routes match this filter.</td></tr> : pagination.rows.map((route) => <tr key={route.id}><td><strong>{route.name}</strong><small>{route.stops.length} active stop{route.stops.length === 1 ? '' : 's'}</small></td><td>{route.barangay.join(', ') || '—'}</td><td>{route.schedule.map((day) => DAYS[day]).join(', ') || '—'}</td><td>{route.collectorName}</td><td><span className={`route-status ${route.isActive ? 'route-active' : 'route-archived'}`}>{route.isActive ? 'Active' : 'Archived'}</span></td><td><div className="route-row-actions"><Button variant="tertiary" aria-label={`Edit ${route.name}`} className="truck-icon-button" onPress={() => openEditor(route)} type="button"><RouteIcon name="edit" size={16} /></Button>{route.isActive ? <Button variant="tertiary" aria-label={`Archive ${route.name}`} className="truck-icon-button truck-archive-button" onPress={() => setArchiveTarget(route)} type="button"><RouteIcon name="archive" size={16} /></Button> : null}</div></td></tr>)}</LoadingTableBody></table></div><TablePagination label="Manage routes" {...pagination.controls} disabled={isLoading} /></Card>
 

@@ -27,12 +27,11 @@ export default function NotificationsPage({ feed, onOpen, Icon }) {
   });
   return <>
     <PageHeader title="Notifications" action={<Button variant="secondary" className="outline-button" isDisabled={loading || !!busy} onPress={refresh}><Icon name="refresh" size={16}/>Refresh</Button>}/>
-    <p className="notifications-intro">Complaints, resident replies, truckload submissions, and finished collections. All times are in Manila time.</p>
     <section className="notifications-card" aria-label="Admin notifications">
       <div className="notifications-toolbar">
         <div className="notifications-tabs" role="group" aria-label="Notification read status">{[false, true].map(unread => <Button key={String(unread)} variant="ghost" aria-pressed={filter.unread === unread} isDisabled={!!busy} onPress={() => changeFilter({ unread })}>{unread ? `Unread${data ? ` (${data.unread})` : ''}` : 'All notifications'}</Button>)}</div>
         <AppSelect aria-label="Notification category" options={categories} value={filter.type} disabled={!!busy} onChange={type => changeFilter({ type })}/>
-        <Button variant="ghost" className="notifications-mark-page" isDisabled={loading || !!busy || !items.some(item => !item.read)} onPress={() => act('page', () => markRead(items.filter(item => !item.read).map(item => item.id)))}>Mark page as read</Button>
+        <Button variant="secondary" className="notifications-mark-page" isDisabled={loading || !!busy || !items.some(item => !item.read)} onPress={() => act('page', () => markRead(items.filter(item => !item.read).map(item => item.id)))}>Mark page as read</Button>
       </div>
       {actionError ? <p className="notifications-error" role="alert">{actionError}</p> : null}
       {error && data ? <div className="notifications-error" role="alert">{error} <Button variant="ghost" onPress={refresh}>Retry</Button></div> : null}
@@ -43,7 +42,7 @@ export default function NotificationsPage({ feed, onOpen, Icon }) {
             {item.type === 'route' && item.remaining > 0 ? <p className="notifications-remaining">{item.remaining} stops have no uploaded collection record yet.</p> : null}
             <time dateTime={item.date}>{formatTime(item.date)}</time>
           </div>
-          <div className="notifications-actions"><Button variant="secondary" className="outline-button" isDisabled={loading || !!busy} onPress={() => open(item)}>{busy === item.id ? 'Opening...' : item.type === 'complaint' || item.type === 'reply' ? 'View conversation' : 'View details'}</Button>{!item.read ? <Button variant="ghost" isDisabled={loading || !!busy} onPress={() => act(`read:${item.id}`, () => markRead([item.id]))} aria-label={`Mark ${item.title.toLowerCase()} as read`}>Mark as read</Button> : <span className="notifications-read-label">Read</span>}</div>
+          <div className="notifications-actions"><Button variant="secondary" className="outline-button" isDisabled={loading || !!busy} onPress={() => open(item)}>{busy === item.id ? 'Opening...' : item.type === 'complaint' || item.type === 'reply' ? 'View conversation' : 'View details'}</Button>{!item.read ? <Button variant="secondary" className="notifications-mark-item" isDisabled={loading || !!busy} onPress={() => act(`read:${item.id}`, () => markRead([item.id]))} aria-label={`Mark ${item.title.toLowerCase()} as read`}>Mark as read</Button> : <span className="notifications-read-label">Read</span>}</div>
         </li>)}</ul> : <div className="notifications-empty"><Icon name="bell" size={32}/><h3>{filter.unread ? "You're all caught up" : 'No notifications here yet'}</h3><p>{filter.type !== 'all' ? 'Try another activity category.' : 'New activity will appear here automatically.'}</p></div>}
       </LoadingRegion>
       <TablePagination label="Notifications" page={filter.page} pageSize={filter.limit} pageSizeOptions={[4]} total={data?.total || 0} disabled={loading || !!busy} onPageChange={page => changeFilter({ page })} onPageSizeChange={limit => changeFilter({ limit })}/>

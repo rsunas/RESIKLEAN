@@ -432,14 +432,6 @@ function formatContactNumber(value) {
   return String(value);
 }
 
-function RouteHistorySearchPortal({ children }) {
-  const [target, setTarget] = useState(null);
-  useEffect(() => {
-    setTarget(document.querySelector('.route-history-card .filter-row'));
-  }, []);
-  return target ? createPortal(children, target) : null;
-}
-
 function AccountsToolbarPortal({ children }) {
   const [target, setTarget] = useState(null);
   useEffect(() => {
@@ -479,6 +471,7 @@ export default function Dashboard() {
   const [routeHistoryRows, setRouteHistoryRows] = useState([]);
   const historyRequest = useRef(0);
   const routeDetailTarget = useRef(null);
+  const routeDetailRequest = useRef(0);
   const [routeHistoryPagination, setRouteHistoryPagination] = useState({ total: 0, page: 1, limit: 7, totalPages: 1 });
   const [routeHistoryLoading, setRouteHistoryLoading] = useState(false);
   const [routeHistoryError, setRouteHistoryError] = useState('');
@@ -491,6 +484,14 @@ export default function Dashboard() {
   const [rhDateFrom, setRhDateFrom] = useState('');
   const [rhDateTo, setRhDateTo] = useState('');
   const [rhQuery, setRhQuery] = useState('');
+  const [rhSearchQuery, setRhSearchQuery] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setRhSearchQuery(rhQuery.trim());
+      setRouteHistoryPagination(current => current.page === 1 ? current : { ...current, page: 1 });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [rhQuery]);
   const [rhStatus, setRhStatus] = useState('all');
   const [accountQuery, setAccountQuery] = useState('');
   const [accountRole, setAccountRole] = useState('all');
@@ -627,7 +628,7 @@ export default function Dashboard() {
       if (rhBarangay !== 'all') params.set('barangay', rhBarangay);
       if (rhDateFrom) params.set('from', rhDateFrom);
       if (rhDateTo) params.set('to', rhDateTo);
-      if (rhQuery.trim()) params.set('q', rhQuery.trim());
+      if (rhSearchQuery) params.set('q', rhSearchQuery);
       if (rhStatus !== 'all') params.set('status', rhStatus);
       params.set('page', String(routeHistoryPagination.page));
       params.set('limit', String(routeHistoryPagination.limit));
@@ -652,10 +653,11 @@ export default function Dashboard() {
     } finally {
       if (request === historyRequest.current) setRouteHistoryLoading(false);
     }
-  }, [API_URL, rhQuery, rhStatus, rhBarangay, rhCollectorId, rhDateFrom, rhDateTo, routeHistoryPagination.limit, routeHistoryPagination.page, token]);
+  }, [API_URL, rhSearchQuery, rhStatus, rhBarangay, rhCollectorId, rhDateFrom, rhDateTo, routeHistoryPagination.limit, routeHistoryPagination.page, token]);
 
   const loadRouteHistoryDetail = useCallback(async (id) => {
-    if (!API_URL || !token) return null;
+    if (!API_URL || !token || !id) return null;
+    const request = ++routeDetailRequest.current;
     setRouteDetailLoading(true);
     setRouteDetailError('');
     try {
@@ -664,17 +666,25 @@ export default function Dashboard() {
       });
       const result = await response.json();
       if (!response.ok || !result.success) throw new Error(result.error || 'Unable to load route history detail.');
+      if (request !== routeDetailRequest.current) return null;
       setSelectedRouteHistory(result.data || null);
       return result.data || null;
     } catch (error) {
+      if (request !== routeDetailRequest.current) return null;
       const msg = error instanceof Error ? error.message : 'Unable to load route history detail.';
       setRouteDetailError(msg);
-      setSelectedRouteHistory(null);
       return null;
     } finally {
-      setRouteDetailLoading(false);
+      if (request === routeDetailRequest.current) setRouteDetailLoading(false);
     }
   }, [API_URL, token]);
+
+  useEffect(() => {
+    if (!isRouteHistoryDetailVisible) {
+      routeDetailRequest.current += 1;
+      setRouteDetailLoading(false);
+    }
+  }, [isRouteHistoryDetailVisible]);
 
   const openRouteHistoryDetail = useCallback(async (row) => {
     routeDetailTarget.current = row?.id;
@@ -1032,7 +1042,7 @@ export default function Dashboard() {
 
   if (!token || storedUser.role !== 'admin') return <Navigate replace to="/login" />;
 
-  const routeHistory = <><PageHeader action={<Button className="outline-button" isDisabled={routeHistoryLoading} onPress={loadRouteHistory} variant="secondary"><Icon name="refresh" size={16} />{routeHistoryLoading ? 'Refreshing…' : 'Refresh'}</Button>} description="Completed route collections with geofence-verified entry and exit events" title="Route History" /><Card className="table-card route-history-card"><DisabledControls disabled={routeHistoryLoading}><div className="filter-row"><AppSelect aria-label="Filter by driver" onChange={value => changeHistoryFilter(setRhCollectorId, value)} options={routeHistoryFilterCollectors} value={rhCollectorId} /><AppSelect aria-label="Filter by area" onChange={value => changeHistoryFilter(setRhBarangay, value)} options={routeHistoryFilterBarangays} value={rhBarangay} /><AppDatePicker label="From date" ariaLabel="Filter from date" hideLabel onChange={value => changeHistoryFilter(setRhDateFrom, value)} value={rhDateFrom} /><AppDatePicker label="To date" ariaLabel="Filter to date" hideLabel onChange={value => changeHistoryFilter(setRhDateTo, value)} value={rhDateTo} /><AppSelect aria-label="Filter by status" onChange={value => changeHistoryFilter(setRhStatus, value)} options={[{ label: 'All statuses', value: 'all' }, { label: 'Collected', value: 'collected' }, { label: 'Partial', value: 'partial' }, { label: 'Flagged', value: 'flagged' }, { label: 'Not collected', value: 'notcollected' }]} value={rhStatus} /><span className="entries-count">{routeHistoryPagination.total} entries</span></div></DisabledControls><div className="table-scroll"><table className="standard-data-table admin-data-table route-history-table"><thead><tr><th>Area</th><th>Date</th><th>Street Segment</th><th>Driver</th><th>Truck</th><th className="actions-col">Actions</th></tr></thead><LoadingTableBody loading={routeHistoryLoading} hasData={routeHistoryRows.length > 0} error={routeHistoryError} onRetry={loadRouteHistory} rows={routeHistoryPagination.limit} columns={6}>{rhDisplayRows.length ? rhDisplayRows.map((row) => {
+  const routeHistory = <><PageHeader action={<Button className="outline-button" isDisabled={routeHistoryLoading} onPress={loadRouteHistory} variant="secondary"><Icon name="refresh" size={16} />{routeHistoryLoading ? 'Refreshing…' : 'Refresh'}</Button>} description="Completed route collections with geofence-verified entry and exit events" title="Route History" /><Card className="table-card route-history-card"><div className="filter-row"><label className="route-history-search-wrapper"><Icon name="search" size={17} /><input aria-label="Search route history" onChange={event => setRhQuery(event.target.value)} placeholder="Search area, street, driver, or truck" type="search" value={rhQuery} /></label><AppSelect aria-label="Filter by driver" onChange={value => changeHistoryFilter(setRhCollectorId, value)} options={routeHistoryFilterCollectors} value={rhCollectorId} /><AppSelect aria-label="Filter by area" onChange={value => changeHistoryFilter(setRhBarangay, value)} options={routeHistoryFilterBarangays} value={rhBarangay} /><div className="route-history-date-range" role="group" aria-label="Collection date range"><AppDatePicker label="From date" ariaLabel="Filter from date" hideLabel onChange={value => changeHistoryFilter(setRhDateFrom, value)} value={rhDateFrom} /><AppDatePicker label="To date" ariaLabel="Filter to date" hideLabel onChange={value => changeHistoryFilter(setRhDateTo, value)} value={rhDateTo} /></div><AppSelect aria-label="Filter by status" onChange={value => changeHistoryFilter(setRhStatus, value)} options={[{ label: 'All statuses', value: 'all' }, { label: 'Collected', value: 'collected' }, { label: 'Partial', value: 'partial' }, { label: 'Flagged', value: 'flagged' }, { label: 'Not collected', value: 'notcollected' }]} value={rhStatus} /><span className="entries-count">{routeHistoryPagination.total} entries</span></div><div className="table-scroll"><table className="standard-data-table admin-data-table route-history-table"><thead><tr><th>Area</th><th>Date</th><th>Street Segment</th><th>Driver</th><th>Truck</th><th className="actions-col">Actions</th></tr></thead><LoadingTableBody loading={routeHistoryLoading} hasData={routeHistoryRows.length > 0} error={routeHistoryError} onRetry={loadRouteHistory} rows={routeHistoryPagination.limit} columns={6}>{rhDisplayRows.length ? rhDisplayRows.map((row) => {
     return (
       <tr key={row.id}>
         <td>{row.routeName || '—'}</td>
@@ -1072,7 +1082,6 @@ export default function Dashboard() {
 
   const accountPage = <Card className="table-card accounts-table-card"><div className="table-scroll"><table className="standard-data-table admin-data-table"><thead><tr><th>Name</th><th>Role</th><th>Assigned area</th><th>Contact</th><th>Email</th><th className="accounts-profile-actions" scope="col">Actions</th></tr></thead><LoadingTableBody loading={isRefreshing} hasData={apiData.users !== null} error={dashboardLoadError} onRetry={refreshDashboard} variant="accounts" rows={accountPagination.controls.pageSize} columns={6}>{accountPagination.rows.map((account) => <tr key={account.id}><td><AvatarName name={account.name} photoUrl={account.profilePhotoUrl} /></td><td><Chip className={`role-chip role-${account.role}`} size="sm">{titleCase(account.role)}</Chip></td><td>{account.area}</td><td>{formatContactNumber(account.contact)}</td><td>{account.email}</td><td className="accounts-profile-actions"><AccountIdentityButton account={account} token={token} apiUrl={API_URL} /></td></tr>)}{!filteredAccountRows.length ? <tr><td colSpan={6} className="empty-cell">No accounts match the current filters.</td></tr> : null}</LoadingTableBody></table></div><TablePagination disabled={isRefreshing} label="Manage accounts" {...accountPagination.controls} /></Card>;
 
-  const routeHistorySearch = <RouteHistorySearchPortal><label className="route-history-search-wrapper"><Icon name="search" size={17} /><input disabled={routeHistoryLoading} aria-label="Search route history" onChange={(event) => changeHistoryFilter(setRhQuery, event.target.value)} placeholder="Search area, street, driver, or truck" type="search" value={rhQuery} /></label></RouteHistorySearchPortal>;
   const accountsToolbar = <AccountsToolbarPortal><DisabledControls disabled={isRefreshing}><div className="accounts-toolbar"><div className="navigation-tools"><label><Icon name="search" size={16} /><input aria-label="Search accounts" placeholder="Search accounts" type="search" value={accountQuery} onChange={event => setAccountQuery(event.target.value)} /></label><AppSelect aria-label="All account roles" value={accountRole} onChange={setAccountRole} options={[{ label: 'All account roles', value: 'all' }, { label: 'Admin', value: 'admin' }, { label: 'Driver', value: 'collector' }, { label: 'Staff', value: 'staff' }]} /></div><Button className="primary-button accounts-action-button" onPress={() => { setSubmissionState({ loading: false, error: '', message: '' }); setShowAccountForm(true); }}><Icon name="plus" size={16} />Add account</Button></div></DisabledControls></AccountsToolbarPortal>;
   const openNotification = async (item, record) => {
     if (item.type === 'route') {
@@ -1086,7 +1095,7 @@ export default function Dashboard() {
       navigate('/dashboard?view=complaints');
     }
   };
-  const pageContent = { announcements: <AnnouncementsPage token={token} />, notifications: <NotificationsPage feed={notificationFeed} Icon={Icon} onOpen={openNotification} />, settings: <SettingsPage user={storedUser} token={token} onUserChange={updateOwnProfile} />, overview, routes: <>{routeHistorySearch}{routeHistory}</>, complaints: complaintInbox, activity, 'manage-routes': manageRoutes, assignments, accounts: <><PageHeader title="Manage accounts" />{accountsToolbar}{accountPage}</>, trucks }[activePage];
+  const pageContent = { announcements: <AnnouncementsPage token={token} />, notifications: <NotificationsPage feed={notificationFeed} Icon={Icon} onOpen={openNotification} />, settings: <SettingsPage user={storedUser} token={token} onUserChange={updateOwnProfile} />, overview, routes: routeHistory, complaints: complaintInbox, activity, 'manage-routes': manageRoutes, assignments, accounts: <><PageHeader title="Manage accounts" />{accountsToolbar}{accountPage}</>, trucks }[activePage];
   return <main className="admin-shell">{createPortal(<><Button isIconOnly variant="ghost" className="sidebar-collapse-toggle" aria-label={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} aria-pressed={isSidebarCollapsed} onPress={() => setIsSidebarCollapsed(value => !value)}><span className="sidebar-collapse-toggle-icon" aria-hidden="true">{isSidebarCollapsed ? '›' : '‹'}</span></Button><Button isIconOnly variant="ghost" className="mobile-sidebar-toggle" aria-label={isMobileSidebarOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={isMobileSidebarOpen} onPress={() => setIsMobileSidebarOpen(value => !value)}><span className="mobile-sidebar-toggle-icon" aria-hidden="true">{isMobileSidebarOpen ? '×' : '☰'}</span></Button><Button variant="ghost" className="mobile-sidebar-backdrop" aria-label="Close navigation" onPress={() => setIsMobileSidebarOpen(false)} /></>, document.body)}<aside className="admin-sidebar"><div className="brand"><img alt="ResiKlean logo" className="brand-logo brand-logo-full" src="/swmo-resiklean-logo.svg" /><img alt="ResiKlean logo" className="brand-logo brand-logo-mark" src="/resiklean-sidebar-mark.svg" /></div><nav>{NAV_ITEMS.map((item) => <Button type="button" variant="tertiary" data-page-link aria-label={tr(item.label)} aria-current={activePage === item.id ? 'page' : undefined} className={activePage === item.id ? 'nav-link active' : 'nav-link'} key={item.id} title={tr(item.label)} onPress={() => { selectPage(item.id); setIsMobileSidebarOpen(false); }}><Icon name={item.icon} /><span className="sidebar-label">{tr(item.label)}</span></Button>)}<NotificationNav count={notificationFeed.data?.unread ?? null} loading={notificationFeed.loading} error={notificationFeed.error} active={activePage === 'notifications'} Icon={Icon} onOpen={() => { navigate('/notifications'); setIsMobileSidebarOpen(false); }} /></nav><SidebarAccount user={storedUser} Icon={Icon} settingsActive={activePage === 'settings'} onSettings={() => { navigate('/settings'); window.scrollTo(0, 0); setIsMobileSidebarOpen(false); }} onSignOut={() => { setIsMobileSidebarOpen(false); setShowLogoutConfirm(true); }} /></aside><section className="admin-workspace"><section className="dashboard-content">{apiData.usingPlaceholder && !isRefreshing && activePage !== 'settings' && activePage !== 'notifications' ? <p className="data-note">Live dashboard data is unavailable. Retry the affected section.</p> : null}{pageContent}</section></section><AccountModal isOpen={showAccountForm} onClose={() => setShowAccountForm(false)} account={newAccount} setAccount={setNewAccount} submission={submissionState} setSubmission={setSubmissionState} onSubmit={createAccount} />{selectedActivity ? <TruckloadSubmissionDialog activity={selectedActivity} load={apiData.loads?.find(load => load._id === selectedActivity.id)} onClose={() => setSelectedActivity(null)} /> : null}{isRouteHistoryDetailVisible ? (() => {
     const d = selectedRouteHistory;
     const data = d || {};
@@ -1114,7 +1123,10 @@ export default function Dashboard() {
               <h2>Route History Report</h2>
               <p className="modal-subtitle"><ExpandableRouteText key={data.id} text={data.route?.name || data.routeName || routeLabel} limit={100} /> · {areaLabel} · {data.eventDate || data.date || reference.reportDate || '—'}</p>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <Button className="route-history-refresh-button" size="sm" variant="secondary" isDisabled={routeDetailLoading} onPress={() => void loadRouteHistoryDetail(routeDetailTarget.current)}>
+                <Icon name="refresh" size={16} />{routeDetailLoading ? 'Refreshing...' : 'Refresh trail'}
+              </Button>
               <Button className="route-history-export-button" isDisabled={isExportingPdf || routeDetailLoading} onPress={() => void exportRouteHistoryPDF()} type="button" variant="primary">
                 <Icon name={isExportingPdf ? 'refresh' : 'inbox'} size={16} />
                 <span>{isExportingPdf ? 'Exporting PDF…' : 'Export to PDF'}</span>

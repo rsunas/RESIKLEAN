@@ -2,6 +2,7 @@ const { trailSegments, routeSegments } = require('../routeHistoryTrail');
 const path = require('path');
 const fs = require('fs');
 const { getSegmentTrailImage } = require('../mapStaticImage');
+const { trailMapViewport } = require('../trailMapViewport');
 
 const LOGO_PATH = path.resolve(__dirname, '../../../assets/swmo-resiklean-logo.png');
 
@@ -157,24 +158,22 @@ function reportLayout(doc) {
 const validCoordinate = c => Array.isArray(c) && Number.isFinite(c[0]) && Number.isFinite(c[1]) && Math.abs(c[0]) <= 180 && Math.abs(c[1]) <= 90;
 const recordedTime = value => value && Number.isFinite(new Date(value).getTime()) ? manilaDateTime(value) : 'Not recorded';
 
-function drawTrailDiagram(doc, box, trail, stops) {
+function drawTrailDiagram(doc, box, trail, stops, hasBasemap = false) {
   const expected = trail.expectedSegments || [];
   const covered = trail.coveredSegments || [];
   const coords = [...expected.flat(), ...covered.flat(), ...stops.map(s => s.coordinate)].filter(validCoordinate);
   doc.save();
-  doc.rect(box.x, box.y, box.width, box.height).fill('#f4faf7');
+  if (!hasBasemap) doc.rect(box.x, box.y, box.width, box.height).fill('#f4faf7');
+  doc.rect(box.x, box.y, box.width, box.height).clip();
   if (!coords.length) {
     doc.fillColor(COLORS.grey).font('Helvetica').fontSize(10).text('No route geometry or GPS coordinates recorded.', box.x + 20, box.y + box.height / 2, { width: box.width - 40, lineBreak: false });
     doc.restore(); return;
   }
-  // Mercator coordinates preserve the shape of the actual uploaded route.
-  const mercator = c => [c[0] * Math.PI / 180, Math.log(Math.tan(Math.PI / 4 + Math.max(-85, Math.min(85, c[1])) * Math.PI / 360))];
-  const projected = coords.map(mercator);
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  projected.forEach(([x, y]) => { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); });
-  const dx = maxX - minX, dy = maxY - minY;
-  const scale = Math.min((box.width - 56) / (dx || 0.000001), (box.height - 56) / (dy || 0.000001));
-  const project = c => { const [x, y] = mercator(c); return [box.x + box.width / 2 + (x - (minX + maxX) / 2) * scale, box.y + box.height / 2 - (y - (minY + maxY) / 2) * scale]; };
+  const camera = trailMapViewport({ ...trail, stopCoordinates: stops.map(s => s.coordinate), width: Math.round(box.width * 1.5), height: Math.round(box.height * 1.5) });
+  const project = coordinate => {
+    const [x, y] = camera.project(coordinate);
+    return [box.x + x * box.width / camera.width, box.y + y * box.height / camera.height];
+  };
   const path = (line, color, dashed) => {
     const points = line.filter(validCoordinate).map(project);
     if (!points.length) return;
@@ -186,11 +185,10 @@ function drawTrailDiagram(doc, box, trail, stops) {
   };
   expected.forEach(line => path(line, COLORS.greyLight, true));
   covered.forEach(line => path(line, COLORS.redSoft, false));
+  // Small dots keep dense stop clusters from hiding the recorded travel.
   stops.forEach(stop => {
     if (!validCoordinate(stop.coordinate)) return;
-    const [x, y] = project(stop.coordinate);
-    doc.circle(x, y, 7).fillAndStroke('#ffffff', COLORS.tealDark);
-    doc.fillColor(COLORS.tealDark).font('Helvetica-Bold').fontSize(7).text(String(stop.number), x - 7, y - 2.5, { width: 14, align: 'center', lineBreak: false });
+    doc.circle(...project(stop.coordinate), 2.5).fillAndStroke(COLORS.tealDark, '#ffffff');
   });
   [[trail.entryCoord, 'Start', COLORS.redSoft], [trail.exitCoord, 'Last GPS', COLORS.dark]].forEach(([c, label, color]) => {
     if (!validCoordinate(c)) return;
@@ -228,12 +226,12 @@ async function generateRouteHistoryPDF(doc, data) {
       image = await getSegmentTrailImage({ ...mapTrail, stopCoordinates: mapStops.map(s => s.coordinate).filter(validCoordinate), width: Math.round(width * 1.5), height: height * 1.5 });
       if (image) doc.image(image, box.x, box.y, { width, height });
     } catch { image = null; }
-    if (!image) drawTrailDiagram(doc, box, mapTrail, mapStops);
+    drawTrailDiagram(doc, box, mapTrail, mapStops, Boolean(image));
     layout.y += height + 10;
     layout.paragraph('Red: recorded GPS travel. Grey dashed: assigned route. Green markers: assigned stops.', { size: 8, gap: 3 });
-    layout.paragraph(image ? 'Map shows uploaded locations; stop markers do not confirm a visit.' : 'Geographic diagram (street map unavailable). Numbered stops match the table below.', { size: 8, gap: 3 });
+    layout.paragraph(image ? 'Map shows uploaded locations; stop markers do not confirm a visit.' : 'Geographic diagram (street map unavailable). All uploaded GPS points are still drawn; stop details are listed below.', { size: 8, gap: 3 });
   }
-  await mapSection('ASSIGNED ROUTE, RECORDED TRAIL AND STOPS', trail, stops, 230);
+  await mapSection('ASSIGNED ROUTE, RECORDED TRAIL AND STOPS', trail, stops, 300);
   layout.paragraph(`GPS travel recorded: ${recordedTime(trail.firstRecordedAt)} to ${recordedTime(trail.lastRecordedAt)}. ${trail.pointCount || 0} uploaded GPS points.`, { size: 9 });
   layout.paragraph('GPS travel can include roads outside the assigned route. Lines connect uploaded points within each recorded segment; they do not prove collection or fill gaps between trips.', { size: 8 });
   if (!trail.expectedCoordinates?.length) layout.paragraph('Assigned route geometry is not available; listed stops are still included below.');
@@ -241,15 +239,11 @@ async function generateRouteHistoryPDF(doc, data) {
   const missingCoordinates = stops.filter(s => !validCoordinate(s.coordinate)).length;
   if (missingCoordinates) layout.paragraph(`${missingCoordinates} stop(s) have no coordinates and appear in the table only.`);
 
-  // Keep short trails readable even when the planned route is much larger or distant.
-  const span = coords => {
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    coords.filter(validCoordinate).forEach(([x, y]) => { minX = Math.min(minX, x); maxX = Math.max(maxX, x); minY = Math.min(minY, y); maxY = Math.max(maxY, y); });
-    return Math.max(maxX - minX, maxY - minY, 0);
-  };
-  if (trail.coveredCoordinates?.length && span(trail.coveredCoordinates) < span([...(trail.expectedCoordinates || []), ...trail.coveredCoordinates, ...stops.map(s => s.coordinate)]) * 0.3) {
-    await mapSection('RECORDED TRAIL - CLOSE VIEW', { ...trail, expectedCoordinates: [], expectedSegments: [] }, [], 180);
+  // Every recorded trip gets an unobstructed, larger travel view.
+  if (trail.coveredCoordinates?.length) {
+    await mapSection('RECORDED TRAIL - CLOSE VIEW', { ...trail, expectedCoordinates: [], expectedSegments: [] }, [], 320);
   }
+  layout.paragraph('This export includes every GPS point uploaded for this route and report date. Points waiting on a phone appear after sync and a new export.', { size: 8 });
   layout.heading('RECORDED TRIPS', 140);
   layout.paragraph('Trip start/end are device trip events. GPS first/last are uploaded locations; neither is a verified stop entry or exit.');
   const trips = data.recordedTrips || [];

@@ -12,6 +12,12 @@ const React = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
 const RN = require('react-native-web');
 
+
+const badgeModule = {};
+const badgeCode = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src/components/upload-sync-badge.tsx'), 'utf8'), {compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;
+new Function('require','exports',badgeCode)(name=>name==='react-native'?RN:name==='expo/node_modules/@expo/vector-icons'?{Feather:()=>null}:require(name),badgeModule);
+const {UploadSyncBadge}=badgeModule;
+
 const source = ts.createSourceFile('staff.tsx', fs.readFileSync(path.join(__dirname, '../app/staff.tsx'), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const declarations = new Map();
 function visit(node) {
@@ -85,7 +91,7 @@ function renderCase(count, fontScale) {
   const Icon = ({ size }) => React.createElement(RN.View, { style: { width: size, height: size, flexShrink: 0 } });
   const history = Array.from({ length: count }, (_, index) => fixture(index));
   const renderHistory = evaluate(declarations.get('renderHistory'), {
-    React, View, Text, NativeText, Card: View, ScrollView: RN.ScrollView, Pressable: RN.Pressable,
+    React, View, Text, NativeText, UploadSyncBadge, Card: View, ScrollView: RN.ScrollView, Pressable: RN.Pressable,
     RevealRow: ({ children }) => children, revealHistory: false,
     SkeletonRegion: ({ children }) => children, SkeletonBlock: () => null, SkeletonRows: () => null, historySkeleton: {},
     LinearGradient: ({ style }) => React.createElement(RN.View, { style }),

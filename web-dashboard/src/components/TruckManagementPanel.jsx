@@ -229,7 +229,7 @@ export default function TruckManagementPanel({ token }) {
     <Card className="truck-directory-card">
       <DisabledControls disabled={isLoading}><div className="truck-filter-row">
         <label className="truck-search-control"><FleetIcon name="search" size={17} /><input aria-label="Search trucks" onChange={(event) => setQuery(event.target.value)} placeholder="Search truck no. or plate no." value={query} /></label>
-        <select aria-label="Filter truck availability" onChange={(event) => setAvailabilityFilter(event.target.value)} value={availabilityFilter}><option value="all">All availability</option><option value="available">Available</option><option value="unavailable">Unavailable</option></select>
+        <AppSelect aria-label="Filter truck availability" onChange={setAvailabilityFilter} value={availabilityFilter} options={[{ label: "All availability", value: "all" }, { label: "Available", value: "available" }, { label: "Unavailable", value: "unavailable" }]} />
         <Button className="primary-button truck-add-button" onPress={openCreateEditor}><FleetIcon name="plus" size={16} />Add truck</Button>
       </div></DisabledControls>
 
@@ -266,7 +266,7 @@ export default function TruckManagementPanel({ token }) {
         <div className="truck-editor-grid"><label>Truck no.<input autoCapitalize="characters" onChange={(event) => updateForm('truckNumber', event.target.value)} placeholder="TR-101" required value={form.truckNumber} /></label><label>Plate no.<input autoCapitalize="characters" onChange={(event) => updateForm('plateNumber', event.target.value)} placeholder="ABC-1234" required value={form.plateNumber} /></label></div>
         <div className="truck-editor-grid"><label>Color<input onChange={(event) => updateForm('color', event.target.value)} placeholder="e.g. Blue or White" required value={form.color} /></label><label>Availability<AppSelect aria-label="Truck availability" className="truck-availability-select" onChange={(availability) => updateForm('availability', availability)} options={[{ label: 'Available', value: 'available' }, { label: 'Unavailable', value: 'unavailable' }]} value={form.availability} /></label></div>
         <div className="truck-editor-grid truck-dimension-inputs"><label>Length (m)<input {...TRUCK_DIMENSION_LIMITS.length} onChange={(event) => updateForm('length', event.target.value)} placeholder="3.80" required step="0.01" type="number" value={form.length} /></label><label>Width (m)<input {...TRUCK_DIMENSION_LIMITS.width} onChange={(event) => updateForm('width', event.target.value)} placeholder="1.10" required step="0.01" type="number" value={form.width} /></label><label>Height (m)<input {...TRUCK_DIMENSION_LIMITS.height} onChange={(event) => updateForm('height', event.target.value)} placeholder="2.40" required step="0.01" type="number" value={form.height} /></label></div>
-        <p>Load-space dimensions in metres: length 1–12, width 1–3, height 0.3–4.</p>
+        <p>Enter load-space dimensions in metres.</p>
 
         {listError ? <p className="feedback error-feedback" role="alert">{listError}</p> : null}
         <div className="capacity-preview"><span>Capacity (cu.m)</span><strong>{liveCapacity ? liveCapacity.toFixed(2) : '0.00'}</strong><p>Calculated automatically from length × width × height. This value cannot be edited.</p></div>

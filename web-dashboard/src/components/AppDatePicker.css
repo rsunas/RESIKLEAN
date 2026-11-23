@@ -19,5 +19,4 @@
 .tonnage-export-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; }
 .tonnage-export-actions button { flex-shrink: 0; min-height: 40px; }
 .activity-toolbar > .app-date-picker { align-self: end; }
-.route-history-card .filter-row > .app-date-picker { flex: 1 1 160px; width: 160px; }
-@media(max-width:640px) { .activity-toolbar > .app-date-picker, .route-history-card .filter-row > .app-date-picker { width: 100%; flex-basis: auto; } }
+@media(max-width:640px) { .activity-toolbar > .app-date-picker { width: 100%; flex-basis: auto; } }

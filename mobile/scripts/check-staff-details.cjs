@@ -49,6 +49,13 @@ const mocks = {
   'expo/node_modules/@expo/vector-icons': { Feather: Icon },
   'react-native-safe-area-context': { useSafeAreaInsets: () => ({ top: 24, bottom: 24, left: 0, right: 0 }) },
 };
+
+const badgeModule = {};
+const badgeCode = ts.transpileModule(fs.readFileSync(path.join(__dirname, '../src/components/upload-sync-badge.tsx'), 'utf8'), {compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX}}).outputText;
+new Function('require','exports',badgeCode)(name=>name==='react-native'?RN:name==='expo/node_modules/@expo/vector-icons'?{Feather:()=>null}:require(name),badgeModule);
+const {UploadSyncBadge}=badgeModule;
+
+mocks['@/components/upload-sync-badge'] = { UploadSyncBadge };
 const source = fs.readFileSync(path.join(__dirname, '../src/components/staff-submission-details.tsx'), 'utf8');
 const js = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2020 } }).outputText;
 const component = {};

@@ -86,6 +86,7 @@ export default function RouteHistoryTrail({ data }) {
       </g>
     </svg></div></RecordedTrailMap>
     <p className="rh-trail-note" role="status">{points.length ? `${points.length.toLocaleString()} uploaded GPS points${points.length === 1 ? '. One point cannot form a trail yet.' : '. Includes travel outside the assigned route.'}` : 'No uploaded GPS points for this record. If the driver recorded offline, reconnect their app and allow the trip to sync.'}</p>
+    <p className="rh-trail-note">If the trail ends early, open the driver's app on an internet connection and let the saved trip sync, then select Refresh trail. A completed trip can still have points waiting to upload.</p>
     <p className="rh-trail-note">Lines connect uploaded GPS points. Start and last GPS point are separate from verified geofence entry and exit.</p>
   </div>;
 }

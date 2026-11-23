@@ -6,6 +6,7 @@ import { useNetworkRecovery } from '@/hooks/use-network-recovery';
 import { useAppTheme } from '@/hooks/app-preferences';
 import { requestJson } from '@/lib/network-request';
 import { withTimeout } from '@/lib/async-timeout';
+import { UploadSyncBadge } from '@/components/upload-sync-badge';
 import { WorkProfileEditor } from '@/components/work-profile-editor';
 import { ResidentAvatar } from '@/components/resident-avatar';
 import { ProfileSettingsRow } from '@/components/profile-settings-row';
@@ -151,6 +152,7 @@ type RouteHistoryGroup = {
   trailPath?: RoutePath;
   lastLocation?: [number, number];
   pendingSync?: boolean;
+  syncFailed?: boolean;
   stopLogs: RouteHistoryStopLog[];
 };
 
@@ -453,6 +455,7 @@ export default function CollectorScreen() {
   const [isResolutionSuccessVisible, setIsResolutionSuccessVisible] = useState(false);
   const [historyGroups, setHistoryGroups] = useState<RouteHistoryGroup[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [isSyncingTrails, setIsSyncingTrails] = useState(false);
   const [historyLoadError, setHistoryLoadError] = useState<string | null>(null);
   const [selectedHistoryGroup, setSelectedHistoryGroup] = useState<RouteHistoryGroup | null>(null);
   const [isHistoryDetailVisible, setIsHistoryDetailVisible] = useState(false);
@@ -1244,13 +1247,28 @@ export default function CollectorScreen() {
   useEffect(() => {
     if (!API_URL || !session?.token || !collectorId) return undefined;
 
+    let mounted = true;
+    let activeSyncCount = 0;
+    const trackSyncState = (syncing: boolean) => {
+      activeSyncCount = Math.max(0, activeSyncCount + (syncing ? 1 : -1));
+      if (mounted) setIsSyncingTrails(activeSyncCount > 0);
+    };
     const context = { apiUrl: API_URL, token: session.token, collectorId };
-    const unsubscribe = subscribeToDriverTrailSync(context, result => { if (result.syncedSessions) void loadRouteHistory(session.token); });
+    const unsubscribe = subscribeToDriverTrailSync(
+      context,
+      result => { if (result.syncedSessions) void loadRouteHistory(session.token); },
+      trackSyncState,
+    );
     const syncInterval = setInterval(() => {
-      void syncDriverTrailQueue(context).then(result => { if (result.syncedSessions) void loadRouteHistory(session.token); }).catch(() => {});
+      trackSyncState(true);
+      void syncDriverTrailQueue(context)
+        .then(result => { if (result.syncedSessions) void loadRouteHistory(session.token); })
+        .catch(() => {})
+        .finally(() => trackSyncState(false));
     }, 30_000);
 
     return () => {
+      mounted = false;
       unsubscribe();
       clearInterval(syncInterval);
     };
@@ -1482,6 +1500,17 @@ export default function CollectorScreen() {
       setSession(null);
       router.replace('/login');
     }
+  };
+
+  const syncSavedTrails = async () => {
+    if (!API_URL || !session?.token || !collectorId || isSyncingTrails) return;
+    setIsSyncingTrails(true);
+    try {
+      await syncDriverTrailQueue({ apiUrl: API_URL, token: session.token, collectorId });
+      await loadRouteHistory(session.token);
+    } catch {
+      setHistoryLoadError('GPS upload did not finish. Your saved trail is still on this phone. Try again when online.');
+    } finally { setIsSyncingTrails(false); }
   };
 
   const signOut = () => setIsSignOutConfirmVisible(true);
@@ -1829,7 +1858,10 @@ export default function CollectorScreen() {
           </View>
         )}
         <View style={styles.historyGroup}>
-          <Text style={styles.sectionHeading}>PAST COLLECTIONS</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+            <Text style={styles.sectionHeading}>PAST COLLECTIONS</Text>
+            {historyGroups.some(group => group.pendingSync) ? <Pressable accessibilityRole="button" disabled={isSyncingTrails} onPress={() => void syncSavedTrails()} style={styles.syncButton}><Text style={styles.syncButtonText}>{isSyncingTrails ? 'Syncing...' : 'Sync GPS'}</Text></Pressable> : null}
+          </View>
           {historyLoading && historyGroups.length > 0 ? <ActivityIndicator accessibilityLabel="Loading" color="#0A7F4F" /> : null}
           <SkeletonRegion state={historySkeleton} placeholder={<SkeletonRows kind="history" count={3} />}>
           {historyGroups.length ? visibleHistoryGroups.map((group, index) => (
@@ -1877,6 +1909,7 @@ export default function CollectorScreen() {
                 <View style={styles.historyCardBody}>
                   <Text numberOfLines={1} style={styles.historyCardTitle}>{group.routeName}</Text>
                   <Text numberOfLines={1} style={styles.historyCardDate}>{group.date} · {displayBarangay(group.barangay)}</Text>
+                  <UploadSyncBadge status={group.pendingSync ? isSyncingTrails ? 'syncing' : group.syncFailed ? 'failed' : 'pending' : group.trailPath ? 'synced' : 'unknown'} label={group.pendingSync ? isSyncingTrails ? 'GPS syncing...' : group.syncFailed ? 'GPS upload failed - retry' : 'GPS waiting to sync' : group.trailPath ? 'GPS synced' : 'No GPS trail'} />
                   <View style={styles.historyCardMetricRow}>
                     <Text style={styles.historyCardDistance}>{group.distanceMi.toFixed(1)} mi</Text>
                     <View style={styles.historyCardPillRow}>
@@ -2034,6 +2067,7 @@ export default function CollectorScreen() {
                 <Text style={styles.historyDetailEyebrow}>ROUTE HISTORY REPORT</Text>
                 <Text style={styles.historyDetailTitle}>{selectedHistoryGroup?.routeName || 'Collection details'}</Text>
                 <Text style={styles.historyDetailSubtitle}>Barangay {selectedHistoryGroup ? displayBarangay(selectedHistoryGroup.barangay) : ''} · {selectedHistoryGroup?.date || ''}</Text>
+                <UploadSyncBadge status={selectedHistoryGroup?.pendingSync ? isSyncingTrails ? 'syncing' : selectedHistoryGroup?.syncFailed ? 'failed' : 'pending' : selectedHistoryGroup?.trailPath ? 'synced' : 'unknown'} label={selectedHistoryGroup?.pendingSync ? isSyncingTrails ? 'GPS syncing...' : selectedHistoryGroup?.syncFailed ? 'GPS upload failed - retry' : 'GPS waiting to sync' : selectedHistoryGroup?.trailPath ? 'GPS synced' : 'No GPS trail'} />
               </View>
               <Pressable accessibilityLabel="Close route history" onPress={() => { setIsHistoryMapExpanded(false); setIsHistoryDetailVisible(false); }} style={styles.historyDetailClose}>
                 <Feather color="#314238" name="x" size={20} />

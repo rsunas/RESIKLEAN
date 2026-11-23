@@ -1,13 +1,13 @@
 .table-pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 14px; border-top: 1px solid #e3eae6; padding: 14px 0 0; color: #5a6761; font-size: 12px; }
 .table-pagination-settings, .table-page-jump, .table-page-size, .table-page-controls { display: flex; align-items: center; gap: 8px; }
-.table-pagination-settings { flex-wrap: wrap; gap: 16px; }
+.table-pagination-settings { flex-wrap: wrap; gap: 16px; order: 1; }
 .table-page-size { border-left: 1px solid #e3eae6; padding-left: 16px; }
 .table-pagination .table-page-input { width: 48px; min-width: 48px; height: 34px; min-height: 34px; border: 1px solid #d6e3dc; border-radius: 8px; padding: 0 6px; background: white; text-align: center; font-size: 12px; appearance: textfield; }
 .table-page-input::-webkit-inner-spin-button, .table-page-input::-webkit-outer-spin-button { appearance: none; margin: 0; }
 .table-pagination .app-select { min-width: 64px; width: 64px; }
 .table-pagination .app-select [data-slot="select-trigger"], .table-pagination .app-select .select__trigger { min-height: 34px; height: 34px; padding: 0 8px; border-radius: 8px; font-size: 12px; }
 .table-page-count { color: #71837a; white-space: nowrap; }
-.table-page-controls { gap: 4px; }
+.table-page-controls { gap: 4px; order: 0; }
 .table-page-controls .button { min-width: 34px; width: 34px; height: 34px; padding: 0; border-radius: 8px; border: 1px solid #d6e3dc; background: white; color: #315b4b; font-size: 14px; }
 .table-page-controls .button[aria-current="page"] { background: #e3f4eb; border-color: #e3f4eb; color: #086b42; font-weight: 700; }
 .table-page-controls .button:disabled { opacity: .4; }

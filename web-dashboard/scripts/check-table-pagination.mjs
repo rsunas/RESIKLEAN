@@ -12,12 +12,13 @@ const requests=[];
 const root=fileURLToPath(new URL('../',import.meta.url));
 const server=await createServer({root,server:{host:'127.0.0.1',port:0},define:{'import.meta.env.VITE_API_URL':JSON.stringify('/__pagination-api'),'import.meta.env.VITE_MAPBOX_ACCESS_TOKEN':JSON.stringify('')},plugins:[{
  name:'pagination-fixture',resolveId(id){if(id==='/__pagination.js')return '\0pagination-fixture';},
- load(id){if(id==='\0pagination-fixture')return `import React from 'react';import {createRoot} from 'react-dom/client';import {BrowserRouter} from 'react-router-dom';import Dashboard from '/src/pages/Dashboard.jsx';import '/src/index.css';sessionStorage.setItem('resiklean_admin_token','fixture');sessionStorage.setItem('resiklean_admin_user',JSON.stringify({name:'QA Admin',role:'admin'}));createRoot(document.getElementById('root')).render(React.createElement(BrowserRouter,null,React.createElement(Dashboard)));`;},
+ load(id){if(id==='\0pagination-fixture')return `import React from 'react';import {createRoot} from 'react-dom/client';import {BrowserRouter} from 'react-router-dom';import Dashboard from '/src/pages/Dashboard.jsx';import {PreferencesProvider} from '/src/components/preferences.jsx';import '/src/index.css';window.history.replaceState(null,'','?view=routes');sessionStorage.setItem('resiklean_admin_token','fixture');sessionStorage.setItem('resiklean_admin_user',JSON.stringify({name:'QA Admin',role:'admin'}));createRoot(document.getElementById('root')).render(React.createElement(PreferencesProvider,null,React.createElement(BrowserRouter,null,React.createElement(Dashboard))));`;},
  configureServer(vite){vite.middlewares.use(async(req,res,next)=>{
   if(req.url.startsWith('/__pagination-api')) {
    const url=new URL(req.url,'http://localhost');let data={users,routes,trucks,logs:[],loads:[],reports:[]};
    if(url.pathname.endsWith('/route-history')) {
     requests.push(Object.fromEntries(url.searchParams));
+    await new Promise(resolve => setTimeout(resolve, 450));
     const q=(url.searchParams.get('q')||'').toLowerCase(),status=url.searchParams.get('status');
     const rows=history.filter(row=>(!q||[row.area,row.collector,row.street].some(v=>v.toLowerCase().includes(q)))&&(!status||row.rowStatus===status));
     const page=Number(url.searchParams.get('page')||1),limit=Number(url.searchParams.get('limit')||7);
@@ -44,8 +45,36 @@ try {
  ]) {
   await browser.send('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});
   await click(`[data-page-link][aria-label="${label}"]`);
-  const count=`document.querySelectorAll('${table} tbody tr:not(:has(td[colspan]))').length`;
+  const count=`document.querySelectorAll('${table} tbody tr:not(.skeleton-table-row):not(:has(td[colspan]))').length`;
   await wait(`${count}===7 && document.querySelector('.table-page-count')?.textContent.endsWith('of 23') && !document.querySelector('[aria-label="Next page"]').disabled`);
+  if(label==='Route History') {
+   await browser.evaluate("document.querySelector('[aria-label=\"Search route history\"]').focus()");
+   const before=requests.length;
+   for(const value of ['C','Co','Col']) {
+    await fill('[aria-label="Search route history"]',value);await pause(40);
+   }
+   assert.equal(requests.length,before,'Typing is debounced');
+   await wait("document.querySelector('.route-history-card').textContent.includes('Loading')");
+   assert.ok(await browser.evaluate("document.activeElement?.getAttribute('aria-label')==='Search route history' && !document.activeElement.matches(':disabled')"),'Search keeps focus during fetch');
+   await fill('[aria-label="Search route history"]','Collector 23');
+   await wait(count+"===1 && document.querySelector('.table-page-count').textContent.endsWith('of 1')");
+   assert.ok(await browser.evaluate("document.querySelector('.route-history-table tbody').textContent.includes('Collector 23')"));
+   await fill('[aria-label="Search route history"]','');
+   await wait(count+"===7 && document.querySelector('.table-page-count').textContent.endsWith('of 23')");
+  }
+  if(label==='Manage Routes') {
+   await browser.evaluate("[...document.querySelectorAll('.route-directory-filters .select__trigger')].find(el=>el.textContent.includes('All schedule days')).click()");
+   await pause(500);
+   await wait("[...document.querySelectorAll('[role=option]')].some(el=>el.textContent.trim()==='Tue')");
+   await browser.evaluate("[...document.querySelectorAll('[role=option]')].find(el=>el.textContent.trim()==='Tue').click()");
+   await wait("document.querySelector('.table-page-count').textContent==='0 results'");
+   await browser.evaluate("[...document.querySelectorAll('.route-directory-filters button')].find(el=>el.textContent.trim()==='Clear filters').click()");
+   await wait(count+"===7");
+   await browser.evaluate("[...document.querySelectorAll('.route-directory-filters .select__trigger')].find(el=>el.textContent.includes('All areas')).click()");
+   await wait("[...document.querySelectorAll('[role=option]')].some(el=>el.textContent.trim()==='Abella')");
+   await browser.evaluate("[...document.querySelectorAll('[role=option]')].find(el=>el.textContent.trim()==='Abella').click()");
+   await wait("document.querySelector('.table-page-count').textContent.endsWith('of 23')");
+  }
   const first=await browser.evaluate(`document.querySelector('${table} tbody').innerText`);
   await click('[aria-label="Next page"]');await wait(`document.querySelector('.table-page-input').value==='2' && !document.querySelector('[aria-label="Next page"]').disabled`);
   assert.notEqual(await browser.evaluate(`document.querySelector('${table} tbody').innerText`),first);

@@ -25,7 +25,9 @@ function fixture(count = 29) {
 async function render(input, filename) {
   const payload = buildRouteHistoryPayload(input, { adminUser: { name: 'QA Admin' } });
   const doc = new PDFDocument({ size: 'LETTER', margin: 46, bufferPages: true });
-  const chunks = [], text = [], maps = [];
+  const chunks = [], text = [], maps = [], vertices = [];
+  const originalLineTo = doc.lineTo.bind(doc);
+  doc.lineTo = (x, y) => { vertices.push([x, y]); return originalLineTo(x, y); };
   let page = 1;
   doc.on('pageAdded', () => { page += 1; });
   const originalText = doc.text.bind(doc);
@@ -48,7 +50,7 @@ async function render(input, filename) {
   const buffer = Buffer.concat(chunks);
   if (process.env.ROUTE_PDF_QA_DIR && filename) { fs.mkdirSync(process.env.ROUTE_PDF_QA_DIR, { recursive: true }); fs.writeFileSync(path.join(process.env.ROUTE_PDF_QA_DIR, filename), buffer); }
   expect(buffer.subarray(0, 4).toString()).toBe('%PDF');
-  return { payload, text, maps, pages: page, allText: text.map(t => t.value).join('\n') };
+  return { payload, text, maps, vertices, pages: page, allText: text.map(t => t.value).join('\n') };
 }
 beforeEach(() => getSegmentTrailImage.mockReset().mockResolvedValue(null));
 
@@ -140,4 +142,15 @@ test('start/last markers follow timestamps across overlapping sessions and ignor
   expect(payload.trail.exitCoord).toEqual([123.19, 13.625]);
   expect(payload.trail.lastRecordedAt).toBe('2026-11-15T02:00:00Z');
   expect(payload.trail.pointCount).toBe(4);
+});
+
+test('all 6000 GPS points remain in the export and are drawn in both map views', async () => {
+  const input = fixture(2);
+  input.trailPoints = Array.from({ length: 6000 }, (_, i) => ({clientSessionId:'trip-a', longitude:123.18+i/1000000,latitude:13.62+Math.sin(i/1000)/100,recordedAt:new Date(Date.parse('2026-11-15T00:00:00Z')+i*5000)}));
+  const result = await render(input, 'route-history-long-trip.pdf');
+  expect(result.payload.trail.pointCount).toBe(6000);
+  expect(result.payload.trail.coveredSegments.flat()).toHaveLength(6000);
+  expect(result.vertices.length).toBeGreaterThanOrEqual(2 * 5999);
+  expect(result.allText).toContain('RECORDED TRAIL - CLOSE VIEW');
+  expect(result.allText).toContain('Points waiting on a phone appear after sync');
 });

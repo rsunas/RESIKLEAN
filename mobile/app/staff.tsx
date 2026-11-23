@@ -34,6 +34,7 @@ import { AppText as Text } from '@/components/app-text';
 import { BrandMark } from '@/components/brand-mark';
 import { SignOutConfirmModal } from '@/components/sign-out-confirm-modal';
 import { StaffSubmissionDetails } from '@/components/staff-submission-details';
+import { UploadSyncBadge } from '@/components/upload-sync-badge';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { clearSession, getSession } from '@/lib/session';
 import {
@@ -104,6 +105,7 @@ type StaffProfile = {
 
 type TruckLoadResponse = {
   _id?: string;
+  clientSubmissionId?: string;
   truckPlate?: string;
   routeId?: { barangay?: string | string[]; name?: string } | null;
   length?: number;
@@ -160,7 +162,7 @@ type Submission = {
   totalVolumeM3?: number;
   pileHeightsCm?: Record<string, number>;
   tonnes: number;
-  status: 'Synced' | 'Pending';
+  status: 'Synced' | 'Pending' | 'Failed';
   notes: string;
   photoUrl?: string;
   sidePhotoUrl?: string;
@@ -250,7 +252,7 @@ function mapTruckLoad(load: TruckLoadResponse, staffName = 'You', fallbackArea =
   const breakdown = calculateBreakdown(mode, length, width, height, heights, String(load.pileHeightM ?? 0), effectiveDensity);
   const calculatedTonnage = load.measurementMode || load.pileHeightsCm ? breakdown.tonnes : calculateTonnage(length, width, height, slope, effectiveDensity);
   return {
-    id: load._id || `${load.truckPlate || 'load'}-${load.arrivedAt || Date.now()}`,
+    id: load.clientSubmissionId || load._id || `${load.truckPlate || 'load'}-${load.arrivedAt || Date.now()}`,
     barangay: historyText(load.routeId?.barangay) || fallbackArea.split(' · ')[0] || 'No area assigned',
     truckPlate: load.truckPlate || 'Unknown truck',
     driver: staffName,
@@ -671,7 +673,7 @@ export default function StaffScreen() {
         slopeVolumeM3: qBreakdown.slopeCubicM,
         totalVolumeM3: qBreakdown.totalVolumeM3,
         tonnes: qBreakdown.tonnes,
-        status: 'Pending',
+        status: q.lastError ? 'Failed' : 'Pending',
         notes: q.notes,
         sidePhotoUrl: q.sidePhotoUri,
         backPhotoUrl: q.backPhotoUri,
@@ -738,9 +740,9 @@ export default function StaffScreen() {
         setPendingSync(result.pending);
         if (result.synced > 0) {
           setMessage(`Synced ${result.synced} offline measurement${result.synced > 1 ? 's' : ''} to server.`);
-          await refreshHistory(session.token, session.user.name || profile?.name || 'You');
         }
-      });
+        if (result.synced > 0 || result.failed > 0) await refreshHistory(session.token, session.user.name || profile?.name || 'You');
+      }, syncing => { if (!cancelled) setIsSyncing(syncing); });
     };
 
     void setupQueueSync().catch(() => {});
@@ -801,7 +803,7 @@ export default function StaffScreen() {
             slope: formatSlope(slp),
         pileHeightsCm: q.pileHeightsCm,
             tonnes: calculateTonnage(len, wid, hgt, slp),
-            status: 'Pending',
+            status: q.lastError ? 'Failed' : 'Pending',
             notes: q.notes,
             sidePhotoUrl: q.sidePhotoUri,
             backPhotoUrl: q.backPhotoUri,
@@ -867,7 +869,7 @@ export default function StaffScreen() {
                 slope: formatSlope(slp),
         pileHeightsCm: q.pileHeightsCm,
                 tonnes: calculateTonnage(len, wid, hgt, slp),
-                status: 'Pending',
+                status: q.lastError ? 'Failed' : 'Pending',
                 notes: q.notes,
                 sidePhotoUrl: q.sidePhotoUri,
                 backPhotoUrl: q.backPhotoUri,
@@ -923,6 +925,7 @@ export default function StaffScreen() {
         await refreshHistory(session.token, profile?.name || session.user.name || 'You');
       } else if (result.pending > 0) {
         setMessage(`Could not sync ${result.pending} item(s). Check connection or server status.`);
+        await refreshHistory(session.token, profile?.name || 'You');
       } else {
         setMessage('All measurements are up to date.');
       }
@@ -1381,7 +1384,7 @@ export default function StaffScreen() {
 
         <View style={styles.fieldGroup}>
           <Text style={[styles.formSectionTitle, isDarkTheme && { color: '#F1F6F3' }]}>Proof photos (optional)</Text>
-          <Text style={[styles.photoInstruction, isDarkTheme && { color: '#B4C4BB' }]}>Submit the original images. They will not be cropped before upload.</Text>
+          <Text style={[styles.photoInstruction, isDarkTheme && { color: '#B4C4BB' }]}>Up to 5 MB per photo (10 MB for both). Images will not be cropped before upload.</Text>
           <View style={[styles.photoRow, fontScale > 1.3 && { flexDirection: 'column' }]}>
           <AuditPhotoField
             disabled={isSubmitting || isOpeningAuditCamera}
@@ -1480,7 +1483,7 @@ export default function StaffScreen() {
         <Pressable
           accessibilityHint="Opens the submission details and audit photo"
           accessibilityRole="button"
-          accessibilityLabel={`${submission.barangay || 'No area assigned'}, ${submission.driver}, ${formatTonnage(submission.tonnes)}, ${submission.submittedAt}${submission.status === 'Pending' ? ', Pending sync' : ''}`}
+          accessibilityLabel={`${submission.barangay || 'No area assigned'}, ${submission.driver}, ${formatTonnage(submission.tonnes)}, ${submission.submittedAt}, ${submission.status === 'Synced' ? 'Synced' : submission.status === 'Failed' ? 'Not synced, retry' : 'Waiting to sync'}`}
           key={submission.id}
           onPress={() => setSelectedSubmission(submission)}
           style={styles.historyCardPressable}>
@@ -1488,7 +1491,8 @@ export default function StaffScreen() {
             <View style={styles.historyTopRow}>
               <View style={styles.historyMain}>
                 <NativeText numberOfLines={1} ellipsizeMode="tail" style={[styles.historyBarangay, isDarkTheme && { color: '#F1F6F3' }, (!submission.barangay || submission.barangay === 'No area assigned') && styles.historyMissingArea]}>{submission.barangay || 'No area assigned'}</NativeText>
-                <NativeText numberOfLines={1} ellipsizeMode="tail" style={[styles.historyDriver, isDarkTheme && { color: '#B4C4BB' }]}>{submission.driver} · {submission.submittedAt}{submission.status === 'Pending' ? ' · Pending sync' : ''}</NativeText>
+                <NativeText numberOfLines={1} ellipsizeMode="tail" style={[styles.historyDriver, isDarkTheme && { color: '#B4C4BB' }]}>{submission.driver} · {submission.submittedAt}</NativeText>
+                <UploadSyncBadge status={submission.status === 'Synced' ? 'synced' : isSyncing ? 'syncing' : submission.status === 'Failed' ? 'failed' : 'pending'} />
               </View>
               <View style={styles.historyRight}>
                 <NativeText numberOfLines={1} style={styles.tonnage}>{formatHistoryTonnage(submission.tonnes)}</NativeText>
@@ -1577,7 +1581,8 @@ export default function StaffScreen() {
     <StaffSubmissionDetails
       key={closingSubmission.id}
       visible={Boolean(selectedSubmission)}
-      submission={closingSubmission}
+      submission={history.find(item => item.id === closingSubmission.id) || closingSubmission}
+      syncing={isSyncing}
       onClose={() => setSelectedSubmission(null)}
     />
   ) : null;

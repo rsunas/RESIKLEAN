@@ -9,7 +9,7 @@ const reports = Array.from({length:60},(_,i)=>({_id:'report-'+i,wasteCategory:ca
 let sent=[];let failSend=false;
 const server = await createServer({ root, server: { host: '127.0.0.1', port: 0 }, define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/__shell-api'), 'import.meta.env.VITE_MAPBOX_ACCESS_TOKEN': JSON.stringify('') }, plugins: [{ name: 'shell-fixture',
   resolveId(id) { if (id === '/__shell.js') return '\0shell-fixture'; },
-  load(id) { if (id === '\0shell-fixture') return `import React from 'react'; import {createRoot} from 'react-dom/client'; import {BrowserRouter} from 'react-router-dom'; import Dashboard from '/src/pages/Dashboard.jsx'; import '/src/index.css'; sessionStorage.setItem('resiklean_admin_token','fixture'); sessionStorage.setItem('resiklean_admin_user',JSON.stringify({name:'Super Admin 2',role:'admin'})); createRoot(document.getElementById('root')).render(React.createElement(BrowserRouter,null,React.createElement(Dashboard)));`; },
+  load(id) { if (id === '\0shell-fixture') return `import React from 'react'; import {createRoot} from 'react-dom/client'; import {BrowserRouter} from 'react-router-dom'; import Dashboard from '/src/pages/Dashboard.jsx'; import {PreferencesProvider} from '/src/components/preferences.jsx'; import '/src/index.css'; sessionStorage.setItem('resiklean_admin_token','fixture'); sessionStorage.setItem('resiklean_admin_user',JSON.stringify({name:'Super Admin 2',role:'admin'})); createRoot(document.getElementById('root')).render(React.createElement(PreferencesProvider,null,React.createElement(BrowserRouter,null,React.createElement(Dashboard))));`; },
   configureServer(vite) { vite.middlewares.use(async (req, res, next) => {
     if(req.url.includes('/messages')) {res.setHeader('Content-Type','application/json');if(req.method==='POST'){let body='';for await(const chunk of req)body+=chunk;sent.push(JSON.parse(body));res.statusCode=failSend?500:200;res.end(JSON.stringify({success:!failSend,error:failSend?'Could not send reply':undefined,data:{_id:'sent-'+sent.length,body:JSON.parse(body).body,senderRole:'admin',createdAt:new Date().toISOString()}}));}else res.end(JSON.stringify({success:true,data:Array.from({length:60},(_,i)=>({_id:'msg-'+i,body:'Message '+i+' long text '.repeat(20),senderRole:i%2?'admin':'resident',createdAt:'2026-11-12T04:00:00Z'}))}));}
     else if (req.url.startsWith('/__shell-api')) { res.setHeader('Content-Type','application/json'); res.end(JSON.stringify({success:true,data:{users:[],routes:[],reports,loads:[],report:[],rows:[],trucks:[]}})); }
@@ -31,6 +31,10 @@ try {
  await wait("!!document.querySelector('[data-page-link][aria-label=Complaints]')"); await click('[data-page-link][aria-label=Complaints]'); await wait("document.querySelectorAll('.cq-item').length===60");
  for(let i=0;i<categoryLabels.length;i++) {
   await browser.evaluate(`document.querySelectorAll('.cq-item')[${i}].click()`);
+  await wait("document.querySelector('.cq-details')?.hidden && document.querySelector('.cq-photo-meta dl')?.hidden");
+  await click('.cq-details-disclosure .cq-disclosure-toggle');
+  await click('.cq-photo-meta .cq-disclosure-toggle');
+  assert.ok(await browser.evaluate("!document.querySelector('.cq-details').hidden && !document.querySelector('.cq-photo-meta dl').hidden"));
   await wait(`Array.from(document.querySelectorAll('.cq-details strong')).some(el=>el.textContent===${JSON.stringify(categoryLabels[i])})`);
   assert.ok(await browser.evaluate(`document.querySelectorAll('.cq-item')[${i}].textContent.includes(${JSON.stringify('Waste category: '+categoryLabels[i])})`));
  }
@@ -48,10 +52,10 @@ try {
  await browser.send('Input.insertText',{text:'Second line'});
  await browser.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Enter',windowsVirtualKeyCode:13,text:'\r'});await browser.send('Input.dispatchKeyEvent',{type:'keyUp',key:'Enter',windowsVirtualKeyCode:13});
  await wait("document.querySelector('.cq-composer textarea').value===''");assert.equal(sent.length,1);assert.ok(sent[0].body.includes('Second line'));
- failSend=true;await browser.send('Input.insertText',{text:'Keep this failed reply'});await click('.cq-send');await wait("!!document.querySelector('.cq-error')");assert.equal(await browser.evaluate("document.querySelector('.cq-composer textarea').value"),'Keep this failed reply');
+ failSend=true;await browser.send('Input.insertText',{text:'Keep this failed reply'});await click('.cq-send');await wait("document.querySelector('.cq-thread').textContent.includes('Failed to send')");assert.equal(await browser.evaluate("document.querySelector('.cq-composer textarea').value"),'Keep this failed reply');
   await click('[aria-label="Expand complaint photo"]');await wait("!!document.querySelector('.cq-lightbox')");
  await browser.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',windowsVirtualKeyCode:27});await wait("!document.querySelector('.cq-lightbox')");
- await click('.cq-status [data-slot="select-trigger"]');await wait("document.querySelectorAll('[role=option]').length===4");
+ await click('.cq-status .select__trigger');await wait("document.querySelectorAll('[role=option]').length===4");
  await browser.send('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',windowsVirtualKeyCode:27});
  assert.deepEqual(errors,[]);console.log('PASS: viewport sizing at 1280x720/1920/390, 60 complaints, long thread, internal scrolling, mobile back, Shift+Enter, Enter send, failed reply retention.');
 } finally {if(browser)await browser.close();await server.close();}

@@ -80,7 +80,8 @@ html[data-theme='dark'] .ann-message-heading .button { color: #8ee0b6; }
 .ann-recent .ann-card-heading { align-items: center; margin-bottom: 22px; }
 .ann-recent .ann-card-heading > .button { border: 1px solid var(--ann-border); border-radius: 10px; min-height: 40px; padding: 8px 16px; }
 .ann-recent th, .ann-recent td { padding: 18px 16px; }
-.ann-recent th:last-child, .ann-recent td:last-child { width: 1%; padding-right: 0; }
+.ann-recent th:last-child, .ann-recent td:last-child { width: 1%; padding-right: 16px; text-align: center; }
+.ann-recent td:last-child .ann-row-actions { justify-content: center; }
 .ann-recent .table-pagination { margin-top: 18px; }
 .ann-combobox [data-slot='input'] { padding-right: 40px; box-shadow: none; }
 .ann-combobox [data-slot='combo-box-trigger'] { width: 38px; padding: 0; color: var(--ann-muted); }
@@ -109,3 +110,19 @@ html[data-theme='dark'] .ann-published { color: #8ee0b6; }
 @media (prefers-reduced-motion: reduce) { .ann-skeleton, .ann-spinner { animation: none; } }
 @media (max-width: 1100px) { .ann-top-grid { grid-template-columns: minmax(0, 1fr); } .ann-composer { max-height: none; overflow: visible; } .ann-preview-card { max-width: 760px; width: 100%; position: static; } }
 @media (max-width: 560px) { .ann-card { padding: 20px; } .ann-fields { grid-template-columns: minmax(0, 1fr); } .ann-form-actions { flex-direction: column; } .ann-form-actions > .button { width: 100%; } .ann-preview-bottom, .ann-preview-card .ann-card-heading { align-items: flex-start; flex-direction: column; } .ann-message-heading { flex-wrap: wrap; } }
+
+.ann-card-heading .ann-new-button, .ann-dialog-actions .ann-close-button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 44px; padding: 10px 18px; flex-shrink: 0;
+  border: 1px solid var(--ann-border); border-radius: 10px;
+  background: var(--ann-card); color: var(--ann-text); font-size: 14px; font-weight: 650;
+}
+.ann-card-heading .ann-new-button:hover, .ann-dialog-actions .ann-close-button:hover {
+  background: var(--ann-tint); border-color: var(--ann-green);
+}
+.ann-card-heading .ann-new-button:disabled, .ann-dialog-actions .ann-close-button:disabled {
+  opacity: .5; cursor: not-allowed;
+}
+.ann-dialog-actions { border-top: 1px solid var(--ann-border); padding-top: 20px; }
+.ann-dialog-actions .ann-close-button { min-width: 100px; }
+.ann-dialog-actions .button:focus-visible { outline: 3px solid #79bca2; outline-offset: 3px; }

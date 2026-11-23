@@ -171,7 +171,7 @@ body.sidebar-is-collapsed .sidebar-collapse-toggle { left: 42px; top: 52px; }
 .route-history-card .filter-row { border-bottom: 1px solid #e7eeea; flex-wrap: wrap; gap: 12px; margin: 0 20px; padding: 12px 0 12px max(0px, calc(100% - 820px)); }
 .route-history-card .filter-row .app-select { flex: 1 1 170px; max-width: 220px; }
 .route-history-card .filter-row input[type="date"] { background: #fff; border: 1px solid #d8e5de; border-radius: 10px; box-shadow: 0 2px 6px #17382a0d; color: #36564a; flex: 1 1 150px; font-family: inherit; font-size: 13px; height: 44px; max-width: 180px; padding: 0 11px; }
-.route-history-card .filter-row > .app-select:last-of-type { display: none; }
+
 .route-history-table { min-width: 860px; table-layout: fixed; }
 .route-history-table th:nth-child(1), .route-history-table td:nth-child(1) { width: 16%; }
 .route-history-table th:nth-child(2), .route-history-table td:nth-child(2) { width: 110px; }
@@ -564,7 +564,7 @@ body.sidebar-is-collapsed .sidebar-collapse-toggle { left: 42px; top: 52px; }
 }
 
 /* Staff Activity filters use the same compact toolbar treatment as the other tables. */
-.activity-toolbar { align-items: center; background: #fff; border: 1px solid #e5ece7; border-radius: 15px 15px 0 0; display: flex; flex-wrap: wrap; gap: 12px; padding: 14px 20px 12px; }
+.activity-toolbar { align-items: flex-end; background: #fff; border: 1px solid #e5ece7; border-radius: 15px 15px 0 0; display: flex; flex-wrap: wrap; gap: 12px; padding: 14px 20px 12px; }
 .activity-search { align-items: center; background: #fff; border: 1px solid #d8e5de; border-radius: 10px; box-shadow: 0 2px 6px #17382a0d; color: #7c9187; display: flex; flex: 1 1 260px; gap: 9px; min-height: 44px; min-width: 260px; padding: 0 13px; }
 .activity-search input { background: transparent; border: 0; color: #36564a; min-width: 0; outline: 0; width: 100%; }
 .activity-search input::placeholder { color: #87958e; }
@@ -590,7 +590,7 @@ body.sidebar-is-collapsed .sidebar-collapse-toggle { left: 42px; top: 52px; }
 .staff-activity-card .activity-actions .outline-button { white-space: nowrap; }
 
 @media (max-width: 760px) {
-  .activity-toolbar { align-items: stretch; }
+  .activity-toolbar { align-items: flex-end; }
   .activity-search { flex-basis: 100%; min-width: 0; }
   .activity-toolbar > .app-select, .activity-date-filter, .activity-clear-filter { flex: 1 1 160px; }
 }
@@ -820,3 +820,76 @@ html[data-theme="dark"] .standard-data-table td { color: #dbe5df; }
 html[data-theme="dark"] .settings-admin-tag { background: #203c30 !important; color: #8ee0b6 !important; }
 html[data-theme="dark"] .modal-header, html[data-theme="dark"] .modal-body, html[data-theme="dark"] .modal-footer { background: #1a2420; color: #e6eee9; border-color: #34443c; }
 html[data-theme="dark"] input, html[data-theme="dark"] select, html[data-theme="dark"] textarea { color-scheme: dark; }
+
+/* Consistent directory toolbars, with filters kept next to their search field. */
+.route-directory-toolbar, .truck-filter-row, .route-assignment-toolbar {
+  gap: 12px; padding: 20px; align-items: center;
+}
+.route-directory-toolbar .truck-search-control { flex: 1 1 280px; }
+.route-assignment-toolbar { justify-content: flex-start; }
+.route-assignment-toolbar > p { flex: 0 0 auto; font-size: 14px; white-space: nowrap; }
+.route-assignment-toolbar .truck-search-control,
+.truck-filter-row .truck-search-control { flex: 1 1 280px; max-width: 520px; margin-right: 0; }
+.route-assignment-toolbar .app-select, .truck-filter-row .app-select { flex: 0 1 220px; }
+.truck-filter-row .truck-add-button { margin-left: auto; }
+.route-directory-filters { display: flex; flex-wrap: wrap; gap: 12px; padding: 0 20px 20px; }
+.route-directory-filters .app-select { flex: 0 1 240px; min-width: 180px; }
+.route-directory-filters .select__trigger, .truck-filter-row .select__trigger,
+.route-assignment-toolbar .select__trigger { min-height: 44px; border: 1px solid #d8e5de; border-radius: 10px; background: #fff; }
+.route-history-card { container-type: inline-size; }
+.route-history-card .filter-row { display: grid; grid-template-columns: repeat(3, minmax(120px, 1fr)) minmax(320px, 1.6fr) auto; margin: 0; padding: 20px; gap: 12px; }
+.route-history-card .filter-row > * { min-width: 0; width: 100%; max-width: none; }
+.route-history-card .route-history-search-wrapper { grid-column: 1 / -1; }
+.route-history-card .route-history-date-range { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; order: 1; }
+.route-history-card .route-history-date-range > .app-date-picker { width: 100%; min-width: 0; }
+.route-history-card .entries-count { order: 2; display: block; color: #71837a; font-size: 14px; text-align: right; white-space: nowrap; margin: 0; }
+.route-directory-toolbar .truck-search-control:focus-within,
+.route-assignment-toolbar .truck-search-control:focus-within,
+.truck-filter-row .truck-search-control:focus-within,
+.route-history-search-wrapper:focus-within { border-color: #0c805f; outline: 3px solid #0c805f20; }
+html[data-theme='dark'] .route-directory-filters .select__trigger,
+html[data-theme='dark'] .truck-filter-row .select__trigger,
+html[data-theme='dark'] .route-assignment-toolbar .select__trigger { background: #1a2420; border-color: #415249; color: #e6eee9; }
+@media (max-width: 680px) {
+  .route-directory-toolbar, .truck-filter-row, .route-assignment-toolbar { padding: 16px; }
+  .route-directory-filters { padding: 0 16px 16px; }
+  .route-directory-filters .app-select, .truck-filter-row .app-select,
+  .route-assignment-toolbar .app-select { flex: 1 1 180px; min-width: 0; }
+  .route-history-card .filter-row { grid-template-columns: minmax(0, 1fr); padding: 16px; }
+  .truck-filter-row .truck-add-button { margin-left: 0; }
+}
+
+@container (max-width: 940px) {
+  .route-history-card .filter-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .route-history-card .route-history-date-range { grid-column: span 2; }
+}
+@container (max-width: 540px) {
+  .route-history-card .filter-row { grid-template-columns: minmax(0, 1fr); }
+  .route-history-card .route-history-date-range { grid-column: 1; }
+}
+@container (max-width: 360px) {
+  .route-history-card .route-history-date-range { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Route search, filters and actions share a compact toolbar. */
+.route-directory-card { container-type: inline-size; }
+.route-directory-card .route-directory-toolbar { display: grid; align-items: start; grid-template-columns: minmax(240px, 1fr) minmax(320px, 1fr) auto auto; gap: 12px; }
+.route-directory-card .route-directory-toolbar .truck-search-control { width: 100%; max-width: 380px; min-width: 0; }
+.route-directory-toolbar .route-directory-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: center; gap: 12px; padding: 0; min-width: 0; }
+.route-directory-toolbar .route-directory-filters .app-select { min-width: 0; width: 100%; }
+.route-directory-toolbar .route-directory-filters > .button { grid-column: 1 / -1; justify-self: start; }
+.route-directory-card .route-add-button { justify-self: end; }
+@container (max-width: 1050px) {
+  .route-directory-card .route-directory-toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .route-directory-card .route-directory-toolbar .truck-search-control { max-width: none; }
+  .route-directory-card .route-filter-tabs { justify-self: start; }
+}
+@container (max-width: 600px) {
+  .route-directory-card .route-directory-toolbar { grid-template-columns: minmax(0, 1fr); }
+  .route-directory-card .route-filter-tabs, .route-directory-card .route-add-button { justify-self: stretch; }
+}
+
+.route-history-detail-modal .modal-header .route-history-refresh-button { display:inline-flex; align-items:center; justify-content:center; gap:6px; min-height:34px; height:34px; padding:0 11px; border:1px solid #cce4d9; border-radius:9px; background:#eff8f3; color:#086b4e; font-size:12px; font-weight:700; line-height:1; white-space:nowrap; transition:background .15s, border-color .15s; }
+.route-history-detail-modal .modal-header .route-history-refresh-button:hover { background:#dff1e7; border-color:#9bcbb5; }
+.route-history-detail-modal .modal-header .route-history-refresh-button:disabled { opacity:.6; cursor:wait; }
+.route-history-detail-modal .modal-header .route-history-refresh-button:focus-visible { outline:2px solid #087b5b; outline-offset:3px; }
