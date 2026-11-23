@@ -116,6 +116,13 @@ exports.list = async (req, res) => {
       const names = [req.user.barangay, req.user.location].filter(Boolean).map(name => new RegExp(`^${escapeRegex(name)}$`, 'i'));
       filter = req.query.scope === 'all' ? { status: 'published' } : { status: 'published', $or: [{ areaId: null }, ...(req.user.home_segment_id ? [{ areaId: req.user.home_segment_id }] : []), { audienceBarangays: { $in: names } }] };
     }
+    if (!resident) {
+      const requestedPage = Number.parseInt(req.query.page, 10);
+      const total = await Announcement.countDocuments(filter);
+      const page = Math.min(Math.max(1, Math.ceil(total / limit)), Number.isFinite(requestedPage) ? Math.max(1, requestedPage) : 1);
+      const items = await populate(Announcement.find(filter)).sort({ createdAt: -1, _id: -1 }).skip((page - 1) * limit).limit(limit).lean();
+      return sendSuccess(res, { items, total, page, limit, nextCursor: null, hasMore: page * limit < total });
+    }
     if (resident && cursor) {
       const decoded = Buffer.from(cursor, 'base64url').toString('utf8').split('|');
       if (decoded.length === 2 && !Number.isNaN(Date.parse(decoded[0])) && validId(decoded[1])) filter.$and = [{ $or: [{ publishedAt: { $lt: new Date(decoded[0]) } }, { publishedAt: new Date(decoded[0]), _id: { $lt: decoded[1] } }] }];

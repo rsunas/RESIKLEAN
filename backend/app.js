@@ -15,6 +15,10 @@ const app = express();
 
 // ── Global Middleware ─────────────────────────────────────────────────────────
 app.use(cors());
+// Phones retry complete saved trips, including their route snapshot. The default
+// 100 KB parser rejects longer trips before they reach the sync controller.
+// Keep the larger, bounded allowance specific to GPS trail uploads.
+app.post('/api/collector/trails/batch', express.json({ limit: '10mb' }));
 app.use(express.json());
 
 // ── Health Check ──────────────────────────────────────────────────────────────
