@@ -19,7 +19,9 @@
 .settings-row-label { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 15px; font-weight: 600; }
 .settings-row-copy p { margin: 4px 0 0; color: #5A6761; font-size: 13px; line-height: 1.5; }
 .settings-control { flex: 0 0 auto; max-width: 100%; }
-.settings-soon { background: #F1F5F3; color: #5A6761; font-size: 11px; font-weight: 600; padding: 3px 7px; border-radius: 7px; white-space: nowrap; }
+.settings-soon, .settings-available { font-size: 11px; font-weight: 600; padding: 3px 7px; border-radius: 7px; white-space: nowrap; }
+.settings-soon { background: #F1F5F3; color: #5A6761; }
+.settings-available { background: #E3F4EB; color: #086B42; }
 .settings-account { display: flex; align-items: center; gap: 16px; padding: 20px 0 16px; }
 .settings-avatar { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 72px; height: 72px; width: 72px; border-radius: 50%; background: linear-gradient(#24846E, #0D2E27); color: white; font-size: 24px; font-weight: 700; overflow: hidden; }
 .settings-avatar img { height: 100%; width: 100%; object-fit: cover; }

@@ -10,6 +10,7 @@ export default function AppSelect({
   options,
   placeholder = 'Select one',
   popoverClassName,
+  popoverPlacement = 'bottom',
   value,
 }) {
   const [internalValue, setInternalValue] = useState(value || defaultValue || '');
@@ -36,7 +37,7 @@ export default function AppSelect({
         <Select.Value placeholder={placeholder} />
         <Select.Indicator />
       </Select.Trigger>
-      <Select.Popover className={popoverClassName}>
+      <Select.Popover className={popoverClassName} placement={popoverPlacement}>
         <ListBox>
           {options.map((option) => (
             <ListBox.Item id={option.value} key={option.value} textValue={option.label} isDisabled={option.disabled} className={option.disabled ? 'select-option-disabled' : undefined}>

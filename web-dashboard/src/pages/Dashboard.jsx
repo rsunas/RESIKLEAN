@@ -39,7 +39,7 @@ const NAV_ITEMS = [
   { id: 'routes', label: 'Route History', icon: 'route' },
   { id: 'complaints', label: 'Complaints', icon: 'alert' },
   { id: 'announcements', label: 'Announcements', icon: 'megaphone' },
-  { id: 'activity', label: 'Staff Activity', icon: 'chart' },
+  { id: 'activity', label: 'Waste Generation', icon: 'chart' },
   { id: 'manage-routes', label: 'Manage Routes', icon: 'map' },
   { id: 'assignments', label: 'Driver Assignments', icon: 'operations' },
   { id: 'accounts', label: 'Manage Accounts', icon: 'id-card' },
@@ -441,7 +441,7 @@ function AccountsToolbarPortal({ children }) {
 }
 
 function ActivityToolbar({ area, areas, from, onAreaChange, onClear, onFromChange, onQueryChange, onToChange, query, to, invalidRange }) {
-  return <div className="activity-toolbar"><label className="activity-search"><Icon name="search" size={16} /><input aria-label="Search staff activity" onChange={(event) => onQueryChange(event.target.value)} placeholder="Search staff activity" type="search" value={query} /></label><AppSelect aria-label="Filter staff activity by area" onChange={onAreaChange} options={[{ label: 'All activity areas', value: 'all' }, ...areas.map((value) => ({ label: value, value }))]} value={area} /><AppDatePicker label="From" ariaLabel="From date submitted" onChange={onFromChange} value={from} isInvalid={invalidRange} /><AppDatePicker label="To" ariaLabel="To date submitted" onChange={onToChange} value={to} isInvalid={invalidRange} />{invalidRange ? <p className="activity-date-error" role="alert">From date must be before or equal to To date.</p> : null}<Button variant="tertiary" aria-label="Clear staff activity filters" className="activity-clear-filter" onPress={onClear} type="button">Clear</Button></div>;
+  return <div className="activity-toolbar"><label className="activity-search"><Icon name="search" size={16} /><input aria-label="Search waste generation" onChange={(event) => onQueryChange(event.target.value)} placeholder="Search waste generation" type="search" value={query} /></label><AppSelect aria-label="Filter waste generation by area" onChange={onAreaChange} options={[{ label: 'All activity areas', value: 'all' }, ...areas.map((value) => ({ label: value, value }))]} value={area} /><AppDatePicker label="From" ariaLabel="From date submitted" onChange={onFromChange} value={from} isInvalid={invalidRange} /><AppDatePicker label="To" ariaLabel="To date submitted" onChange={onToChange} value={to} isInvalid={invalidRange} />{invalidRange ? <p className="activity-date-error" role="alert">From date must be before or equal to To date.</p> : null}<Button variant="tertiary" aria-label="Clear waste generation filters" className="activity-clear-filter" onPress={onClear} type="button">Clear</Button></div>;
 }
 
 export default function Dashboard() {
@@ -786,7 +786,7 @@ export default function Dashboard() {
   const formatLoadDimension = (value) => value ? Number(value).toFixed(1) : '—';
   const activityRows = useMemo(() => {
     if (!apiData.loads?.length) return [];
-    return apiData.loads.map((load) => ({ id: load._id, area: routeAreaCode(load.routeId?.name || load.routeId?.routeName || load.routeId?.area || 'Unassigned area'), driver: load.staffId?.name || 'Staff member', truckPlate: load.truckPlate || 'Unknown truck', length: formatLoadDimension(load.length), width: formatLoadDimension(load.width), height: formatLoadDimension(load.height), slope: `${Number(load.slope || 0).toFixed(1)} m³`, tonnage: formatTonnes(load.tonnesEstimate), submittedAt: load.arrivedAt || null, time: load.arrivedAt ? formatManilaSubmissionDate(load.arrivedAt).split(', ').at(-1) : '—', date: formatManilaSubmissionDate(load.arrivedAt), photoUrl: load.photoUrl || '', notes: load.notes || '' })).sort((left, right) => (right.submittedAt ? new Date(right.submittedAt).getTime() : -Infinity) - (left.submittedAt ? new Date(left.submittedAt).getTime() : -Infinity));
+    return apiData.loads.map((load) => ({ id: load._id, area: routeAreaCode(load.routeId?.name || load.routeId?.routeName || load.routeId?.area || 'Unassigned area'), driver: load.staffId?.name || 'Staff member', truckNumber: load.truckNumber || '—', truckPlate: load.truckPlate || 'Unknown truck', length: formatLoadDimension(load.length), width: formatLoadDimension(load.width), height: formatLoadDimension(load.height), slope: `${Number(load.slope || 0).toFixed(1)} m³`, tonnage: formatTonnes(load.tonnesEstimate), submittedAt: load.arrivedAt || null, time: load.arrivedAt ? formatManilaSubmissionDate(load.arrivedAt).split(', ').at(-1) : '—', date: formatManilaSubmissionDate(load.arrivedAt), photoUrl: load.photoUrl || '', notes: load.notes || '' })).sort((left, right) => (right.submittedAt ? new Date(right.submittedAt).getTime() : -Infinity) - (left.submittedAt ? new Date(left.submittedAt).getTime() : -Infinity));
   }, [apiData.loads]);
 
   const activityAreas = useMemo(() => [...new Set(activityRows.map((row) => row.area).filter(Boolean))].sort(), [activityRows]);
@@ -796,7 +796,7 @@ export default function Dashboard() {
     const to = manilaDateBoundary(activityDateTo, true);
     return activityRows.filter((row) => {
       const submittedAt = row.submittedAt ? new Date(row.submittedAt) : null;
-      return (!query || [row.driver, row.area, row.truckPlate, row.date].some((value) => String(value || '').toLowerCase().includes(query))) && (activityArea === 'all' || row.area === activityArea) && (!from || (submittedAt && submittedAt >= from)) && (!to || (submittedAt && submittedAt <= to));
+      return (!query || [row.truckNumber, row.driver, row.area, row.truckPlate, row.date].some((value) => String(value || '').toLowerCase().includes(query))) && (activityArea === 'all' || row.area === activityArea) && (!from || (submittedAt && submittedAt >= from)) && (!to || (submittedAt && submittedAt <= to));
     });
   }, [activityArea, activityDateFrom, activityDateTo, activityQuery, activityRows]);
 
@@ -1064,12 +1064,12 @@ export default function Dashboard() {
   const currentActivityPage = Math.min(activityPage, Math.max(1, Math.ceil(activityTotal / activityPageSize)));
   const pagedActivityRows = filteredActivityRows.slice((currentActivityPage - 1) * activityPageSize, currentActivityPage * activityPageSize);
   const activity = <>
-    <PageHeader action={<Button className="outline-button" isDisabled={isRefreshing} onPress={refreshDashboard} variant="secondary">{isRefreshing ? 'Refreshing…' : 'Refresh data'}</Button>} description={apiData.usingPlaceholder ? 'Sample activity while the admin API is unavailable' : `${totalLoads} recorded truckload${totalLoads === 1 ? '' : 's'} · use View details to view a submission`} title="Staff activity log" />
+    <PageHeader action={<Button className="outline-button" isDisabled={isRefreshing} onPress={refreshDashboard} variant="secondary">{isRefreshing ? 'Refreshing…' : 'Refresh data'}</Button>} description={apiData.usingPlaceholder ? 'Sample waste generation data while the admin API is unavailable' : `${totalLoads} recorded truckload${totalLoads === 1 ? '' : 's'} · use View details to view a submission`} title="Waste Generation" />
     <DisabledControls disabled={isRefreshing}><ActivityToolbar area={activityArea} areas={activityAreas} from={activityDateFrom} invalidRange={activityDateRangeInvalid} onAreaChange={setActivityArea} onClear={() => { setActivityQuery(''); setActivityArea('all'); setActivityDateFrom(''); setActivityDateTo(''); }} onFromChange={setActivityDateFrom} onQueryChange={setActivityQuery} onToChange={setActivityDateTo} query={activityQuery} to={activityDateTo} /></DisabledControls>
     <Card className="table-card staff-activity-card"><div className="table-scroll"><table className="standard-data-table admin-data-table">
-      <thead><tr><th scope="col">Staff submitted</th><th scope="col">Date submitted</th><th scope="col">Area</th><th scope="col">Slope</th><th scope="col">Tonnage</th><th scope="col" className="activity-actions">Actions</th></tr></thead>
+      <thead><tr><th scope="col">Truck number</th><th scope="col">Date submitted</th><th scope="col">Area</th><th scope="col">Slope</th><th scope="col">Tonnage</th><th scope="col" className="activity-actions">Actions</th></tr></thead>
       <LoadingTableBody loading={isRefreshing} hasData={apiData.loads !== null} error={dashboardLoadError} onRetry={refreshDashboard} rows={activityPageSize} columns={6}>{activityDateRangeInvalid ? <tr><td className="empty-cell" colSpan={6}>Choose a valid date range.</td></tr> : activityTotal ? pagedActivityRows.map((row) => <tr className="activity-row" key={row.id}>
-        <td title={row.driver}><strong>{row.driver}</strong></td><td title={row.date}>{row.date}</td><td title={row.area}>{row.area}</td><td>{row.slope}</td><td className="tonnage-cell">{row.tonnage}</td>
+        <td title={row.truckNumber}><strong>{row.truckNumber}</strong></td><td title={row.date}>{row.date}</td><td title={row.area}>{row.area}</td><td>{row.slope}</td><td className="tonnage-cell">{row.tonnage}</td>
         <td className="activity-actions"><Button className="outline-button small-button" size="sm" variant="secondary" aria-label={`View truckload from ${row.area}`} onPress={() => setSelectedActivity(row)}>View details</Button></td>
       </tr>) : <tr><td className="empty-cell" colSpan={6}>No submitted truckloads match the current filters.</td></tr>}</LoadingTableBody>
     </table></div><TablePagination disabled={isRefreshing} page={currentActivityPage} pageSize={activityPageSize} total={activityTotal} onPageChange={setActivityPage} onPageSizeChange={setActivityPageSize} /></Card>
@@ -1088,7 +1088,7 @@ export default function Dashboard() {
       await openRouteHistoryDetail({ id: item.targetId });
     } else if (item.type === 'truckload') {
       setApiData(current => ({ ...current, loads: [...(current.loads || []).filter(load => load._id !== record._id), record] }));
-      setSelectedActivity({ id: record._id, area: record.routeId?.name || 'Unassigned area', driver: record.staffId?.name || 'Staff member', truckPlate: record.truckPlate, tonnage: formatTonnes(record.tonnesEstimate), submittedAt: record.arrivedAt, notes: record.notes || '', slope: record.slope, length: record.length, width: record.width, height: record.height });
+      setSelectedActivity({ id: record._id, area: record.routeId?.name || 'Unassigned area', driver: record.staffId?.name || 'Staff member', truckNumber: record.truckNumber || '—', truckPlate: record.truckPlate, tonnage: formatTonnes(record.tonnesEstimate), submittedAt: record.arrivedAt, notes: record.notes || '', slope: record.slope, length: record.length, width: record.width, height: record.height });
     } else {
       setApiData(current => ({ ...current, reports: [...(current.reports || []).filter(report => report._id !== record._id), record] }));
       setSelectedComplaint({ id: record._id, street: record.description, reporter: record.residentId?.name || 'Resident', status: record.status || 'pending', report: record });

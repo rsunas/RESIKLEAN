@@ -14,18 +14,18 @@ const outDir = path.join(directory, 'dist');
 const entry = path.join(root, '__skeleton-fixture.jsx');
 await build({root, logLevel:'warn', define:{'import.meta.env.VITE_API_URL':JSON.stringify('/__qa/api'), 'import.meta.env.VITE_SOCKET_URL':JSON.stringify(''), 'import.meta.env.VITE_MAPBOX_ACCESS_TOKEN':JSON.stringify('')}, plugins:[{
  name:'skeleton-fixture', resolveId(id){if(id===entry)return entry;},
- load(id){if(id===entry)return `import React from 'react';import {createRoot} from 'react-dom/client';import {BrowserRouter} from 'react-router-dom';import Dashboard from '/src/pages/Dashboard.jsx';import '/src/index.css';sessionStorage.setItem('resiklean_admin_token','fixture');sessionStorage.setItem('resiklean_admin_user',JSON.stringify({name:'QA Admin',role:'admin'}));createRoot(document.getElementById('root')).render(<BrowserRouter><Dashboard/></BrowserRouter>);`;},
+ load(id){if(id===entry)return `import React from 'react';import {createRoot} from 'react-dom/client';import {BrowserRouter} from 'react-router-dom';import {PreferencesProvider} from '/src/components/preferences.jsx';import {I18nProvider} from '@heroui/react';import Dashboard from '/src/pages/Dashboard.jsx';import '/src/index.css';sessionStorage.setItem('resiklean_admin_token','fixture');sessionStorage.setItem('resiklean_admin_user',JSON.stringify({name:'QA Admin',role:'admin'}));createRoot(document.getElementById('root')).render(<PreferencesProvider><I18nProvider locale="en-US"><BrowserRouter><Dashboard/></BrowserRouter></I18nProvider></PreferencesProvider>);`;},
 }], build:{outDir, emptyOutDir:false, minify:false, cssCodeSplit:false, rollupOptions:{input:entry,output:{entryFileNames:'app.js',assetFileNames:'[name][extname]'}}}});
 const assets=await readdir(outDir);
 const css=assets.filter(name=>name.endsWith('.css')).map(name=>`<link rel="stylesheet" href="/${name}">`).join('');
 const html=`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${css}</head><body><div id="root"></div><script type="module" src="/app.js"></script></body></html>`;
 const id=i=>i.toString(16).padStart(24,'0');
 const users=Array.from({length:12},(_,i)=>({_id:id(i+1),name:'Driver '+(i+1),role:'collector',email:'driver'+i+'@example.test',phone:'09123456789',barangay:'Abella'}));
-const routes=users.map((user,i)=>({_id:id(i+30),name:'Area '+(i+1),barangay:['Abella'],collectorId:user,schedule:[1],isActive:true,stops:[]}));
+const routes=users.map((user,i)=>({_id:id(i+30),key:'route-'+i,name:'Area '+(i+1),barangay:['Abella'],collectorId:user,schedule:[1],isActive:true,stops:[]}));
 const trucks=users.map((_,i)=>({_id:id(i+60),truckNumber:String(i+1),plateNumber:'QA-'+i,length:3,width:2,height:1,availability:'available',isActive:true}));
 const reports=users.map((user,i)=>({_id:id(i+90),residentId:user,barangay:'Abella',description:'Missed collection '+i,status:'pending',wasteCategory:'recyclable',createdAt:'2026-11-16T00:00:00Z'}));
 const loads=users.map((user,i)=>({_id:id(i+120),staffId:user,routeId:routes[i],length:3,width:2,height:1,slope:0.5,tonnesEstimate:1.9,arrivedAt:'2026-11-15T00:00:00Z',truckPlate:trucks[i].plateNumber}));
-const history=routes.map((route,i)=>({id:id(i+150),area:route.name,street:'Street '+i,collector:users[i].name,date:'Nov 15, 2026',rowStatus:'collected',truck:{plateNumber:trucks[i].plateNumber}}));
+const history=routes.map((route,i)=>({id:id(i+150),routeName:route.name,area:'Street '+i,collector:users[i].name,date:'Nov 15, 2026',rowStatus:'collected',truck:{plateNumber:trucks[i].plateNumber}}));
 let mode='hold';const held=[];const requests=[];
 function release(next='data'){mode=next;for(const send of held.splice(0))send();}
 const server=createServer(async(req,res)=>{
@@ -36,7 +36,7 @@ const server=createServer(async(req,res)=>{
    if(res.destroyed)return;
    res.setHeader('Content-Type','application/json');
    if(mode==='error'){res.statusCode=503;res.end(JSON.stringify({success:false,error:'QA service unavailable'}));return;}
-   const empty=mode==='empty';let data={users:empty?[]:users,routes:empty?[]:routes,trucks:empty?[]:trucks,reports:empty?[]:reports,loads:empty?[]:loads,logs:[],report:[],count:empty?0:12,totalTonnesEstimate:22.8};
+   const empty=mode==='empty';let data={users:empty?[]:users,days:[],statuses:[],hours:[],routes:empty?[]:routes,trucks:empty?[]:trucks,reports:empty?[]:reports,loads:empty?[]:loads,logs:[],report:[],count:empty?0:12,totalTonnesEstimate:22.8};
    if(url.pathname.endsWith('/route-history')){const page=Number(url.searchParams.get('page')||1),limit=Number(url.searchParams.get('limit')||7);data={rows:empty?[]:history.slice((page-1)*limit,page*limit),page,limit,count:empty?0:history.length,pages:2};}
    else if(/\/route-history\//.test(url.pathname))data={...history[0],recordSummary:{streetSegment:'Street 0',segmentStatus:'Collected'},documentReference:{},logs:[]};
    else if(url.pathname.endsWith('/tonnage-trend'))data={chartData:empty?[]:[{date:'2026-11-14',tonnage:2},{date:'2026-11-15',tonnage:3}],summary:{truckLoads:empty?0:12}};
@@ -81,7 +81,7 @@ try {
  // Route details open immediately and keep a real title while the record is pending.
  mode='hold';await click('tbody .actions-col button');await wait("!!document.querySelector('.route-history-modal-body .skeleton-visible')");assert.ok(await browser.evaluate("document.querySelector('.route-history-detail-modal').textContent.includes('Route History Report')"));release('error');await wait("!!document.querySelector('.route-history-modal-body .skeleton-error')");mode='data';await click('.route-history-modal-body .skeleton-error button');await wait("!!document.querySelector('.route-history-modal-body .detail-table-web')");assert.ok(requests.at(-1).includes('/route-history/') && !requests.at(-1).includes('undefined'));await click('[aria-label="Close route history details"]');
  // In-memory dashboard data survives page navigation and browser history.
- await click('[data-page-link][aria-label="Manage Accounts"]');await wait("!!document.querySelector('.accounts-table-card')");assert.equal(await browser.evaluate(visible),0);await click('[data-page-link][aria-label="Staff Activity"]');await browser.evaluate('history.back()');await wait("!!document.querySelector('.accounts-table-card')");assert.equal(await browser.evaluate(visible),0);
+ await click('[data-page-link][aria-label="Manage Accounts"]');await wait("!!document.querySelector('.accounts-table-card')");assert.equal(await browser.evaluate(visible),0);await click('[data-page-link][aria-label="Waste Generation"]');await browser.evaluate('history.back()');await wait("!!document.querySelector('.accounts-table-card')");assert.equal(await browser.evaluate(visible),0);
  console.log('PASS: old rows remain during pagination; cached dashboard navigation/back does not flash.');
  // Complaint queue keeps its toolbar and disabled composer while loading.
  mode='hold';await go('complaints');await wait("!!document.querySelector('.skeleton-complaint-item') && !!document.querySelector('.skeleton-visible')");assert.equal(await browser.evaluate("document.querySelectorAll('.skeleton-complaint-item').length"),8);assert.ok(await browser.evaluate("document.querySelector('.cq-composer textarea').disabled && document.querySelector('.cq-send').disabled"));

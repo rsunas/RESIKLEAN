@@ -2,34 +2,63 @@
 .notifications-card { background: #fff; border: 1px solid #e3eae6; border-radius: 24px; overflow: hidden; }
 .notifications-card > .table-pagination { padding: 14px 24px; }
 .notifications-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 14px 20px; border-bottom: 1px solid #e3eae6; }
+
+.notifications-card .notifications-category-select { flex: 0 0 220px; min-width: 220px; width: 220px; }
+.notifications-card .notifications-category-select [data-slot="select-trigger"] {
+  align-items: center; background: #fff; border: 1px solid #cfd8d3; border-radius: 12px;
+  box-sizing: border-box; color: #17332a; display: flex; font-size: 14px; font-weight: 400;
+  gap: 10px; height: 44px; justify-content: space-between; min-height: 44px;
+  padding: 0 14px 0 16px; white-space: nowrap; width: 100%;
+}
+.notifications-card .notifications-category-select [data-slot="select-value"] {
+  color: inherit; flex: 1 1 auto; min-width: 0; overflow: hidden; padding: 0;
+  text-align: left; text-overflow: ellipsis; white-space: nowrap;
+}
+.notifications-card .notifications-category-select [data-slot="select-default-indicator"] {
+  color: #718078; display: inline-flex; flex: 0 0 14px; height: 14px; margin: 0;
+  pointer-events: none; position: static; stroke: currentColor; stroke-width: 1.25;
+  transform: rotate(0deg); transition: transform 150ms ease; width: 14px;
+}
+.notifications-card .notifications-category-select [data-slot="select-default-indicator"][data-open="true"] { transform: rotate(180deg); }
+.notifications-card .notifications-category-select [data-slot="select-trigger"]:hover { background: #f3f6f4; }
+.notifications-card .notifications-category-select [data-slot="select-trigger"][aria-expanded="true"] { border-color: #0b6b4c; }
+.notifications-card .notifications-category-select [data-slot="select-trigger"]:focus-visible { outline: 3px solid #bde8d5; outline-offset: 2px; }
+body .notifications-category-popover { min-width: 220px; }
+.notifications-category-popover [role="option"] { white-space: nowrap; }
+.notifications-category-popover [role="option"][aria-selected="true"],
+.notifications-category-popover [role="option"][data-selected] { color: #0b6b4c; font-weight: 600; }
+@media (prefers-reduced-motion: reduce) {
+  .notifications-card .notifications-category-select [data-slot="select-default-indicator"] { transition: none; }
+}
 .notifications-tabs { display: flex; padding: 3px; border-radius: 10px; background: #f1f5f3; }
 .notifications-tabs button { min-height: 36px; padding: 0 12px; font-size: 13px; font-weight: 600; border-radius: 8px; color: #5a6761; }
 .notifications-tabs button[aria-pressed="true"] { background: #fff; color: #086b42; box-shadow: 0 1px 4px #0d1e2417; }
 .notifications-mark-page { margin-left: auto; color: #086b42; font-weight: 600; }
 .notifications-feed { margin: 0; padding: 0; list-style: none; }
-.notifications-row { display: flex; align-items: flex-start; gap: 16px; padding: 22px 24px; border-bottom: 1px solid #e3eae6; }
+.notifications-row { display: grid; grid-template-columns: 56px minmax(0, 1fr) 184px; column-gap: 20px; align-items: start; padding: 24px 30px; border-bottom: 1px solid #e3eae6; }
 .notifications-row:last-child { border-bottom: 0; }
 .notifications-row.is-unread { background: #f6fbf8; }
-.notifications-icon { display: grid; place-items: center; width: 44px; height: 44px; flex: 0 0 44px; border-radius: 14px; background: #e3f4eb; color: #086b42; }
+.notifications-icon { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 14px; background: #e3f4eb; color: #086b42; }
 .notification-kind-reply { background: #eaf1fb; color: #3067a0; }
 .notification-kind-truckload { background: #fff3df; color: #926011; }
-.notifications-copy { flex: 1; min-width: 0; }
+.notifications-copy { min-width: 0; }
 .notifications-title { display: flex; align-items: center; gap: 10px; }
 .notifications-title h3 { margin: 0; font-size: 15px; font-weight: 700; color: #172b22; }
 .notifications-copy p { margin: 5px 0 8px; font-size: 14px; color: #4b6357; line-height: 1.55; overflow-wrap: anywhere; }
 .notifications-copy time { color: #6b7d73; font-size: 12px; }
 .notifications-unread-dot { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: #0a7f4f; }
 .notifications-copy .notifications-remaining { color: #886114; font-size: 13px; }
-.notifications-actions { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-.notifications-actions button { font-size: 13px; min-height: 36px; white-space: nowrap; }
-.notifications-read-label { color: #77877e; font-size: 12px; padding: 8px; }
+.notifications-actions { display: flex; flex-direction: column; align-items: stretch; gap: 8px; width: 184px; }
+.notifications-actions button { box-sizing: border-box; min-width: 0; white-space: nowrap; }
+.notifications-read-label { color: #6b7280; font-size: 14px; }
 .notifications-empty { padding: 72px 24px; text-align: center; color: #5a6761; }
 .notifications-empty > svg { margin: 0 auto 16px; color: #0a7f4f; }
 .notifications-empty h3 { font-weight: 700; color: #213e30; }
 .notifications-empty p { margin-top: 8px; font-size: 14px; }
 .notifications-error { padding: 12px 24px; color: #a63024; background: #fff4f1; font-size: 14px; }
 .notifications-note { margin: 16px 4px; color: #6b7d73; font-size: 12px; line-height: 1.6; max-width: 850px; }
-@media (max-width: 700px) { .notifications-row { padding: 18px 16px; gap: 12px; flex-wrap: wrap; } .notifications-actions { margin-left: 56px; flex-direction: row; flex-wrap: wrap; } .notifications-toolbar { padding: 16px; } .notifications-mark-page { margin-left: 0; } }
+@media (max-width: 767px) { .notifications-row { grid-template-columns: 56px minmax(0, 1fr); column-gap: 14px; row-gap: 12px; padding: 18px 16px; } .notifications-actions { grid-column: 1 / -1; flex-direction: row; gap: 8px; width: 100%; } .notifications-actions > .outline-button, .notifications-actions > .notifications-mark-item, .notifications-actions > .notifications-read-label { flex: 0 0 calc(50% - 4px); height: 44px; min-height: 44px; width: calc(50% - 4px); } }
+@media (max-width: 700px) { .notifications-toolbar { padding: 16px; } .notifications-mark-page { margin-left: 0; } }
 
 /* Make notification read actions look distinct from the conversation action. */
 .notifications-toolbar .notifications-mark-page {
@@ -41,20 +70,27 @@
   background: #086b42; border-color: #086b42;
 }
 .notifications-toolbar .notifications-mark-page:disabled { opacity: .48; }
+.notifications-actions .outline-button {
+  align-items: center; box-sizing: border-box; display: inline-flex; justify-content: center;
+  width: 100%; height: 44px; min-height: 44px; padding: 0 10px;
+  border: 1px solid #cfe3d9; border-radius: 12px; background: #fff; color: #2d4a3e;
+  font-size: 14px; font-weight: 700; line-height: 1; text-align: center; white-space: nowrap;
+}
+.notifications-actions .outline-button:hover:not(:disabled) { background: #f7fbf8; border-color: #b9dccb; }
 .notifications-actions .notifications-mark-item {
-  min-height: 36px; padding: 0 12px; border: 1px solid #cfe5d9;
-  border-radius: 9px; background: #f4faf6; color: #08734b;
-  font-size: 12px; font-weight: 650;
+  align-items: center; box-sizing: border-box; display: inline-flex; justify-content: center;
+  width: 100%; height: 36px; min-height: 36px; padding: 0 10px;
+  border: 1px solid #b9dccb; border-radius: 18px; background: #e6f3ec; color: #0b6b4c;
+  font-size: 14px; font-weight: 700; line-height: 1; white-space: nowrap;
 }
-.notifications-actions .notifications-mark-item:hover:not(:disabled) {
-  border-color: #84c5a2; background: #e6f5ec;
-}
+.notifications-actions .notifications-mark-item:hover:not(:disabled) { border-color: #a5d3bb; background: #ddf0e5; }
 .notifications-actions .notifications-mark-item:disabled { opacity: .5; }
+.notifications-actions button:focus-visible { outline: 3px solid #bde8d5; outline-offset: 2px; }
 .notifications-read-label {
-  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
-  min-height: 32px; padding: 0 11px; border: 1px solid #e1e9e4;
-  border-radius: 999px; background: #f5f7f6; color: #65776d;
-  font-size: 12px; font-weight: 650;
+  align-items: center; box-sizing: border-box; display: inline-flex; justify-content: center; gap: 5px;
+  width: 100%; height: 36px; min-height: 36px; padding: 0 10px;
+  border: 1px solid #e3e8e5; border-radius: 18px; background: #f1f3f2; color: #6b7280;
+  font-size: 14px; font-weight: 600; line-height: 1; white-space: nowrap;
 }
 
 html[data-theme="dark"] .notifications-toolbar .notifications-mark-page { background: #08734b; border-color: #3e9d72; color: #fff; }

@@ -21,6 +21,7 @@ const { getRouteHistoryTrail } = require('../services/routeHistoryTrail');
 const { historicalRoute } = require('../services/routeSnapshot');
 const { getTonnageTrendData } = require('../services/tonnageService');
 const { generateTonnageTrendPDF } = require('../services/pdf/tonnageTrendReport');
+const { attachTruckNumbers } = require('../utils/registeredTruckNumbers');
 const { validateRoutePath, validateStops, getStopProximityWarnings } = require('../utils/routeValidation');
 
 // ── GET /api/admin/users ──────────────────────────────────────────────────────
@@ -509,6 +510,8 @@ const getTonnageSummary = async (req, res) => {
       .populate('routeId', 'name barangay')
       .sort({ arrivedAt: -1 })
       .lean();
+
+    await attachTruckNumbers(loads);
 
     const totalVolume = loads.reduce((s, l) => s + (l.volumeCubicM || 0), 0);
     const totalTonnes = loads.reduce((s, l) => s + (l.tonnesEstimate || 0), 0);

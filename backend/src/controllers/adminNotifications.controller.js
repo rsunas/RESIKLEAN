@@ -4,6 +4,7 @@ const Read = require('../models/AdminNotificationRead');
 const Report = require('../models/MissedReport');
 const Message = require('../models/ReportMessage');
 const Load = require('../models/TruckLoad');
+const { attachTruckNumbers } = require('../utils/registeredTruckNumbers');
 const validId = value => /^(complaint|reply|truckload|route):[a-f0-9]{24}$/i.test(value);
 const list = async (req, res) => {
   const { type = 'all', unread = 'false', page = '1', limit = '10' } = req.query;
@@ -28,7 +29,10 @@ const target = async (req, res) => {
   if (!validId(req.params.id)) return sendError(res, 'Invalid notification identifier', 400);
   try {
     const [type, id] = req.params.id.split(':'); let data;
-    if (type === 'truckload') data = await Load.findById(id).populate('staffId', 'name').populate('routeId', 'name').lean();
+    if (type === 'truckload') {
+      data = await Load.findById(id).populate('staffId', 'name').populate('routeId', 'name').lean();
+      if (data) await attachTruckNumbers(data);
+    }
     else if (type === 'complaint') data = await Report.findById(id).populate('residentId', 'name').lean();
     else if (type === 'reply') {
       const message = await Message.findOne({ _id: id, senderRole: 'resident' }).lean();

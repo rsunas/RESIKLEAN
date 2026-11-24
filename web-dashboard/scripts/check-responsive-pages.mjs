@@ -6,9 +6,9 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const reports = [{ _id: 'qa-report', barangay: 'Abella', description: 'Missed collection', status: 'pending', createdAt: '2026-11-12T04:00:00Z' }];
 const server = await createServer({ root, server: { host: '127.0.0.1', port: 0 }, define: { 'import.meta.env.VITE_API_URL': JSON.stringify('/__shell-api'), 'import.meta.env.VITE_MAPBOX_ACCESS_TOKEN': JSON.stringify('') }, plugins: [{ name: 'shell-fixture',
   resolveId(id) { if (id === '/__shell.js') return '\0shell-fixture'; },
-  load(id) { if (id === '\0shell-fixture') return `import React from 'react'; import {createRoot} from 'react-dom/client'; import {BrowserRouter} from 'react-router-dom'; import Dashboard from '/src/pages/Dashboard.jsx'; import '/src/index.css'; sessionStorage.setItem('resiklean_admin_token','fixture'); sessionStorage.setItem('resiklean_admin_user',JSON.stringify({name:'Super Admin 2',role:'admin'})); createRoot(document.getElementById('root')).render(React.createElement(BrowserRouter,null,React.createElement(Dashboard)));`; },
+  load(id) { if (id === '\0shell-fixture') return `import React from 'react'; import {createRoot} from 'react-dom/client'; import {BrowserRouter} from 'react-router-dom'; import {PreferencesProvider} from '/src/components/preferences.jsx'; import {I18nProvider} from '@heroui/react'; import Dashboard from '/src/pages/Dashboard.jsx'; import '/src/index.css'; sessionStorage.setItem('resiklean_admin_token','fixture'); sessionStorage.setItem('resiklean_admin_user',JSON.stringify({name:'Super Admin 2',role:'admin'})); createRoot(document.getElementById('root')).render(React.createElement(PreferencesProvider,null,React.createElement(I18nProvider,{locale:'en-US'},React.createElement(BrowserRouter,null,React.createElement(Dashboard)))));`; },
   configureServer(vite) { vite.middlewares.use(async (req, res, next) => {
-    if (req.url.startsWith('/__shell-api')) { res.setHeader('Content-Type','application/json'); res.end(JSON.stringify({success:true,data:{users:[],routes:[{_id:'active-route',name:'Active QA route',isActive:true,barangay:['Abella'],schedule:[1],stops:[]},{_id:'archived-route',name:'Archived QA route',isActive:false,barangay:['Abella'],schedule:[1],stops:[]}],reports,loads:[],report:[],rows:[],trucks:[]}})); }
+    if (req.url.startsWith('/__shell-api')) { res.setHeader('Content-Type','application/json'); res.end(JSON.stringify({success:true,data:{users:[],days:[],statuses:[],hours:[],routes:[{_id:'active-route',key:'active-route',name:'Active QA route',isActive:true,barangay:['Abella'],schedule:[1],stops:[]},{_id:'archived-route',key:'archived-route',name:'Archived QA route',isActive:false,barangay:['Abella'],schedule:[1],stops:[]}],reports,loads:[],report:[],rows:[],trucks:[]}})); }
     else if (req.url.startsWith('/__shell') && !req.url.startsWith('/__shell.js')) { res.setHeader('Content-Type','text/html'); res.end(await vite.transformIndexHtml(req.url,'<html><body><div id="root"></div><script type="module" src="/__shell.js"></script></body></html>')); }
     else next();
   }); }
@@ -41,7 +41,7 @@ try {
  assert.deepEqual(await routeNames(),['Archived QA route'],'Arrow key selects Archived tab and updates rows');
  await browser.evaluate("[...document.querySelectorAll('.route-filter-tabs [role=tab]')].find(el=>el.textContent==='All').click()");await pause(200);
  assert.deepEqual(await routeNames(),['Active QA route','Archived QA route']);
- await click('[data-page-link][aria-label="Staff Activity"]');await pause(200);
+ await click('[data-page-link][aria-label="Waste Generation"]');await pause(200);
  await click('[aria-label="Choose From date submitted"]');
  for(let n=0;n<100;n++){if(await browser.evaluate("!!document.querySelector('.app-calendar-popover [role=grid]')"))break;await pause(100);}
  assert.ok(await browser.evaluate("!!document.querySelector('.app-calendar-popover [role=grid]')"),'Staff date filter opens HeroUI calendar');
@@ -51,7 +51,7 @@ try {
  assert.ok(!await browser.evaluate("!!document.querySelector('[aria-label=\"Clear From date submitted\"]')"),'Clear resets date filter');
  for(const width of [1280,1920,1024,390]) {
   await browser.send('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});await pause(300);
-  for(const label of ['Overview','Route History','Complaints','Staff Activity','Manage Routes','Driver Assignments','Manage Accounts','Manage Trucks']) {
+  for(const label of ['Overview','Route History','Complaints','Waste Generation','Manage Routes','Driver Assignments','Manage Accounts','Manage Trucks']) {
    await click(`[data-page-link][aria-label="${label}"]`);await pause(250);
    const sizes=[];
    for(const collapsed of [false,true]) {

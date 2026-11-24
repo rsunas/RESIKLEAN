@@ -522,6 +522,8 @@ export default function ResidentScreen() {
   const { tab, notificationId, guide: guideParam } = useLocalSearchParams<{ tab?: string; notificationId?: string; guide?: string }>();
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<ResidentTab>(tab === 'schedule' ? 'schedule' : 'home');
+  const activeTabRef = useRef<ResidentTab>(activeTab);
+  activeTabRef.current = activeTab;
   const { selected: selectedGuide, openGuide, closeGuide } = useSegregationGuide();
   useEffect(() => {
     const category = getGuideCategory(guideParam || '');
@@ -567,6 +569,8 @@ export default function ResidentScreen() {
   const [scheduleError, setScheduleError] = useState('');
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [announcementScope, setAnnouncementScope] = useState<'all' | 'mine'>('all');
+  const announcementScopeRef = useRef(announcementScope);
+  announcementScopeRef.current = announcementScope;
   const [announcementCursor, setAnnouncementCursor] = useState<string | null>(null);
   const [announcementHasMore, setAnnouncementHasMore] = useState(false);
   const [announcementLoading, setAnnouncementLoading] = useState(false);
@@ -675,7 +679,7 @@ export default function ResidentScreen() {
       setPastReports(reports);
       const newest = reports.map(report => report.updatedAt || report.createdAt).filter(Boolean).sort().at(-1) || null;
       if (unreadComplaintSeenRef.current === null) unreadComplaintSeenRef.current = newest;
-      else if (activeTab !== 'report') {
+      else if (activeTabRef.current !== 'report') {
         const fresh = reports.filter(report => {
           const timestamp = report.updatedAt || report.createdAt || '';
           const key = `${normalizeId(report._id)}:${timestamp}`;
@@ -689,20 +693,20 @@ export default function ResidentScreen() {
     } finally {
       setIsLoadingReports(false);
     }
-  }, [activeTab]);
+  }, []);
 
-  const loadAnnouncements = useCallback(async (token: string, reset = true) => {
+  const loadAnnouncements = useCallback(async (token: string, reset = true, scope = announcementScopeRef.current) => {
     if (!API_URL) return;
     setAnnouncementLoading(true); setAnnouncementError('');
     try {
       const cursor = reset ? '' : announcementCursorRef.current ? `&cursor=${encodeURIComponent(announcementCursorRef.current)}` : '';
-      const { response, payload: result } = await requestJson<ApiResponse<AnnouncementPage>>(`${API_URL}/announcements?scope=${announcementScope}&limit=10${cursor}`, { headers: { Authorization: `Bearer ${token}` } });
+      const { response, payload: result } = await requestJson<ApiResponse<AnnouncementPage>>(`${API_URL}/announcements?scope=${scope}&limit=10${cursor}`, { headers: { Authorization: `Bearer ${token}` } });
       if (!response.ok || !result.success || !result.data) throw new Error(result.error || 'Unable to load announcements.');
       const items = result.data!.items;
       setAnnouncements(current => reset ? items : [...current, ...items]);
       const newest = items.map(item => item.publishedAt).filter(Boolean).sort().at(-1) || null;
       if (unreadAnnouncementSeenRef.current === null) unreadAnnouncementSeenRef.current = newest;
-      else if (activeTab !== 'schedule') {
+      else if (activeTabRef.current !== 'schedule') {
         const fresh = items.filter(item => {
           const key = `${item.id}:${item.publishedAt || ''}`;
           return (item.publishedAt || '') > unreadAnnouncementSeenRef.current! && !countedAnnouncementUpdatesRef.current.has(key);
@@ -712,7 +716,17 @@ export default function ResidentScreen() {
       }
       announcementCursorRef.current = result.data.nextCursor || null; setAnnouncementCursor(result.data.nextCursor || null); setAnnouncementHasMore(Boolean(result.data.hasMore));
     } catch (error) { setAnnouncementError(error instanceof Error ? error.message : 'Unable to load announcements.'); } finally { setAnnouncementLoading(false); }
-  }, [activeTab, announcementScope]);
+  }, []);
+
+  const changeAnnouncementScope = (scope: 'all' | 'mine') => {
+    if (scope === announcementScope) return;
+    announcementScopeRef.current = scope;
+    announcementCursorRef.current = null;
+    setAnnouncementCursor(null);
+    setAnnouncementHasMore(false);
+    setAnnouncementScope(scope);
+    if (session?.token) void loadAnnouncements(session.token, true, scope);
+  };
 
   useEffect(() => {
     const owner = session?.user._id || session?.user.id || session?.user.email;
@@ -869,7 +883,7 @@ export default function ResidentScreen() {
     const socket = io(SOCKET_URL, { auth: { token } });
     socketRef.current = socket;
 
-    const handleConnect = () => { setSocketStatus('connected'); void loadReports(token); };
+    const handleConnect = () => { setSocketStatus('connected'); };
     const handleDisconnect = () => setSocketStatus('disconnected');
     const handleConnectError = () => setSocketStatus('disconnected');
     const handleComplaintEvent = (payload: ComplaintSocketPayload) => {
@@ -886,7 +900,7 @@ export default function ResidentScreen() {
       }
 
       setPastReports((current) => mergeRealtimeReport(current, payload));
-      if (activeTab !== 'report') {
+      if (activeTabRef.current !== 'report') {
         const timestamp = incomingReport.updatedAt || incomingReport.createdAt || new Date().toISOString();
         const key = `${reportId}:${timestamp}`;
         if (!countedComplaintUpdatesRef.current.has(key)) {
@@ -908,7 +922,7 @@ export default function ResidentScreen() {
       const reportId = normalizeId(payload.reportId);
       const selectedId = selectedReportIdRef.current;
       if (!reportId || !payload.message) return;
-      if (payload.message.senderRole !== 'resident' && (activeTab !== 'report' || !selectedId || reportId !== selectedId)) {
+      if (payload.message.senderRole !== 'resident' && (activeTabRef.current !== 'report' || !selectedId || reportId !== selectedId)) {
         const key = `${reportId}:${normalizeId(payload.message._id) || payload.message.createdAt || ''}`;
         if (!countedComplaintUpdatesRef.current.has(key)) {
           countedComplaintUpdatesRef.current.add(key);
@@ -920,8 +934,8 @@ export default function ResidentScreen() {
     };
     const handleAnnouncementEvent = (payload: Announcement) => {
       if (!payload?.id) return;
-      setAnnouncements(current => current.some(item => item.id === payload.id) ? current : [{ ...payload, affectsMyArea: announcementScope === 'mine' ? true : payload.affectsMyArea }, ...current]);
-      if (activeTab !== 'schedule') {
+      setAnnouncements(current => current.some(item => item.id === payload.id) ? current : [{ ...payload, affectsMyArea: announcementScopeRef.current === 'mine' ? true : payload.affectsMyArea }, ...current]);
+      if (activeTabRef.current !== 'schedule') {
         const key = `${payload.id}:${payload.publishedAt || ''}`;
         if (!countedAnnouncementUpdatesRef.current.has(key)) {
           countedAnnouncementUpdatesRef.current.add(key);
@@ -949,7 +963,7 @@ export default function ResidentScreen() {
       socket.disconnect();
       if (socketRef.current === socket) socketRef.current = null;
     };
-  }, [activeTab, announcementScope, loadReports, session?.token, session?.user._id, session?.user.id, networkRevision]);
+  }, [loadReports, session?.token, session?.user._id, session?.user.id, networkRevision]);
 
   useEffect(() => {
     setProfileName(session?.user.name || '');
@@ -1526,7 +1540,7 @@ export default function ResidentScreen() {
   const scheduleScreen = (
     <ScrollView contentContainerStyle={styles.newsScreenContent} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl onRefresh={() => { if (session?.token) void loadAnnouncements(session.token); }} refreshing={announcementLoading} tintColor="#0A7F4F" />} onScroll={({ nativeEvent }) => { if (announcementHasMore && !announcementLoading && nativeEvent.layoutMeasurement.height + nativeEvent.contentOffset.y >= nativeEvent.contentSize.height - 240 && session?.token) void loadAnnouncements(session.token, false); }} scrollEventThrottle={200}>
       <Text style={styles.newsScreenTitle}>Announcements</Text><Text style={styles.newsScreenSubtitle}>Service updates from SWMO</Text>
-      <View style={styles.announcementFilters}><Pressable onPress={() => setAnnouncementScope('all')} style={[styles.announcementFilter, announcementScope === 'all' && styles.announcementFilterActive]}><Text style={[styles.announcementFilterText, announcementScope === 'all' && styles.announcementFilterTextActive]}>All</Text></Pressable><Pressable onPress={() => setAnnouncementScope('mine')} style={[styles.announcementFilter, announcementScope === 'mine' && styles.announcementFilterActive]}><Text style={[styles.announcementFilterText, announcementScope === 'mine' && styles.announcementFilterTextActive]}>My area</Text></Pressable></View>
+      <View style={styles.announcementFilters}><Pressable onPress={() => changeAnnouncementScope('all')} style={[styles.announcementFilter, announcementScope === 'all' && styles.announcementFilterActive]}><Text style={[styles.announcementFilterText, announcementScope === 'all' && styles.announcementFilterTextActive]}>All</Text></Pressable><Pressable onPress={() => changeAnnouncementScope('mine')} style={[styles.announcementFilter, announcementScope === 'mine' && styles.announcementFilterActive]}><Text style={[styles.announcementFilterText, announcementScope === 'mine' && styles.announcementFilterTextActive]}>My area</Text></Pressable></View>
       {announcementError ? <Text style={styles.errorMessage}>{announcementError}</Text> : null}
       {announcements.map(item => <AnnouncementCard item={item} key={item.id} />)}
       {announcementLoading && !announcements.length ? <ActivityIndicator color="#0A7F4F" /> : null}

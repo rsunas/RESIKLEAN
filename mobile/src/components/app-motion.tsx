@@ -27,7 +27,7 @@ export function TabTransition({ activeKey, children }: PropsWithChildren<{ activ
   const reduced = useAppReducedMotion();
   return <View collapsable={false} style={styles.flex}>
     <LayoutAnimationConfig skipEntering>
-      <Animated.View key={activeKey} collapsable={false} style={StyleSheet.absoluteFill} entering={reduced ? undefined : FadeIn.duration(MOTION.tab).easing(enterEase)} exiting={reduced ? undefined : FadeOut.duration(MOTION.tab).easing(leaveEase)}>{children}</Animated.View>
+      <Animated.View key={activeKey} collapsable={false} style={StyleSheet.absoluteFill} entering={reduced ? undefined : FadeIn.duration(MOTION.tab).easing(enterEase)}>{children}</Animated.View>
     </LayoutAnimationConfig>
   </View>;
 }

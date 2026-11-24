@@ -6,14 +6,14 @@ import { createServer } from 'vite';
 import { openBrowser } from './browser-check.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const loads = [
- { _id:'normal', routeId:{name:'Area 6'}, staffId:{name:'Peter Parker'}, truckPlate:'SEA-2342', length:3.8,width:2.2,height:1.2,slope:1,tonnesEstimate:3.24,arrivedAt:'2026-11-11T04:37:00Z',sidePhotoUrl:'/swmo-resiklean-logo.svg',backPhotoUrl:'/swmo-resiklean-logo.svg',notes:'Dakul udo' },
- { _id:'large', routeId:{name:'Area 7'}, staffId:{name:'Peter Parker'}, truckPlate:'SEA-2342',length:20000,width:18000,height:2,slope:1,tonnesEstimate:216000000.3,arrivedAt:'2026-11-10T04:37:00Z',sidePhotoUrl:'/missing-qa-photo.jpg' },
- { _id:'small', routeId:{name:'Area 8'}, staffId:{name:'Peter Parker'},truckPlate:'SEA-2342',length:0.0001,width:0.002,height:0.03,slope:0,tonnesEstimate:0.0000000018,arrivedAt:'2026-11-09T04:37:00Z' },
- { _id:'missing', routeId:{name:'Area 9'}, staffId:{name:'Long staff name '.repeat(8)},truckPlate:'SEA-2342',length:3.8,width:2.2,height:1.2,slope:0,tonnesEstimate:3.01,notes:'Long notes '.repeat(300) },
+ { _id:'normal', routeId:{name:'Area 6'}, staffId:{name:'Peter Parker'}, truckNumber:'TR-101', truckPlate:'SEA-2342', length:3.8,width:2.2,height:1.2,slope:1,tonnesEstimate:3.24,arrivedAt:'2026-11-11T04:37:00Z',sidePhotoUrl:'/swmo-resiklean-logo.svg',backPhotoUrl:'/swmo-resiklean-logo.svg',notes:'Dakul udo' },
+ { _id:'large', routeId:{name:'Area 7'}, staffId:{name:'Peter Parker'}, truckNumber:'TR-101', truckPlate:'SEA-2342',length:20000,width:18000,height:2,slope:1,tonnesEstimate:216000000.3,arrivedAt:'2026-11-10T04:37:00Z',sidePhotoUrl:'/missing-qa-photo.jpg' },
+ { _id:'small', routeId:{name:'Area 8'}, staffId:{name:'Peter Parker'},truckNumber:'TR-101', truckPlate:'SEA-2342',length:0.0001,width:0.002,height:0.03,slope:0,tonnesEstimate:0.0000000018,arrivedAt:'2026-11-09T04:37:00Z' },
+ { _id:'missing', routeId:{name:'Area 9'}, staffId:{name:'Long staff name '.repeat(8)},truckNumber:'TR-101', truckPlate:'SEA-2342',length:3.8,width:2.2,height:1.2,slope:0,tonnesEstimate:3.01,notes:'Long notes '.repeat(300) },
 ];
 const server=await createServer({root,server:{host:'127.0.0.1',port:0},define:{'import.meta.env.VITE_API_URL':JSON.stringify('/__load-api'),'import.meta.env.VITE_MAPBOX_ACCESS_TOKEN':JSON.stringify('')},plugins:[{
  name:'truckload-fixture',resolveId(id){if(id==='/__load.js')return '\0load-fixture';},
- load(id){if(id==='\0load-fixture')return `import React from 'react';import {createRoot} from 'react-dom/client';import {BrowserRouter} from 'react-router-dom';import Dashboard from '/src/pages/Dashboard.jsx';import '/src/index.css';sessionStorage.setItem('resiklean_admin_token','fixture');sessionStorage.setItem('resiklean_admin_user',JSON.stringify({name:'Admin',role:'admin'}));createRoot(document.getElementById('root')).render(React.createElement(BrowserRouter,null,React.createElement(Dashboard)));`;},
+ load(id){if(id==='\0load-fixture')return `import React from 'react';import {createRoot} from 'react-dom/client';import {BrowserRouter} from 'react-router-dom';import Dashboard from '/src/pages/Dashboard.jsx';import {PreferencesProvider} from '/src/components/preferences.jsx';import {I18nProvider} from '@heroui/react';import '/src/index.css';window.history.replaceState(null,'','?view=activity');sessionStorage.setItem('resiklean_admin_token','fixture');sessionStorage.setItem('resiklean_admin_user',JSON.stringify({name:'Admin',role:'admin'}));createRoot(document.getElementById('root')).render(React.createElement(PreferencesProvider,null,React.createElement(I18nProvider,{locale:'en-US'},React.createElement(BrowserRouter,null,React.createElement(Dashboard)))));`;},
  configureServer(vite){vite.middlewares.use(async(req,res,next)=>{
   if(req.url.startsWith('/__load-api')){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({success:true,data:{loads,users:[],routes:[],reports:[],rows:[],report:[],trucks:[]}}));}
   else if(req.url==='/__load'){res.setHeader('Content-Type','text/html');res.end(await vite.transformIndexHtml(req.url,'<html><body><div id="root"></div><script type="module" src="/__load.js"></script></body></html>'));}
@@ -30,10 +30,12 @@ try{
  const open=async area=>{await browser.evaluate(`document.querySelector('[aria-label="View truckload from Area ${area}"]').focus()`);await click(`[aria-label="View truckload from Area ${area}"]`);await wait("!!document.querySelector('.tls-dialog')");await pause(250);};
  const close=async area=>{await key('Escape',27);await wait("!document.querySelector('.tls-dialog')");await pause(100);assert.equal(await browser.evaluate("document.activeElement.getAttribute('aria-label')"),`View truckload from Area ${area}`,'Return focus to View details button');};
  await browser.send('Page.navigate',{url:server.resolvedUrls.local[0]+'__load'});
- await wait("!!document.querySelector('[data-page-link]')");await click('[data-page-link][aria-label="Staff Activity"]');
+ await wait("!!document.querySelector('[data-page-link]')");await click('[data-page-link][aria-label="Waste Generation"]');
  await wait("document.querySelectorAll('.activity-row').length===4");
+ assert.equal(await browser.evaluate("document.querySelector('.activity-row td strong').textContent"),'TR-101');
  const tableBefore=await browser.evaluate("document.querySelector('.staff-activity-card table').innerText");
- assert.deepEqual(await browser.evaluate("[...document.querySelectorAll('.staff-activity-card th')].map(el=>el.textContent)"),['Staff submitted','Date submitted','Area','Slope','Tonnage','Actions']);
+ assert.deepEqual(await browser.evaluate("[...document.querySelectorAll('.staff-activity-card th')].map(el=>el.textContent)"),['Truck number','Date submitted','Area','Slope','Tonnage','Actions']);
+
  await click('.activity-row td');await pause(200);
  assert.equal(await browser.evaluate("!!document.querySelector('.tls-dialog')"),false,'Clicking row does not open details');
  assert.ok(await browser.evaluate("[...document.querySelectorAll('.activity-row')].every(el=>el.tabIndex===-1)"),'Only buttons are focusable');
@@ -44,6 +46,8 @@ try{
   assert.ok(await browser.evaluate("document.documentElement.scrollWidth<=innerWidth+1"),'Table stays inside page');
   if(width>=1280)assert.ok(await browser.evaluate("document.querySelector('.staff-activity-card .table-scroll').scrollWidth<=document.querySelector('.staff-activity-card .table-scroll').clientWidth+1"),'All six columns fit desktop');
   await open(6);
+  assert.equal(await browser.evaluate("document.querySelector('.tls-details > div:nth-child(3) dt').textContent"),'Truck number');
+  assert.equal(await browser.evaluate("document.querySelector('.tls-details > div:nth-child(3) dd').textContent"),'TR-101');
   assert.equal(await browser.evaluate("document.activeElement.getAttribute('aria-label')"),'Close truckload details');
   assert.equal(await browser.evaluate("document.querySelector('.tls-dialog').getAttribute('aria-modal')"),'true');
   assert.equal(await browser.evaluate("document.querySelector('.tls-dialog').getAttribute('aria-labelledby')"),'truckload-submission-title');
@@ -102,11 +106,11 @@ try{
  await click('.table-page-size .select__trigger');await wait("!!document.querySelector('[role=option]')");
  await browser.evaluate("[...document.querySelectorAll('[role=option]')].find(el=>el.textContent==='10').click()");
  await wait("document.querySelectorAll('.activity-row').length===10 && document.querySelector('.table-page-input').value==='1'");
- await click('[aria-label="Last page"]');await fill('[aria-label="Search staff activity"]','Peter Parker');
+ await click('[aria-label="Last page"]');await fill('[aria-label="Search waste generation"]','Peter Parker');
  await wait("document.querySelectorAll('.activity-row').length===3 && document.querySelector('.table-page-input').value==='1'");
- await fill('[aria-label="Search staff activity"]','no matching submission');await wait("document.querySelector('.table-page-count').textContent==='0 results'");
+ await fill('[aria-label="Search waste generation"]','no matching submission');await wait("document.querySelector('.table-page-count').textContent==='0 results'");
  assert.ok(await browser.evaluate("[...document.querySelectorAll('.table-page-controls button')].every(el=>el.disabled)"));
- await click('[aria-label="Clear staff activity filters"]');await wait("document.querySelectorAll('.activity-row').length===10");
+ await click('[aria-label="Clear waste generation filters"]');await wait("document.querySelectorAll('.activity-row').length===10");
  for(const width of [1280,390]) {
   await browser.send('Emulation.setDeviceMetricsOverride',{width,height:900,deviceScaleFactor:1,mobile:false});await pause(250);
   assert.ok(await browser.evaluate("document.documentElement.scrollWidth<=innerWidth+1"),'Pagination does not overflow page');

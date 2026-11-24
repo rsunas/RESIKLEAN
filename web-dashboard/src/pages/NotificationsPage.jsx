@@ -30,7 +30,7 @@ export default function NotificationsPage({ feed, onOpen, Icon }) {
     <section className="notifications-card" aria-label="Admin notifications">
       <div className="notifications-toolbar">
         <div className="notifications-tabs" role="group" aria-label="Notification read status">{[false, true].map(unread => <Button key={String(unread)} variant="ghost" aria-pressed={filter.unread === unread} isDisabled={!!busy} onPress={() => changeFilter({ unread })}>{unread ? `Unread${data ? ` (${data.unread})` : ''}` : 'All notifications'}</Button>)}</div>
-        <AppSelect aria-label="Notification category" options={categories} value={filter.type} disabled={!!busy} onChange={type => changeFilter({ type })}/>
+        <AppSelect aria-label="Notification category" className="notifications-category-select" popoverClassName="notifications-category-popover" popoverPlacement="bottom start" options={categories} value={filter.type} disabled={!!busy} onChange={type => changeFilter({ type })}/>
         <Button variant="secondary" className="notifications-mark-page" isDisabled={loading || !!busy || !items.some(item => !item.read)} onPress={() => act('page', () => markRead(items.filter(item => !item.read).map(item => item.id)))}>Mark page as read</Button>
       </div>
       {actionError ? <p className="notifications-error" role="alert">{actionError}</p> : null}

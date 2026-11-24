@@ -1,6 +1,5 @@
 import { Button, Switch } from '@heroui/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import AppSelect from '../components/AppSelect.jsx';
 import { PasswordDialog, ProfileDialog, SettingsAvatar } from '../components/SettingsDialogs.jsx';
 import { settingsRequest } from '../components/settingsApi.js';
 import { translate, usePreferences } from '../components/preferences.jsx';
@@ -8,7 +7,7 @@ import './SettingsPage.css';
 
 // The current API has no super-admin permission. Never infer it from a display name.
 // Operations remain hidden until a server-authorized capability is available.
-const sections = [['account', 'Account'], ['appearance', 'Appearance and language'], ['notifications', 'Notifications'], ['preferences', 'Dashboard preferences'], ['security', 'Security']];
+const sections = [['account', 'Account'], ['appearance', 'Appearance and language'], ['notifications', 'Notifications'], ['security', 'Security']];
 function ComingSoon() { return <span className="settings-soon">Coming soon</span>; }
 function Section({ id, title, description, children }) {
   const { preferences } = usePreferences();
@@ -72,7 +71,7 @@ export default function SettingsPage({ user, token, onUserChange }) {
       if (mounted.current) { setSettings(previous); setPreferences(current => ({ ...current, theme: previous.theme === 'dark' ? 'dark' : 'light', language: previous.language === 'fil' ? 'fil' : 'en' })); setToast({ text: error.message, error: true }); }
     } finally { if (mounted.current) setSaving(false); }
   }, [saving, settings, token, setPreferences]);
-  return <div className="admin-settings"><header className="settings-heading"><h1>{tr('Settings')}</h1><p>{tr('Manage your account and dashboard preferences.')}</p></header>
+  return <div className="admin-settings"><header className="settings-heading"><h1>{tr('Settings')}</h1><p>{tr('Manage your account, appearance, notifications, and security.')}</p></header>
     <div className="settings-layout"><nav className="settings-section-nav" aria-label="Settings sections">{sections.map(([id, label]) => <a key={id} href={`#settings-${id}`} aria-current={active === id ? 'location' : undefined} onClick={event => {
       event.preventDefault(); const node = document.getElementById(`settings-${id}`); node?.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' }); setActive(id);
     }}>{tr(label)}</a>)}</nav>
@@ -85,13 +84,8 @@ export default function SettingsPage({ user, token, onUserChange }) {
       </Section>
       <Section id="notifications" title="Notifications" description="Choose what you want to be told about.">
         <Row label="Push notifications" description="Allow push notifications on devices registered to your account."><Toggle label="Push notifications" selected={!!settings?.notifications?.pushEnabled} disabled={!settings || saving} onChange={value => savePreference({ notifications: { pushEnabled: value } })} /></Row>
-        <Row label="New complaints" description="When a resident submits a complaint." coming><Toggle label="New complaints" disabled /></Row>
-        <Row label="Truckload submissions" description="When staff submit a new truckload." coming><Toggle label="Truckload submissions" disabled /></Row>
-        <Row label="Account activity" description="New accounts and role changes." coming><Toggle label="Account activity" disabled /></Row>
-      </Section>
-      <Section id="preferences" title="Dashboard preferences" description="Defaults for charts and tables.">
-        <Row label="Default date range" description="Saved defaults for the Overview charts are coming soon." coming><AppSelect aria-label="Default date range" disabled value="7" options={[{ value: '7', label: 'Last 7 days' }, { value: '30', label: 'Last 30 days' }, { value: 'month', label: 'This month' }]} /></Row>
-        <Row label="Rows per page" description="For now, choose the row count at the bottom of each table." coming><AppSelect aria-label="Default rows per page" disabled placeholder="Not set" value="" options={[10, 25, 50].map(value => ({ value: String(value), label: String(value) }))} /></Row>
+        <Row label="New complaints" description="New complaints appear in the Notifications feed."><span className="settings-available">{tr('In dashboard feed')}</span></Row>
+        <Row label="Truckload submissions" description="Truckload submissions appear in the Notifications feed."><span className="settings-available">{tr('In dashboard feed')}</span></Row>
       </Section>
       <Section id="security" title="Security" description="Keep your account safe."><Row label="Password" description="Change the password you use to sign in."><Button variant="secondary" className="settings-outline" isDisabled={!settings} onPress={() => setDialog('password')}>Change password</Button></Row></Section>
     </div></div>

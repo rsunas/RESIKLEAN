@@ -73,7 +73,7 @@ export default function TruckloadSubmissionDialog({ activity, load, onClose }) {
   const backPhoto = load?.backPhotoUrl || activity.backPhotoUrl;
   const initials = (activity.driver || 'Staff member').split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase();
   const details = [
-    ['Area', activity.area, 'pin'], ['Staff', activity.driver, null], ['Truck', activity.truckPlate, 'truck'],
+    ['Area', activity.area, 'pin'], ['Staff', activity.driver, null], ['Truck number', activity.truckNumber || load?.truckNumber || '—', 'truck'],
     ['Submitted', submittedLabel(load?.arrivedAt || activity.submittedAt), 'clock'],
   ];
   return <>
