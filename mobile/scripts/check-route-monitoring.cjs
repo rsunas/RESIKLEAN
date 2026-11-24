@@ -111,7 +111,7 @@ function screenFixture(consent = null, pausedDay = null, accept = true, tracking
   const calls = [];
   const consentPrompt = { request: async () => { prompts++; return accept; } };
   const context = {
-    finishRouteFlowRef: { current: false },
+    finishRouteFlowRef: { current: false }, tripStoppedRef: { current: false },
     activeTab: 'map', automaticTripPromptEligible: true, editingProfile: false, claimTripStartPrompt: async () => { if(claimed)return false; claimed=true;return true; },
     withTimeout, loadRouteHistory: async () => {}, useCallback: fn => fn, isTogglingMonitoringRef: { current: false }, monitoringSuspendedRef: { current: false }, monitoringRequestRef: { current: 0 },
     monitoringContextRef: { current: { collectorId: config.collectorId, routeId: config.routeId, eligible: true } },
@@ -213,6 +213,23 @@ test('online Finish route waits for local save and completes even while uploads 
   assert.equal(route, null); assert.equal(message.kind, 'success');
   assert.deepEqual(uploads, ['trail', 'completion']);
 });
+test('failed tracking shutdown never reports a finished route, even offline', async () => {
+  for (const apiUrl of ['', 'https://fixture']) {
+    let message, saves = 0;
+    const context = {
+      session: { token: 'token', user: { _id: 'driver' } }, assignedRoute: { _id: 'route' },
+      collectorId: 'driver', isSubmittingRoute: false, submittingRouteRef: { current: false },
+      setIsSubmittingRoute() {}, setIsFinishRouteConfirmVisible() {},
+      setRouteActionMessage: value => { message = value; },
+      disableBackgroundGeofencing: async () => { throw Error('Trip monitoring could not be stopped.'); },
+      queueRouteCompletion: async () => { saves++; }, API_URL: apiUrl,
+    };
+    await evaluateScreen('confirmRouteCompletion', context)();
+    assert.equal(saves, 0);
+    assert.equal(message.kind, 'error');
+    assert.equal(message.retryCompletion, true);
+  }
+});
 test('map auto-prompts once and Not now never starts recording', async () => {
   const screen = screenFixture(null, null, false); await screen.enable({ automatic: true });
   await screen.enable({ automatic: true });
@@ -270,6 +287,45 @@ test('manual switch-on resumes a paused day; switch-off saves the pause', async 
   await screen.stop(); assert.equal(screen.preference().pausedDay, filter.monitoringDay());
   assert.ok(screen.calls.some(call => call[0] === 'stop'));
   assert.ok(screen.calls.some(call => call[0] === 'stop-zones'));
+});
+test('a persisted manual pause overrides a stale active native status', async () => {
+  const screen = screenFixture(true, filter.monitoringDay(), true, true);
+  await screen.enable({ automatic: true });
+  assert.equal(screen.calls.some(call => call[0] === 'enable'), false);
+});
+test('finishing locks automatic restarts until an explicit new trip', async () => {
+  const screen = screenFixture(true);
+  await screen.stop();
+  await screen.enable({ automatic: true });
+  assert.equal(screen.calls.some(call => call[0] === 'enable'), false);
+  await screen.enable();
+  assert.equal(screen.calls.filter(call => call[0] === 'enable').length, 1);
+});
+test('an automatic status check started before finish cannot restart the trip', async () => {
+  const screen = screenFixture(true);
+  let release;
+  screen.context.getRouteProximityStatus = () => new Promise(resolve => { release = resolve; });
+  const starting = evaluateScreen('enableBackgroundGeofencing', screen.context)({ automatic: true });
+  await new Promise(resolve => setImmediate(resolve));
+  await screen.stop();
+  release({ enabled: true, routeId: config.routeId });
+  await starting;
+  assert.equal(screen.calls.some(call => call[0] === 'enable'), false);
+});
+test('a GPS callback awaiting session lookup is cancelled when the trip finishes', async () => {
+  reset(); await service.enableRouteProximityTracking(config);
+  let release;
+  const originalSession = dependencies['@/lib/session'].getSession;
+  dependencies['@/lib/session'].getSession = () => new Promise(resolve => { release = resolve; });
+  try {
+    const sampling = service.processDriverRouteLocation(fix(), config);
+    await new Promise(resolve => setImmediate(resolve));
+    const stopping = service.stopRouteProximityTracking({ forgetConfiguration: true });
+    release({ token: 'fixture', user: { _id: 'driver-1', role: 'collector' } });
+    await Promise.all([sampling, stopping]);
+    assert.equal(points.length, 0);
+    assert.equal(running, false);
+  } finally { dependencies['@/lib/session'].getSession = originalSession; }
 });
 test('sign-out while the opt-in prompt is open cannot start tracking afterwards', async () => {
   const screen = screenFixture(); let approve;

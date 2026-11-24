@@ -45,7 +45,6 @@ type Language = 'en' | 'fil';
 type NotificationSettings = {
   pushEnabled: boolean;
   collectionReminders: boolean;
-  scheduleUpdates: boolean;
   announcements: boolean;
   reminderMinutesBefore?: number;
 };
@@ -92,7 +91,6 @@ const DEFAULT_SETTINGS: UserSettings = {
   notifications: {
     pushEnabled: true,
     collectionReminders: true,
-    scheduleUpdates: true,
     announcements: true,
     reminderMinutesBefore: 60,
   },
@@ -682,82 +680,68 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
               <LanguageSelector onChange={setLanguage} value={settings.language} />
             </View>
 
-            {/* ── Notifications ────────────────────────────────── */}
-            <SectionHeader label="Notifications" />
-            <View style={[ss.card, appTheme === 'dark' && { backgroundColor: '#1A2420' }]}>
-              <SettingRow
-                icon="bell"
-                iconBg="#e8faf0"
-                iconColor="#07815f"
-                label="Push Notifications"
-                sublabel="Master toggle for all notifications"
-                right={
-                  <Switch
-                    ios_backgroundColor="#cdd9d3"
-                    accessibilityLabel="Push Notifications"
-                    onValueChange={(value) => setNotificationToggle('pushEnabled', value)}
-                    thumbColor="#ffffff"
-                    trackColor={{ false: '#cdd9d3', true: '#0A7F4F' }}
-                    value={settings.notifications.pushEnabled}
+            {session.user.role === 'resident' ? (
+              <>
+                {/* ── Notifications ────────────────────────────────── */}
+                <SectionHeader label="Notifications" />
+                <View style={[ss.card, appTheme === 'dark' && { backgroundColor: '#1A2420' }]}>
+                  <SettingRow
+                    icon="bell"
+                    iconBg="#e8faf0"
+                    iconColor="#07815f"
+                    label="Push Notifications"
+                    sublabel="Master toggle for all notifications"
+                    right={
+                      <Switch
+                        ios_backgroundColor="#cdd9d3"
+                        accessibilityLabel="Push Notifications"
+                        onValueChange={(value) => setNotificationToggle('pushEnabled', value)}
+                        thumbColor="#ffffff"
+                        trackColor={{ false: '#cdd9d3', true: '#0A7F4F' }}
+                        value={settings.notifications.pushEnabled}
+                      />
+                    }
                   />
-                }
-              />
-              <SettingRow
-                icon="truck"
-                iconBg="#f0f9ff"
-                iconColor="#2f70d7"
-                label="Collection Reminders"
-                sublabel="One alert when collection starts or is underway, and one when it ends"
-                right={
-                  <Switch
-                    disabled={!settings.notifications.pushEnabled}
-                    ios_backgroundColor="#cdd9d3"
-                    accessibilityLabel="Collection Reminders"
-                    onValueChange={(value) => setNotificationToggle('collectionReminders', value)}
-                    thumbColor="#ffffff"
-                    trackColor={{ false: '#cdd9d3', true: '#0A7F4F' }}
-                    value={settings.notifications.collectionReminders && settings.notifications.pushEnabled}
+                  <SettingRow
+                    icon="truck"
+                    iconBg="#f0f9ff"
+                    iconColor="#2f70d7"
+                    label="Collection Reminders"
+                    sublabel="One alert when collection starts or is underway, and one when it ends"
+                    right={
+                      <Switch
+                        disabled={!settings.notifications.pushEnabled}
+                        ios_backgroundColor="#cdd9d3"
+                        accessibilityLabel="Collection Reminders"
+                        onValueChange={(value) => setNotificationToggle('collectionReminders', value)}
+                        thumbColor="#ffffff"
+                        trackColor={{ false: '#cdd9d3', true: '#0A7F4F' }}
+                        value={settings.notifications.collectionReminders && settings.notifications.pushEnabled}
+                      />
+                    }
                   />
-                }
-              />
-              <SettingRow
-                icon="calendar"
-                iconBg="#fff7e6"
-                iconColor="#c17a00"
-                label="Schedule Updates"
-                sublabel="Alerts when your schedule changes"
-                right={
-                  <Switch
-                    disabled={!settings.notifications.pushEnabled}
-                    ios_backgroundColor="#cdd9d3"
-                    accessibilityLabel="Schedule Updates"
-                    onValueChange={(value) => setNotificationToggle('scheduleUpdates', value)}
-                    thumbColor="#ffffff"
-                    trackColor={{ false: '#cdd9d3', true: '#0A7F4F' }}
-                    value={settings.notifications.scheduleUpdates && settings.notifications.pushEnabled}
+                  <SettingRow
+                    icon="message-square"
+                    iconBg="#f5f0ff"
+                    iconColor="#7c4dff"
+                    isLast
+                    label="Announcements"
+                    sublabel="SWMO news and official notices"
+                    right={
+                      <Switch
+                        disabled={!settings.notifications.pushEnabled}
+                        ios_backgroundColor="#cdd9d3"
+                        accessibilityLabel="Announcements"
+                        onValueChange={(value) => setNotificationToggle('announcements', value)}
+                        thumbColor="#ffffff"
+                        trackColor={{ false: '#cdd9d3', true: '#0A7F4F' }}
+                        value={settings.notifications.announcements && settings.notifications.pushEnabled}
+                      />
+                    }
                   />
-                }
-              />
-              <SettingRow
-                icon="message-square"
-                iconBg="#f5f0ff"
-                iconColor="#7c4dff"
-                isLast
-                label="Announcements"
-                sublabel="SWMO news and official notices"
-                right={
-                  <Switch
-                    disabled={!settings.notifications.pushEnabled}
-                    ios_backgroundColor="#cdd9d3"
-                    accessibilityLabel="Announcements"
-                    onValueChange={(value) => setNotificationToggle('announcements', value)}
-                    thumbColor="#ffffff"
-                    trackColor={{ false: '#cdd9d3', true: '#0A7F4F' }}
-                    value={settings.notifications.announcements && settings.notifications.pushEnabled}
-                  />
-                }
-              />
-            </View>
+                </View>
+              </>
+            ) : null}
 
             {/* ── Security ─────────────────────────────────────── */}
             <SectionHeader label="Security" />

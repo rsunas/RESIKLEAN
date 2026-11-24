@@ -165,7 +165,7 @@ const updateMe = async (req, res) => {
       }
       if (req.body.settings.notifications && typeof req.body.settings.notifications === 'object') {
         user.settings.notifications = user.settings.notifications || {};
-        ['pushEnabled', 'collectionReminders', 'scheduleUpdates', 'announcements', 'reminderMinutesBefore'].forEach((key) => {
+        ['pushEnabled', 'collectionReminders', 'announcements', 'reminderMinutesBefore'].forEach((key) => {
           if (req.body.settings.notifications[key] !== undefined) {
             user.settings.notifications[key] = req.body.settings.notifications[key];
           }
@@ -255,18 +255,19 @@ const getSettings = async (req, res) => {
       notifications: {
         pushEnabled: true,
         collectionReminders: true,
-        scheduleUpdates: true,
         announcements: true,
         reminderMinutesBefore: 30,
       },
     };
 
+    const storedNotifications = { ...(user.settings?.notifications || {}) };
+    delete storedNotifications.scheduleUpdates;
     const settings = {
       theme: user.settings?.theme || defaultSettings.theme,
       language: user.settings?.language || defaultSettings.language,
       notifications: {
         ...defaultSettings.notifications,
-        ...(user.settings?.notifications || {}),
+        ...storedNotifications,
         pushEnabled: user.settings?.notifications?.pushEnabled ?? user.notificationsEnabled ?? true,
       },
     };
@@ -302,7 +303,6 @@ const updateSettings = async (req, res) => {
         notifications: {
           pushEnabled: true,
           collectionReminders: true,
-          scheduleUpdates: true,
           announcements: true,
           reminderMinutesBefore: 30,
         },
@@ -329,7 +329,6 @@ const updateSettings = async (req, res) => {
       const allowedNotificationKeys = [
         'pushEnabled',
         'collectionReminders',
-        'scheduleUpdates',
         'announcements',
         'reminderMinutesBefore',
       ];

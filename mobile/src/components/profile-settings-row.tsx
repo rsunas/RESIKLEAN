@@ -41,7 +41,7 @@ export function ProfileSettingsRow({ onSignOut }: { onSignOut: () => void }) {
 }
 
 const styles = StyleSheet.create({
-  row: { alignItems: 'center', backgroundColor: '#F4F6F5', borderRadius: 16, flexDirection: 'row', gap: 12, marginTop: 24, minHeight: 60, paddingHorizontal: 14, paddingVertical: 12 },
+  row: { alignItems: 'center', backgroundColor: '#F4F6F5', borderRadius: 16, flexDirection: 'row', gap: 12, marginTop: 12, minHeight: 60, paddingHorizontal: 14, paddingVertical: 12 },
   badge: { alignItems: 'center', backgroundColor: '#E3F4EB', borderRadius: 18, height: 36, width: 36, justifyContent: 'center' },
   label: { color: '#121A16', flex: 1, fontSize: 16, fontWeight: '600' },
 });

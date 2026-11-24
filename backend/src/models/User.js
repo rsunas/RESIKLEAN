@@ -42,7 +42,6 @@ const userSchema = new mongoose.Schema(
       notifications: {
         pushEnabled: { type: Boolean, default: true },
         collectionReminders: { type: Boolean, default: true },
-        scheduleUpdates: { type: Boolean, default: true },
         announcements: { type: Boolean, default: true },
         reminderMinutesBefore: { type: Number, default: 30 }
       }

@@ -295,11 +295,13 @@ async function readDetection() {
 }
 
 const processPresence = async (location: Location.LocationObject, expected?: { collectorId?: string; routeId: string }, backgroundBatch = false) => {
+  const generation = trackingGeneration;
+  const stopped = () => trackingSuppressed || generation !== trackingGeneration;
   const config = await getConfig();
   if (!config || (expected && (config.collectorId !== expected.collectorId || config.routeId !== expected.routeId))) return;
   if (trackingSuppressed || !await hasStartedRouteUpdates()) return;
   const session = await getSession();
-  if (!session?.token || session.user.role !== 'collector' || (session.user._id || session.user.id) !== config.collectorId) return;
+  if (stopped() || !session?.token || session.user.role !== 'collector' || (session.user._id || session.user.id) !== config.collectorId) return;
   const detection = await readDetection();
   if (location.timestamp < detection.armedAt) return;
   const distance = getDistanceToRouteMeters(location.coords.latitude, location.coords.longitude, config.routePath);
@@ -339,8 +341,10 @@ const processPresence = async (location: Location.LocationObject, expected?: { c
   });
   // Record the explicitly started trip independently of route entry.
   // GPS quality checks still reject stale, inaccurate, mocked and jumping fixes.
+  if (stopped()) return;
   if (result.accepted && config.collectorId) {
     await startDriverTrailSession({ collectorId: config.collectorId, routeId: config.routeId, routeName: config.routeName, routePath: config.routePath, routeSnapshot: config.routeSnapshot });
+    if (stopped()) return;
     await recordDriverTrailLocation(location, config.collectorId);
   }
   emitStatus({ ...(await getStoredStatus()), enabled: true, signal: result.signal, hasEntered: result.filter.hasEntered });

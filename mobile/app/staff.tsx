@@ -1775,7 +1775,7 @@ const styles = StyleSheet.create({
   profileAccountLabel: { color: '#5A6761', fontSize: 12, marginBottom: 2 },
   profileAccountValue: { color: '#121A16', fontSize: 15, fontWeight: '600' },
   profileAccountPlaceholder: { color: '#5A6761', fontWeight: '500' },
-  signOutButton: { alignItems: 'center', backgroundColor: '#FDECEA', borderRadius: 16, flexDirection: 'row', gap: 8, minHeight: 52, paddingVertical: 12, paddingHorizontal: 16, justifyContent: 'center', marginTop: 28 },
+  signOutButton: { alignItems: 'center', backgroundColor: '#FDECEA', borderRadius: 16, flexDirection: 'row', gap: 8, minHeight: 52, paddingVertical: 12, paddingHorizontal: 16, justifyContent: 'center', marginTop: 12 },
   signOutText: { color: '#B3261E', fontSize: 16, fontWeight: '700', flexShrink: 1, textAlign: 'center' },
   pickerSheet: { backgroundColor: '#ffffff', borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '75%', padding: 18, paddingBottom: 32 },
   sheetHandle: { alignSelf: 'center', backgroundColor: '#d6ded9', borderRadius: 3, height: 5, marginBottom: 16, width: 42 },

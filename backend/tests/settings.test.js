@@ -39,7 +39,6 @@ describe('Resident Settings & Preferences Backend Tests', () => {
       expect(user.settings.language).toBe('en');
       expect(user.settings.notifications.pushEnabled).toBe(true);
       expect(user.settings.notifications.collectionReminders).toBe(true);
-      expect(user.settings.notifications.scheduleUpdates).toBe(true);
       expect(user.settings.notifications.announcements).toBe(true);
       expect(user.settings.notifications.reminderMinutesBefore).toBe(30);
       expect(user.notificationsEnabled).toBe(true);
@@ -68,7 +67,6 @@ describe('Resident Settings & Preferences Backend Tests', () => {
       expect(user.settings.language).toBe('fil');
       expect(user.settings.notifications.pushEnabled).toBe(false);
       expect(user.settings.notifications.collectionReminders).toBe(false);
-      expect(user.settings.notifications.scheduleUpdates).toBe(true); // default preserved
       expect(user.settings.notifications.reminderMinutesBefore).toBe(60);
     });
   });
@@ -231,7 +229,7 @@ describe('Resident Settings & Preferences Backend Tests', () => {
       expect(res.data.data.settings.theme).toBe('dark');
       expect(res.data.data.settings.language).toBe('fil');
       expect(res.data.data.settings.notifications.reminderMinutesBefore).toBe(45);
-      expect(res.data.data.settings.notifications.scheduleUpdates).toBe(false);
+      expect(res.data.data.settings.notifications.scheduleUpdates).toBeUndefined();
       expect(res.data.data.email).toBe('maria@example.com');
       expect(res.data.data.barangay).toBe('Triangulo');
     });
@@ -264,7 +262,6 @@ describe('Resident Settings & Preferences Backend Tests', () => {
           notifications: {
             pushEnabled: true,
             collectionReminders: true,
-            scheduleUpdates: true,
             announcements: true,
             reminderMinutesBefore: 30,
           },

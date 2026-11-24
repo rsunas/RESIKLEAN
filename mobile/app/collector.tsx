@@ -414,6 +414,7 @@ export default function CollectorScreen() {
   const isDarkTheme = appTheme === 'dark';
   const networkRevision = useNetworkRecovery();
   const reducedMotion = useAppReducedMotion();
+  const cameraBusyRef = useRef(false);
   const mapCamera = useRef<React.ElementRef<typeof Mapbox.Camera>>(null);
   const expandStopCluster = useCallback((coordinate: [number, number], zoom: number) => {
     mapCamera.current?.setCamera({ centerCoordinate: coordinate, zoomLevel: zoom, animationMode: reducedMotion ? 'none' : 'easeTo', animationDuration: reducedMotion ? 0 : 300 });
@@ -476,6 +477,7 @@ export default function CollectorScreen() {
   const emptyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isTogglingMonitoringRef = useRef(false);
   const monitoringSuspendedRef = useRef(false);
+  const tripStoppedRef = useRef(false);
   const finishRouteFlowRef = useRef(false);
   finishRouteFlowRef.current = isFinishRouteConfirmVisible || isSubmittingRoute;
   const driverDataRequestRef = useRef(0);
@@ -1082,26 +1084,13 @@ export default function CollectorScreen() {
           .then(synced => { if (synced) void loadRouteHistory(token); }).catch(() => {});
       }
     } catch (err) {
-      const isNetworkErr = !API_URL || (err instanceof Error && (
-        err.message.includes('Network request failed') ||
-        err.message.includes('network') ||
-        err.message.includes('fetch') ||
-        err.message.includes('timeout') ||
-        err.message.includes('timed out') ||
-        err.message.includes('Failed to fetch')
-      ));
-
-      if (isNetworkErr) {
-        try { await completeOffline(); }
-        catch (saveError) { setRouteActionMessage({ kind: 'error', title: 'Could not save route', message: saveError instanceof Error ? saveError.message : 'Please try saving again.', retryCompletion: true }); }
-      } else {
-        setRouteActionMessage({
-          kind: 'error',
-          title: 'Could not finish route',
-          message: err instanceof Error ? err.message : 'The route could not be completed. Please try again.',
-          retryCompletion: true,
-        });
-      }
+      // Completion is saved locally; a stop/save failure must never become success.
+      setRouteActionMessage({
+        kind: 'error',
+        title: 'Could not finish route',
+        message: err instanceof Error ? err.message : 'The route could not be completed. Please try again.',
+        retryCompletion: true,
+      });
     } finally {
       submittingRouteRef.current = false;
       setIsFinishRouteConfirmVisible(false);
@@ -1303,13 +1292,15 @@ export default function CollectorScreen() {
 
   const enableBackgroundGeofencing = useCallback(async ({ automatic = false }: { automatic?: boolean } = {}) => {
     if (finishRouteFlowRef.current) return;
-    if (isTogglingMonitoringRef.current || monitoringSuspendedRef.current) return;
+    if (isTogglingMonitoringRef.current || monitoringSuspendedRef.current || (automatic && tripStoppedRef.current)) return;
     if (!collectorId || !assignedRoute?._id || !monitoringEligible) {
       setGeofencingMessage('An assigned route is needed to start a trip. Refresh your assignment and try again.');
       return;
     }
+    // Only an explicit Start trip can release a completed trip's restart lock.
+    if (!automatic) tripStoppedRef.current = false;
     const requestId = ++monitoringRequestRef.current;
-    const contextIsCurrent = () => requestId === monitoringRequestRef.current && !monitoringSuspendedRef.current
+    const contextIsCurrent = () => requestId === monitoringRequestRef.current && !monitoringSuspendedRef.current && !tripStoppedRef.current
       && monitoringContextRef.current.collectorId === collectorId
       && monitoringContextRef.current.routeId === assignedRoute._id
       && monitoringContextRef.current.eligible;
@@ -1319,9 +1310,10 @@ export default function CollectorScreen() {
     try {
       const preference = await getRouteMonitoringPreference(collectorId);
       if (!contextIsCurrent() || finishRouteFlowRef.current) return;
+      if (automatic && preference.pausedDay === monitoringDay()) return;
       let newlyConsented = false;
       const currentTracking = await getRouteProximityStatus();
-      if (finishRouteFlowRef.current) return;
+      if (!contextIsCurrent() || finishRouteFlowRef.current) return;
       const sameActiveTrip = currentTracking.enabled && currentTracking.routeId === assignedRoute._id;
       // A saved configuration belongs to an unfinished trip. It survives an
       // app/process close and may be restarted from the cached assignment while
@@ -1398,8 +1390,10 @@ export default function CollectorScreen() {
   }, [API_URL, activeTab, automaticTripPromptEligible, editingProfile, applyQueueResult, assignedRoute, collectorId, geofenceStops, monitoringEligible, refreshRoutePresence, requestMonitoringConsent, session?.token]);
 
   const disableBackgroundGeofencing = useCallback(async () => {
-    // Cancel pending startup even if a permission request is still open.
+    // Lock out automatic restarts before awaiting native shutdown or saving the pause.
+    tripStoppedRef.current = true;
     monitoringRequestRef.current += 1;
+    isTogglingMonitoringRef.current = true;
     respondToMonitoringConsent(false);
     const stopRoute = stopRouteProximityTracking({ forgetConfiguration: true });
     setIsUpdatingGeofence(true);
@@ -1516,6 +1510,9 @@ export default function CollectorScreen() {
   const signOut = () => setIsSignOutConfirmVisible(true);
 
   const resolveSelectedComplaint = async () => {
+    if (cameraBusyRef.current) return;
+    // Set the lock before permission prompts or state updates can yield to another tap.
+    cameraBusyRef.current = true;
     try {
       if (!selectedComplaint || !session?.token || !API_URL || isResolvingComplaint || isOpeningProofCamera) return;
 
@@ -1608,6 +1605,7 @@ export default function CollectorScreen() {
       setIsOpeningProofCamera(false);
       setComplaintMessage(error instanceof Error ? error.message : 'Unable to capture or upload the proof photo.');
     } finally {
+      cameraBusyRef.current = false;
       setIsOpeningProofCamera(false);
       setIsResolvingComplaint(false);
     }
@@ -1629,6 +1627,12 @@ export default function CollectorScreen() {
     <View style={styles.mapScreen}>
       <View style={styles.mapPlaceholder}>
         {MAPBOX_ACCESS_TOKEN ? (
+          isOpeningProofCamera ? (
+            <View style={styles.mapPlaceholderLabel}>
+              <ActivityIndicator color="#0A7F4F" size="small" />
+              <Text style={styles.mapPlaceholderText}>Map paused while camera is open</Text>
+            </View>
+          ) : (
           <Mapbox.MapView scaleBarEnabled={false} style={styles.mapView} styleURL={isDarkTheme ? Mapbox.StyleURL.Dark : Mapbox.StyleURL.Street} logoEnabled attributionEnabled logoPosition={{ top: 8, left: 8 }} attributionPosition={{ top: 8, right: 8 }}>
             <Mapbox.Camera
               ref={mapCamera}
@@ -1670,6 +1674,7 @@ export default function CollectorScreen() {
               );
             })}
           </Mapbox.MapView>
+          )
         ) : (
           <View style={styles.mapPlaceholderLabel}>
             <Feather color="#c05d36" name="alert-circle" size={17} />
@@ -2442,7 +2447,7 @@ const styles = StyleSheet.create({
   accountRow: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 60, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#E3EAE6' },
   accountLabel: { color: '#5A6761', fontSize: 12 },
   accountValue: { color: '#121A16', fontSize: 15, fontWeight: '600', marginTop: 2 },
-  signOutButton: { alignItems: 'center', backgroundColor: '#FDECEA', borderRadius: 16, flexDirection: 'row', gap: 10, minHeight: 52, padding: 12, justifyContent: 'center', marginTop: 24 },
+  signOutButton: { alignItems: 'center', backgroundColor: '#FDECEA', borderRadius: 16, flexDirection: 'row', gap: 10, minHeight: 52, padding: 12, justifyContent: 'center', marginTop: 12 },
   signOutText: { color: '#B3261E', fontSize: 16, fontWeight: '700' },
   syncBottomBar: { alignItems: 'center', backgroundColor: '#ffffff', borderTopColor: '#e0e8e3', borderTopWidth: 1, flexDirection: 'row', justifyContent: 'space-between', minHeight: 57, paddingHorizontal: 13 },
   syncBottomTextWrap: { alignItems: 'center', flexDirection: 'row', flex: 1, gap: 6 },

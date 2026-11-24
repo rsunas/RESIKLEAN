@@ -7,7 +7,7 @@ const fil: Record<string, string> = {
   Language: 'Wika', 'App Language': 'Wika ng App', 'Select the language used across the app': 'Piliin ang wikang gagamitin sa app',
   English: 'Ingles', Filipino: 'Filipino', Notifications: 'Mga Abiso', 'Push Notifications': 'Mga Push Notification',
   'Master toggle for all notifications': 'Pangkalahatang kontrol ng mga abiso', 'Collection Reminders': 'Mga Paalala sa Koleksyon',
-  'Get notified before your collection day': 'Abisuhan bago ang araw ng koleksyon', 'Schedule Updates': 'Mga Update sa Iskedyul',
+  'Get notified before your collection day': 'Abisuhan bago ang araw ng koleksyon',
   Announcements: 'Mga Anunsyo', 'Change Password': 'Palitan ang Password', 'Update Password': 'I-update ang Password',
   'Set Password': 'Magtakda ng Password', 'Current Password': 'Kasalukuyang Password', 'New Password': 'Bagong Password',
   'Confirm New Password': 'Kumpirmahin ang Bagong Password', Cancel: 'Kanselahin', Save: 'I-save', Back: 'Bumalik',
