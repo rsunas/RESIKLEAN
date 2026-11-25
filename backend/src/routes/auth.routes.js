@@ -15,6 +15,8 @@ const {
 } = require('../controllers/auth.controller');
 const { protect } = require('../middlewares/auth');
 const upload = require('../middlewares/upload');
+const passwordResetRoutes = require('./password-reset.routes');
+const emailVerificationRoutes = require('./email-verification.routes');
 const { registerRules, loginRules, googleLoginRules, validate } = require('../validators/auth.validator');
 
 // GET /api/auth/areas (public)
@@ -31,6 +33,9 @@ router.post('/login', loginRules, validate, login);
 
 // POST /api/auth/google
 router.post('/google', googleLoginRules, validate, googleLogin);
+
+router.use(passwordResetRoutes);
+router.use(emailVerificationRoutes);
 
 // GET  /api/auth/me  (protected — must send Bearer token)
 router.get('/me', protect, getMe);

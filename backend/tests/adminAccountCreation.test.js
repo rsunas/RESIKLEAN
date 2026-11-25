@@ -1,12 +1,15 @@
 jest.mock('../src/models/DailyCycleLog', () => ({ findOne: jest.fn() }));
-jest.mock('../src/models/User', () => ({ findOne: jest.fn(), findById: jest.fn(), create: jest.fn(), find: jest.fn() }));
+jest.mock('../src/models/User', () => ({ findOne: jest.fn(), findById: jest.fn(), create: jest.fn(), find: jest.fn(), deleteOne: jest.fn() }));
 jest.mock('../src/services/cloudinary.service', () => ({ uploadPhoto: jest.fn(), deletePhoto: jest.fn(), getIdentityPhotoUrl: jest.fn() }));
+jest.mock('../src/services/notification.service', () => ({ sendUserPush: jest.fn() }));
+jest.mock('../src/services/email-verification-mail.service', () => ({ verificationMailConfiguration: jest.fn(), sendEmailVerification: jest.fn() }));
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const User = require('../src/models/User');
 const DailyCycleLog = require('../src/models/DailyCycleLog');
 const photos = require('../src/services/cloudinary.service');
+const { verificationMailConfiguration, sendEmailVerification } = require('../src/services/email-verification-mail.service');
 const adminRouter = require('../src/routes/admin.routes');
 const { login } = require('../src/controllers/auth.controller');
 const { errorHandler } = require('../src/middlewares/errorHandler');
@@ -25,6 +28,8 @@ beforeAll(async () => {
 afterAll(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); });
 beforeEach(() => {
   jest.clearAllMocks(); created = null;
+  verificationMailConfiguration.mockReturnValue({});
+  sendEmailVerification.mockResolvedValue(undefined);
   DailyCycleLog.findOne.mockReturnValue({ sort: () => ({ populate: () => ({ lean: async () => null }) }) });
   User.findOne.mockImplementation(() => ({ then: resolve => resolve(null), select: async () => created }));
   User.create.mockImplementation(async fields => {
@@ -44,11 +49,18 @@ function form(extra = {}) {
   const data = new FormData(); for (const [key, value] of Object.entries({ ...valid, ...extra })) data.append(key, value); return data;
 }
 const upload = data => fetch(base + '/admin/users', { method: 'POST', headers: { Authorization: `Bearer ${token()}` }, body: data });
-test('new Admin can log in and access the admin API', async () => {
+test('new Admin receives a verification invitation before it can log in', async () => {
   const response = await post(valid); expect(response.status).toBe(201);
   const payload = await response.json(); expect(payload.data.role).toBe('admin'); expect(payload.data.password).toBeUndefined();
+  expect(payload.data.emailVerificationPending).toBe(true);
+  expect(created.emailVerificationRequired).toBe(true);
+  expect(created.emailVerificationHash).toEqual(expect.any(String));
+  expect(sendEmailVerification).toHaveBeenCalledWith(valid.email, expect.stringMatching(/^[a-f0-9]{64}$/));
   const loggedIn = await fetch(base + '/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: valid.email, password: valid.password }) });
-  const session = await loggedIn.json(); expect(loggedIn.status).toBe(200); expect(session.data.user.role).toBe('admin');
+  expect(loggedIn.status).toBe(403);
+  created.emailVerifiedAt = new Date();
+  const verifiedLogin = await fetch(base + '/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: valid.email, password: valid.password }) });
+  const session = await verifiedLogin.json(); expect(verifiedLogin.status).toBe(200); expect(session.data.user.role).toBe('admin');
   const details = await fetch(base + `/admin/users/${id}/identity`, { headers: { Authorization: `Bearer ${session.data.token}` } });
   expect(details.status).toBe(200); expect(details.headers.get('cache-control')).toBe('no-store');
 });

@@ -79,7 +79,7 @@ body:has(.cq-layout) { overflow: hidden; }
 .cq-proof { background: transparent; border: 0; padding: 0; }
 .cq-proof img { max-width: 100%; max-height: 240px; border-radius: 12px; }
 .cq-composer { display: flex; align-items: flex-end; gap: 10px; padding: 14px 24px; border-top: 1px solid #E3EAE6; flex-shrink: 0; }
-.cq-composer > button:first-child { width: 44px; height: 44px; flex-shrink: 0; }
+
 .cq-composer textarea { flex: 1; min-width: 0; height: 48px; max-height: 112px; padding: 13px 18px; border: 0; border-radius: 24px; background: #F1F5F3; font: inherit; font-size: 15px; line-height: 22px; resize: none; box-sizing: border-box; }
 .cq-composer .cq-send { height: 48px; border-radius: 24px; background: #0A7F4F; color: white; font-size: 15px; font-weight: 700; padding: 0 20px; flex-shrink: 0; gap: 8px; }
 .cq-composer button:disabled { opacity: .45; }
@@ -133,3 +133,48 @@ html[data-theme="dark"] .cq-disclosure-toggle { color: #d7e6de; }
 html[data-theme="dark"] .cq-disclosure-toggle:hover { background: #35463d; }
 @media (max-width: 639px) { .cq-details-disclosure { margin: 0 12px; } }
 @media (prefers-reduced-motion: reduce) { .cq-disclosure-toggle svg { transition: none; } }
+
+/* Dark surfaces and text for complaint conversations. */
+html[data-theme="dark"] .cq-layout { color: #e6eee9; }
+html[data-theme="dark"] .cq-list,
+html[data-theme="dark"] .cq-conversation { background: #1a2420; }
+html[data-theme="dark"] .cq-filters { border-color: #34443c; }
+html[data-theme="dark"] .cq-search { background: #25332c; color: #aab9b1; }
+html[data-theme="dark"] .cq-search input { color: #e6eee9; }
+html[data-theme="dark"] .cq-filter [data-slot="select-trigger"] { background: #25332c; border-color: #415249; color: #e6eee9; }
+html[data-theme="dark"] .cq-filter [data-slot="select-indicator"] { color: #aab9b1; }
+html[data-theme="dark"] .cq-item { background: #1a2420; color: #d7e6de; }
+html[data-theme="dark"] .cq-item:hover { background: #25332c; }
+html[data-theme="dark"] .cq-item.is-selected { background: #203c30; }
+html[data-theme="dark"] .cq-item .cq-avatar { background: #35463d; }
+html[data-theme="dark"] .cq-item-top time,
+html[data-theme="dark"] .cq-item-copy small,
+html[data-theme="dark"] .cq-person span,
+html[data-theme="dark"] .cq-live,
+html[data-theme="dark"] .cq-details small,
+html[data-theme="dark"] .cq-date,
+html[data-theme="dark"] .cq-bubble time,
+html[data-theme="dark"] .cq-photo-meta dt { color: #aab9b1; }
+html[data-theme="dark"] .cq-status.status-pending [data-slot="select-trigger"] { background: #3a3020; color: #f0c879; }
+html[data-theme="dark"] .cq-status.status-verified [data-slot="select-trigger"] { background: #202f42; color: #9cc8ff; }
+html[data-theme="dark"] .cq-status.status-resolved [data-slot="select-trigger"] { background: #203c30; color: #8ee0b6; }
+html[data-theme="dark"] .cq-status.status-rejected [data-slot="select-trigger"] { background: #3a2421; color: #ffb4a9; }
+html[data-theme="dark"] .cq-details { background: #202c26; }
+html[data-theme="dark"] .cq-details strong { color: #e6eee9; }
+html[data-theme="dark"] .cq-details .cq-ai { background: #35463d; }
+html[data-theme="dark"] .cq-details .cq-ai.verified { background: #203c30; color: #8ee0b6; }
+html[data-theme="dark"] .cq-bubble { background: #25332c; color: #d7e6de; }
+html[data-theme="dark"] .cq-bubble strong { color: #8ee0b6; }
+html[data-theme="dark"] .cq-bubble p { color: #d7e6de; }
+html[data-theme="dark"] .cq-message.admin .cq-bubble { background: #087b5b; color: #fff; }
+html[data-theme="dark"] .cq-message.admin .cq-bubble strong,
+html[data-theme="dark"] .cq-message.admin .cq-bubble p { color: #fff; }
+html[data-theme="dark"] .cq-photo-card { background: #202c26; border-color: #415249; }
+html[data-theme="dark"] .cq-photo-meta h4 { color: #8ee0b6; }
+html[data-theme="dark"] .cq-composer { border-color: #34443c; }
+html[data-theme="dark"] .cq-composer textarea { background: #25332c; color: #e6eee9; }
+html[data-theme="dark"] .cq-composer textarea::placeholder { color: #aab9b1; }
+html[data-theme="dark"] .cq-empty { color: #b9c8c0; }
+html[data-theme="dark"] .cq-error { color: #ffb4a9; }
+html[data-theme="dark"] .cq-lightbox { background: #1a2420; color: #e6eee9; }
+html[data-theme="dark"] .cq-lightbox > button { background: #25332c; color: #e6eee9; }

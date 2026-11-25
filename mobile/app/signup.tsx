@@ -115,7 +115,7 @@ export default function SignupScreen() {
       const { response, payload: result } = await requestJson<RegisterResponse>(`${API_URL.replace(/\/$/, '')}/auth/google`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken }),
+        body: JSON.stringify({ idToken, intent: 'signup' }),
       });
 
       if (!response.ok || !result.success || !result.data?.token || !result.data.user) {

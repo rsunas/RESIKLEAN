@@ -280,6 +280,18 @@ function AvatarName({ name, photoUrl }) {
   return <span className="avatar-name">{photoUrl ? <img alt="" className="table-avatar" src={photoUrl} /> : <span className="table-avatar">{initials(name)}</span>}<span>{name}</span></span>;
 }
 
+function emailVerificationState(account = {}) {
+  if (!account.emailVerificationRequired) return 'not-required';
+  return account.emailVerifiedAt ? 'verified' : 'pending';
+}
+
+function EmailVerificationStatus({ account }) {
+  const state = emailVerificationState(account);
+  if (state === 'not-required') return null;
+  const label = state === 'pending' ? 'Pending verification' : 'Verified';
+  return <span className={`account-verification-status is-${state}`}>{label}</span>;
+}
+
 function RoutePreview({ route }) {
   return <div className={`route-preview ${route.flagged ? 'flagged-route' : ''}`}><div><strong>{route.street}</strong>{route.flagged ? <span className="flag">Flagged</span> : null}<p>{route.area} · {route.collector}</p></div><span>{route.date}</span><StatusChip status={route.status} /></div>;
 }
@@ -466,6 +478,7 @@ export default function Dashboard() {
   const [newAccount, setNewAccount] = useState(EMPTY_ACCOUNT);
   const [createdAccounts, setCreatedAccounts] = useState([]);
   const [submissionState, setSubmissionState] = useState({ loading: false, message: '', error: '' });
+  const [verificationResends, setVerificationResends] = useState({});
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [complaintUpdateError, setComplaintUpdateError] = useState('');
   const [routeHistoryRows, setRouteHistoryRows] = useState([]);
@@ -751,7 +764,7 @@ export default function Dashboard() {
 
   const accountRows = useMemo(() => {
     if (!apiData.users) return [...createdAccounts, ...PLACEHOLDER_ACCOUNTS];
-    return [...createdAccounts.filter(account => !apiData.users.some(user => user._id === account.id)), ...apiData.users.filter((user) => ['collector', 'staff', 'admin'].includes(user.role)).map((user) => ({ id: user._id, name: user.name, role: user.role, area: (apiData.routes || []).filter((route) => normalizeId(route.collectorId) === user._id).map(routeAreaCode).join(', ') || 'Not assigned', contact: user.phone ?? user.contact ?? '—', email: user.email, profilePhotoUrl: user.profilePhotoUrl || '', shift: user.shift || '', assignedRoute: (apiData.routes || []).filter(route => route.isActive !== false && (normalizeId(route.collectorId) === user._id || normalizeId(user.assignedRouteId) === route._id)).map(route => route.name).filter(Boolean).join(', ') }))];
+    return [...createdAccounts.filter(account => !apiData.users.some(user => user._id === account.id)), ...apiData.users.filter((user) => ['collector', 'staff', 'admin'].includes(user.role)).map((user) => ({ id: user._id, name: user.name, role: user.role, area: (apiData.routes || []).filter((route) => normalizeId(route.collectorId) === user._id).map(routeAreaCode).join(', ') || 'Not assigned', contact: user.phone ?? user.contact ?? '—', email: user.email, profilePhotoUrl: user.profilePhotoUrl || '', emailVerificationRequired: user.emailVerificationRequired === true, emailVerifiedAt: user.emailVerifiedAt || null, shift: user.shift || '', assignedRoute: (apiData.routes || []).filter(route => route.isActive !== false && (normalizeId(route.collectorId) === user._id || normalizeId(user.assignedRouteId) === route._id)).map(route => route.name).filter(Boolean).join(', ') }))];
   }, [apiData.users, apiData.routes, createdAccounts]);
 
   const filteredAccountRows = useMemo(() => {
@@ -893,6 +906,24 @@ export default function Dashboard() {
     }
   };
 
+  const resendAccountVerification = async (account) => {
+    if (!API_URL || !account?.email) return;
+    const key = String(account.id);
+    setVerificationResends(current => ({ ...current, [key]: { loading: true, error: '', message: '' } }));
+    try {
+      const response = await fetch(`${API_URL.replace(/\/$/, '')}/auth/resend-verification`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: account.email }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.error || 'Unable to resend the verification email.');
+      setVerificationResends(current => ({ ...current, [key]: { loading: false, error: '', message: result.data?.message || 'Verification email sent.' } }));
+    } catch (error) {
+      setVerificationResends(current => ({ ...current, [key]: { loading: false, error: error instanceof Error ? error.message : 'Unable to resend the verification email.', message: '' } }));
+    }
+  };
+
   const createAccount = async (event) => {
     event.preventDefault();
     const account = {
@@ -915,7 +946,7 @@ export default function Dashboard() {
     }
 
     setSubmissionState({ loading: true, error: '', message: '' });
-    const localAccount = { id: `local-${Date.now()}`, name: account.name, role: account.role, area: 'Not assigned', contact: account.contact || '—', email: account.email, profilePhotoUrl: '' };
+    const localAccount = { id: `local-${Date.now()}`, name: account.name, role: account.role, area: 'Not assigned', contact: account.contact || '—', email: account.email, profilePhotoUrl: '', emailVerificationRequired: true, emailVerifiedAt: null };
     try {
       if (API_URL && token) {
         let body;
@@ -946,8 +977,8 @@ export default function Dashboard() {
         }
 
         if (!response.ok || !result.success) throw new Error(result.error || 'Unable to create the account.');
-        setCreatedAccounts((current) => [{ ...localAccount, id: result.data?._id || localAccount.id, profilePhotoUrl: result.data?.profilePhotoUrl || localAccount.profilePhotoUrl }, ...current]);
-        setSubmissionState({ loading: false, error: '', message: newAccount.avatarFile ? 'Account created with the profile picture.' : 'Account created.' });
+        setCreatedAccounts((current) => [{ ...localAccount, id: result.data?._id || localAccount.id, profilePhotoUrl: result.data?.profilePhotoUrl || localAccount.profilePhotoUrl, emailVerificationRequired: result.data?.emailVerificationRequired === true, emailVerifiedAt: result.data?.emailVerifiedAt || null }, ...current]);
+        setSubmissionState({ loading: false, error: '', message: `${newAccount.avatarFile ? 'Account created with the profile picture.' : 'Account created.'} A verification email was sent to ${account.email}.` });
       } else {
         throw new Error('Connect to the backend before creating an account.');
       }
@@ -1080,7 +1111,11 @@ export default function Dashboard() {
   const trucks = <><PageHeader description="Register fleet vehicles and review their dimensions" title="Truck management" /><TruckManagementPanel token={token} /></>;
   const manageRoutes = <><PageHeader description="Trace collection paths and maintain ordered collection stops." title="Route management" /><RouteManagementPanel token={token} /></>;
 
-  const accountPage = <Card className="table-card accounts-table-card"><div className="table-scroll"><table className="standard-data-table admin-data-table"><thead><tr><th>Name</th><th>Role</th><th>Assigned area</th><th>Contact</th><th>Email</th><th className="accounts-profile-actions" scope="col">Actions</th></tr></thead><LoadingTableBody loading={isRefreshing} hasData={apiData.users !== null} error={dashboardLoadError} onRetry={refreshDashboard} variant="accounts" rows={accountPagination.controls.pageSize} columns={6}>{accountPagination.rows.map((account) => <tr key={account.id}><td><AvatarName name={account.name} photoUrl={account.profilePhotoUrl} /></td><td><Chip className={`role-chip role-${account.role}`} size="sm">{titleCase(account.role)}</Chip></td><td>{account.area}</td><td>{formatContactNumber(account.contact)}</td><td>{account.email}</td><td className="accounts-profile-actions"><AccountIdentityButton account={account} token={token} apiUrl={API_URL} /></td></tr>)}{!filteredAccountRows.length ? <tr><td colSpan={6} className="empty-cell">No accounts match the current filters.</td></tr> : null}</LoadingTableBody></table></div><TablePagination disabled={isRefreshing} label="Manage accounts" {...accountPagination.controls} /></Card>;
+  const accountPage = <Card className="table-card accounts-table-card"><div className="table-scroll"><table className="standard-data-table admin-data-table"><thead><tr><th>Name</th><th>Role</th><th>Assigned area</th><th>Contact</th><th>Email</th><th className="accounts-profile-actions" scope="col">Actions</th></tr></thead><LoadingTableBody loading={isRefreshing} hasData={apiData.users !== null} error={dashboardLoadError} onRetry={refreshDashboard} variant="accounts" rows={accountPagination.controls.pageSize} columns={6}>{accountPagination.rows.map((account) => {
+    const verification = verificationResends[String(account.id)] || {};
+    const pendingVerification = emailVerificationState(account) === 'pending';
+    return <tr key={account.id}><td><AvatarName name={account.name} photoUrl={account.profilePhotoUrl} /></td><td><Chip className={`role-chip role-${account.role}`} size="sm">{titleCase(account.role)}</Chip></td><td>{account.area}</td><td>{formatContactNumber(account.contact)}</td><td><span className="account-email-cell"><span>{account.email}</span><EmailVerificationStatus account={account} /></span></td><td className="accounts-profile-actions"><span className="account-action-stack"><AccountIdentityButton account={account} token={token} apiUrl={API_URL} />{pendingVerification ? <Button variant="tertiary" className="account-verification-trigger" isDisabled={verification.loading || !API_URL} onPress={() => resendAccountVerification(account)}>{verification.loading ? 'Sending…' : 'Resend invite'}</Button> : null}{pendingVerification && (verification.error || verification.message) ? <span className="account-verification-feedback" role={verification.error ? 'alert' : 'status'}>{verification.error || verification.message}</span> : null}</span></td></tr>;
+  })}{!filteredAccountRows.length ? <tr><td colSpan={6} className="empty-cell">No accounts match the current filters.</td></tr> : null}</LoadingTableBody></table></div><TablePagination disabled={isRefreshing} label="Manage accounts" {...accountPagination.controls} /></Card>;
 
   const accountsToolbar = <AccountsToolbarPortal><DisabledControls disabled={isRefreshing}><div className="accounts-toolbar"><div className="navigation-tools"><label><Icon name="search" size={16} /><input aria-label="Search accounts" placeholder="Search accounts" type="search" value={accountQuery} onChange={event => setAccountQuery(event.target.value)} /></label><AppSelect aria-label="All account roles" value={accountRole} onChange={setAccountRole} options={[{ label: 'All account roles', value: 'all' }, { label: 'Admin', value: 'admin' }, { label: 'Driver', value: 'collector' }, { label: 'Staff', value: 'staff' }]} /></div><Button className="primary-button accounts-action-button" onPress={() => { setSubmissionState({ loading: false, error: '', message: '' }); setShowAccountForm(true); }}><Icon name="plus" size={16} />Add account</Button></div></DisabledControls></AccountsToolbarPortal>;
   const openNotification = async (item, record) => {

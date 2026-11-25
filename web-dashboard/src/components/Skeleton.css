@@ -36,3 +36,9 @@
 .cq-initial-conversation .cq-send { opacity: .45; }
 @media(max-width:639px) { .skeleton-conversation-details { grid-template-columns: 1fr; } .skeleton-detail-grid { grid-template-columns: 1fr; } }
 @media(prefers-reduced-motion:reduce) { .dashboard-skeleton { animation: none; background: var(--skeleton-base); } .loading-region { animation: none; transition: none; } }
+
+/* Keep shared loading placeholders visible without flashing light surfaces in dark mode. */
+html[data-theme="dark"] .dashboard-skeleton { --skeleton-base: #35463d; --skeleton-highlight: #46584e; }
+html[data-theme="dark"] .skeleton-table-row td,
+html[data-theme="dark"] .skeleton-chart-bars { border-color: #34443c; }
+html[data-theme="dark"] .skeleton-conversation-details { background: #202c26; }

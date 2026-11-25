@@ -14,7 +14,7 @@ import {
   View,
 } from 'react-native';
 import { MotionPressable as Pressable } from '@/components/app-motion';
-import { useRouter } from 'expo-router';
+import { type Href, useRouter } from 'expo-router';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AuthField, AuthFooterLink, authStyles } from '@/components/auth-ui';
 import { BrandMark } from '@/components/brand-mark';
@@ -142,8 +142,9 @@ export default function LoginScreen() {
                 </Pressable>} />
             </View>
             {error ? <Text accessibilityRole="alert" style={authStyles.error}>{error}</Text> : null}
-            {/* Existing screen has no reset-password handler or route. Preserve that behavior. */}
-            <Text style={styles.forgotPassword}>Forgot password?</Text>
+            <Pressable accessibilityRole="link" onPress={() => router.push('/forgot-password' as Href)} style={{ alignSelf: 'flex-end' }}>
+              <Text style={styles.forgotPassword}>Forgot password?</Text>
+            </Pressable>
             <View testID="login-footer" style={[authStyles.footer, styles.footer, { paddingBottom: Math.max(insets.bottom, 12) + 8 }]}>
               <Pressable accessibilityRole="button" disabled={isSubmitting} onPress={handleLogin}
                 style={[authStyles.primaryButton, isSubmitting && authStyles.disabled]}>

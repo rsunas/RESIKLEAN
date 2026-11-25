@@ -1019,7 +1019,7 @@ export default function ResidentScreen() {
     if (!selectedReport) return null;
 
     return (
-      <Modal animationType="slide" onRequestClose={() => setSelectedReport(null)} transparent visible={reportDetailsOpen}>
+      <Modal animationType="fade" onRequestClose={() => setSelectedReport(null)} transparent visible={reportDetailsOpen}>
         <View style={styles.reportModalBackdrop}>
           <Pressable accessibilityLabel="Close report details" onPress={() => setSelectedReport(null)} style={styles.reportModalDismissArea} />
           <ResidentComplaintConversation

@@ -36,6 +36,9 @@ const init = (httpServer) => {
       if (!user) {
         return next(new Error('Authentication error: user not found'));
       }
+      if (Number(decoded.v || 0) !== Number(user.authVersion || 0)) {
+        return next(new Error('Authentication error: session expired'));
+      }
 
       // Attach user to the socket for downstream use
       socket.user = user;
@@ -83,4 +86,18 @@ const emitToResidents = (event, residentIds, data) => {
   if (!_io) return;
   _io.to(['admins', ...residentIds.map(id => `resident:${id}`)]).emit(event, data);
 };
-module.exports = { init, emit, emitToComplaint, emitToResidents };
+
+// Password recovery invalidates the JWT version. Existing sockets have already
+// passed their handshake, so close them explicitly as well.
+const disconnectUserSessions = (userId) => {
+  if (!_io || !userId) return;
+  const id = userId.toString();
+  for (const socket of _io.sockets.sockets.values()) {
+    if (socket.user?._id?.toString() === id) {
+      socket.emit('auth:session-expired');
+      socket.disconnect(true);
+    }
+  }
+};
+
+module.exports = { init, emit, emitToComplaint, emitToResidents, disconnectUserSessions };

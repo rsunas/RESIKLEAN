@@ -96,3 +96,42 @@ body .notifications-category-popover { min-width: 220px; }
 html[data-theme="dark"] .notifications-toolbar .notifications-mark-page { background: #08734b; border-color: #3e9d72; color: #fff; }
 html[data-theme="dark"] .notifications-actions .notifications-mark-item { background: #203c30; border-color: #3b6650; color: #a8e2c0; }
 html[data-theme="dark"] .notifications-read-label { background: #25332c; border-color: #415249; color: #b9c8c0; }
+
+/* Dark palette for the notification feed and its controls. */
+html[data-theme="dark"] .notifications-card { background: #1a2420; border-color: #34443c; color: #e6eee9; }
+html[data-theme="dark"] .notifications-toolbar { border-color: #34443c; }
+html[data-theme="dark"] .notifications-tabs { background: #25332c; }
+html[data-theme="dark"] .notifications-tabs button { color: #b9c8c0; }
+html[data-theme="dark"] .notifications-tabs button[aria-pressed="true"] { background: #35463d; color: #8ee0b6; box-shadow: 0 1px 4px #0006; }
+html[data-theme="dark"] .notifications-card .notifications-category-select [data-slot="select-trigger"] { background: #25332c; border-color: #415249; color: #e6eee9; }
+html[data-theme="dark"] .notifications-card .notifications-category-select [data-slot="select-default-indicator"] { color: #aab9b1; }
+html[data-theme="dark"] .notifications-card .notifications-category-select [data-slot="select-trigger"]:hover { background: #2d3c34; }
+html[data-theme="dark"] .notifications-category-popover { background: #1a2420; border-color: #415249; }
+html[data-theme="dark"] .notifications-category-popover [role="option"] { color: #d7e6de; }
+html[data-theme="dark"] .notifications-category-popover [role="option"][data-focused],
+html[data-theme="dark"] .notifications-category-popover [role="option"][aria-selected="true"],
+html[data-theme="dark"] .notifications-category-popover [role="option"][data-selected] { background: #203c30; color: #8ee0b6; }
+html[data-theme="dark"] .notifications-row { background: #1a2420; border-color: #34443c; }
+html[data-theme="dark"] .notifications-row.is-unread { background: #203c30; }
+html[data-theme="dark"] .notifications-title h3 { color: #e6eee9; }
+html[data-theme="dark"] .notifications-copy p { color: #c2d0c8; }
+html[data-theme="dark"] .notifications-copy time { color: #9cacA3; }
+html[data-theme="dark"] .notifications-copy .notifications-remaining { color: #f0c879; }
+html[data-theme="dark"] .notifications-icon { background: #203c30; color: #8ee0b6; }
+html[data-theme="dark"] .notification-kind-reply { background: #202f42; color: #9cc8ff; }
+html[data-theme="dark"] .notification-kind-truckload { background: #3a3020; color: #f0c879; }
+html[data-theme="dark"] .notifications-actions .outline-button { background: #25332c; border-color: #415249; color: #d7e6de; }
+html[data-theme="dark"] .notifications-actions .outline-button:hover:not(:disabled) { background: #2d3c34; border-color: #587063; }
+html[data-theme="dark"] .notifications-actions .notifications-mark-item { background: #203c30; border-color: #3b6650; color: #a8e2c0; }
+html[data-theme="dark"] .notifications-read-label { background: #25332c; border-color: #415249; color: #b9c8c0; }
+html[data-theme="dark"] .notifications-empty { color: #b9c8c0; }
+html[data-theme="dark"] .notifications-empty h3 { color: #e6eee9; }
+html[data-theme="dark"] .notifications-empty > svg { color: #8ee0b6; }
+html[data-theme="dark"] .notifications-error { background: #3a2421; color: #ffb4a9; }
+html[data-theme="dark"] .notifications-card .table-pagination { border-color: #34443c; color: #b9c8c0; }
+html[data-theme="dark"] .notifications-card .table-page-size { border-color: #34443c; }
+html[data-theme="dark"] .notifications-card .table-page-count { color: #aab9b1; }
+html[data-theme="dark"] .notifications-card .table-page-input { background: #25332c; border-color: #415249; color: #e6eee9; }
+html[data-theme="dark"] .notifications-card .table-page-controls .button { background: #25332c; border-color: #415249; color: #d7e6de; }
+html[data-theme="dark"] .notifications-card .table-page-controls .button[aria-current="page"] { background: #203c30; border-color: #3b6650; color: #8ee0b6; }
+html[data-theme="dark"] .notifications-card .table-pagination .app-select [data-slot="select-trigger"] { background: #25332c; border-color: #415249; color: #e6eee9; }

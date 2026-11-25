@@ -82,7 +82,7 @@ function AppStack() {
     }
   }, [current]);
   return <Stack screenOptions={{ headerShown: false, animation: !animate ? 'none' : reduced ? 'fade' : 'slide_from_right', animationDuration: 250 }}>
-    {['login', 'signup', 'resident', 'staff', 'collector'].map((name) => <Stack.Screen key={name} name={name} options={{ animation: animate ? 'fade' : 'none', animationDuration: 250 }} />)}
+    {['login', 'signup', 'forgot-password', 'reset-password', 'verify-email', 'resident', 'staff', 'collector'].map((name) => <Stack.Screen key={name} name={name} options={{ animation: animate ? 'fade' : 'none', animationDuration: 250 }} />)}
   </Stack>;
 }
 

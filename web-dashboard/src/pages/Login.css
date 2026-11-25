@@ -45,6 +45,12 @@
 .login-submit svg { flex-shrink: 0; }
 .login-submit:hover:not(:disabled) { background: #086B42; }
 .login-submit:disabled { cursor: wait; opacity: .7; }
+.login-recovery-link, .login-recovery-back { background: transparent; border: 0; color: var(--login-primary); cursor: pointer; display: block; font: inherit; font-size: .875rem; font-weight: 700; line-height: 1.5; min-height: 44px; padding: 10px 0; text-align: right; width: 100%; }
+.login-recovery-link { margin-top: 2px; }
+.login-recovery-back { margin-top: 8px; }
+.login-recovery-link:hover, .login-recovery-back:hover { color: #086B42; text-decoration: underline; }
+.login-recovery-link:focus-visible, .login-recovery-back:focus-visible { outline: 2px solid var(--login-primary); outline-offset: 3px; }
+.login-recovery-message { background: #edf8f2; border: 1px solid #c8ead9; border-radius: 12px; color: #176b3a; font-size: .875rem; line-height: 1.5; margin: 16px 0 0; padding: 12px 14px; }
 .login-note { align-items: flex-start; color: var(--login-muted); display: flex; font-size: .8125rem; gap: 8px; justify-content: center; line-height: 1.5; margin: 16px 0 0; text-align: center; }
 .login-note svg { color: var(--login-primary); flex: 0 0 16px; margin-top: 2px; }
 .login-footer { color: var(--login-muted); font-size: .75rem; line-height: 1.5; margin-top: auto; padding-top: 40px; text-align: center; }

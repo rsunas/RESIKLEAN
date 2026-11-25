@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const PDFDocument = require('pdfkit');
+const crypto = require('crypto');
 const User = require('../models/User');
 const Route = require('../models/Route');
 const RouteLog = require('../models/RouteLog');
@@ -13,6 +14,7 @@ const CapacityLog = require('../models/CapacityLog');
 const socketService = require('../services/socket.service');
 const { sendUserPush } = require('../services/notification.service');
 const { uploadPhoto, deletePhoto, getIdentityPhotoUrl } = require('../services/cloudinary.service');
+const { verificationMailConfiguration, sendEmailVerification } = require('../services/email-verification-mail.service');
 const { isValidBirthday } = require('../utils/birthday');
 const { sendSuccess, sendError } = require('../utils/response');
 const { buildRouteHistoryPayload, generateRouteHistoryPDF } = require('../services/pdf/routeHistoryReport');
@@ -32,7 +34,7 @@ const getAllUsers = async (req, res) => {
     const filter = role ? { role } : {};
 
     const users = await User.find(filter)
-      .select('name email role contact phone shift profilePhotoUrl assignedRouteId createdAt')
+      .select('name email role contact phone shift profilePhotoUrl assignedRouteId createdAt emailVerificationRequired emailVerifiedAt')
       .sort({ createdAt: -1 })
       .lean();
 
@@ -46,6 +48,7 @@ const getAllUsers = async (req, res) => {
 // Account creation remains restricted to authenticated administrators by the router.
 const createUser = async (req, res) => {
   const uploaded = [];
+  let createdUser;
   try {
     const { name, email, password, role, employeeId, contact, shift, birthday } = req.body;
     if (!name?.trim() || !email?.trim() || !password || !role) {
@@ -58,6 +61,15 @@ const createUser = async (req, res) => {
     if (!isValidBirthday(birthday)) return sendError(res, 'Enter a valid birthday between 1900 and today.', 400);
     const normalizedEmail = email.trim().toLowerCase();
     if (await User.findOne({ email: normalizedEmail })) return sendError(res, 'Email is already taken', 400);
+
+    // Check the Gmail configuration before creating uploads or a pending account.
+    // A failed initial invite must never leave an inaccessible account behind.
+    try {
+      verificationMailConfiguration();
+    } catch {
+      return sendError(res, 'Email verification is temporarily unavailable. Please try again later.', 503);
+    }
+
     let profilePhotoUrl, identityPhoto;
     const avatar = req.files?.avatar?.[0] || req.file;
     const idPhoto = req.files?.idPhoto?.[0];
@@ -71,20 +83,53 @@ const createUser = async (req, res) => {
       uploaded.push({ publicId: photo.publicId, type: 'authenticated' });
       identityPhoto = { publicId: photo.publicId, format: photo.format };
     }
-    const user = await User.create({
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const verificationRequestedAt = new Date();
+    createdUser = await User.create({
       name: name.trim(), email: normalizedEmail, password, role,
       employeeId: employeeId || undefined, contact: contact || undefined,
       shift: shift || undefined, birthday: birthday || undefined, profilePhotoUrl, identityPhoto,
+      emailVerificationRequired: true,
+      emailVerificationHash: crypto.createHash('sha256').update(verificationToken).digest('hex'),
+      emailVerificationExpires: new Date(verificationRequestedAt.getTime() + 24 * 60 * 60000),
+      emailVerificationRequestedAt: verificationRequestedAt,
     });
-    const userResponse = user.toObject();
+
+    try {
+      await sendEmailVerification(createdUser.email, verificationToken);
+    } catch {
+      const deliveryError = new Error('Email verification delivery failed');
+      deliveryError.emailVerificationDelivery = true;
+      throw deliveryError;
+    }
+
+    const userResponse = createdUser.toObject();
     delete userResponse.password;
     delete userResponse.employeeId;
     delete userResponse.identityPhoto;
     delete userResponse.birthday;
+    delete userResponse.emailVerificationHash;
+    delete userResponse.emailVerificationExpires;
+    delete userResponse.emailVerificationRequestedAt;
+    userResponse.emailVerificationPending = true;
     sendSuccess(res, userResponse, 201);
   } catch (err) {
+    // The invitation is the only way a pending account becomes usable. Roll the
+    // account back if delivery failed after creation, then clean up any files.
+    if (createdUser) {
+      try {
+        await User.deleteOne({ _id: createdUser._id });
+      } catch {
+        console.error('Failed to roll back account after verification delivery failure');
+      }
+    }
     await Promise.allSettled(uploaded.map(photo => deletePhoto(photo.publicId, { type: photo.type })));
-    sendError(res, err.code === 11000 ? 'Email is already taken' : err.message, err.code === 11000 || err.name === 'ValidationError' ? 400 : 500);
+    const isValidationError = err.code === 11000 || err.name === 'ValidationError';
+    sendError(
+      res,
+      err.emailVerificationDelivery ? 'Unable to send the verification email. No account was created; please try again.' : (err.code === 11000 ? 'Email is already taken' : err.message),
+      err.emailVerificationDelivery ? 503 : (isValidationError ? 400 : 500),
+    );
   }
 };
 

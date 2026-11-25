@@ -7,7 +7,6 @@ import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AppText as Text } from '@/components/app-text';
-import { useAppReducedMotion } from '@/hooks/use-app-reduced-motion';
 import { useClosingValue } from '@/components/app-motion';
 import { SEGREGATION_CATEGORIES, GUIDE_ITEMS, GUIDE_UI as UI, getGuideCategory, type GuideItemId, type GuideCategoryId, type SegregationCategory } from '@/constants/segregation-guide';
 import { BIN_IMAGES, ITEM_IMAGES, prefetchGuideBins } from '@/constants/guide-images';
@@ -56,7 +55,6 @@ export function SegregationGuide({ selected: activeCategory, openGuide, closeGui
   const selected = useClosingValue(activeCategory);
   const insets = useSafeAreaInsets();
   const { width, height, fontScale } = useWindowDimensions();
-  const reduced = useAppReducedMotion();
   // Keep the circles 76px; use two columns on very narrow screens or large text.
   const columns = width < 350 || fontScale > 1.3 ? 2 : 4;
   const itemWidth = (width - 44 - (columns - 1) * 4) / columns;
@@ -70,7 +68,7 @@ export function SegregationGuide({ selected: activeCategory, openGuide, closeGui
         {SEGREGATION_CATEGORIES.map(category => <CategoryCard key={category.id} category={category} onPress={() => openGuide(category.id)} />)}
       </View>
     </View>
-    <Modal animationType={reduced ? 'fade' : 'slide'} onRequestClose={closeGuide} statusBarTranslucent transparent visible={activeCategory !== null}>
+    <Modal animationType="fade" onRequestClose={closeGuide} statusBarTranslucent transparent visible={activeCategory !== null}>
       {selected ? <View style={styles.modalRoot}>
         <Pressable accessibilityRole="button" accessibilityLabel="Close segregation guide" onPress={closeGuide} style={styles.backdrop} />
         <View accessibilityViewIsModal accessibilityLabel={`${selected.title} guide`} style={[styles.sheet, { maxHeight: height - Math.max(insets.top, 16) }]}>

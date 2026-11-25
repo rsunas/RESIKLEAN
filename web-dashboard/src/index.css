@@ -611,12 +611,21 @@ body.sidebar-is-collapsed .sidebar-collapse-toggle { left: 42px; top: 52px; }
 .accounts-table-card .admin-data-table th:nth-child(3), .accounts-table-card .admin-data-table td:nth-child(3) { width: 18%; }
 .accounts-table-card .admin-data-table th:nth-child(4), .accounts-table-card .admin-data-table td:nth-child(4) { width: 17%; }
 .accounts-table-card .admin-data-table th:nth-child(5), .accounts-table-card .admin-data-table td:nth-child(5) { width: auto; }
-.accounts-table-card .admin-data-table .accounts-profile-actions { position: sticky; right: 0; z-index: 1; width: 144px; text-align: center; box-shadow: none; border-left: 0; border-right: 0; }
+.accounts-table-card .admin-data-table .accounts-profile-actions { position: sticky; right: 0; z-index: 1; width: 156px; text-align: center; box-shadow: none; border-left: 0; border-right: 0; }
 .accounts-table-card .admin-data-table td:not(.accounts-profile-actions) { overflow: hidden; text-overflow: ellipsis; }
 .accounts-table-card .avatar-name { max-width: 100%; }
 .accounts-table-card .avatar-name > span:last-child { overflow: hidden; text-overflow: ellipsis; }
 .accounts-table-card .table-avatar { flex-shrink: 0; }
 .accounts-table-card .account-profile-trigger { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 14px; border: 1px solid #D5DDD9; border-radius: 10px; background: #fff; color: #356152; font-size: 14px; font-weight: 600; white-space: nowrap; box-shadow: none; }
+.account-email-cell { display: grid; gap: 3px; min-width: 0; }
+.account-email-cell > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+.account-verification-status { color: #697870; font-size: 10px; font-weight: 700; line-height: 1.25; }
+.account-verification-status.is-pending { color: #a05d00; }
+.account-verification-status.is-verified { color: #087d50; }
+.account-action-stack { align-items: center; display: grid; gap: 5px; justify-items: center; }
+.accounts-table-card .account-verification-trigger { align-items: center; background: transparent; border: 0; color: #087d50; display: inline-flex; font-size: 11px; font-weight: 700; min-height: 28px; padding: 3px 6px; white-space: nowrap; }
+.accounts-table-card .account-verification-trigger:hover { text-decoration: underline; }
+.account-verification-feedback { color: #5A6761; font-size: 10px; line-height: 1.3; max-width: 138px; overflow-wrap: anywhere; }
 .accounts-table-card .table-avatar { border-radius: 50%; height: 32px; object-fit: cover; overflow: hidden; width: 32px; }
 .accounts-table-card .avatar-name { min-height: 32px; }
 @media (max-width: 700px) {
@@ -893,3 +902,176 @@ html[data-theme='dark'] .route-assignment-toolbar .select__trigger { background:
 .route-history-detail-modal .modal-header .route-history-refresh-button:hover { background:#dff1e7; border-color:#9bcbb5; }
 .route-history-detail-modal .modal-header .route-history-refresh-button:disabled { opacity:.6; cursor:wait; }
 .route-history-detail-modal .modal-header .route-history-refresh-button:focus-visible { outline:2px solid #087b5b; outline-offset:3px; }
+
+html[data-theme="dark"] .sidebar-account:not(.is-active) { background: #25332c; color: #e6eee9; }
+html[data-theme="dark"] .sidebar-account-copy small { color: #aab9b1; }
+
+/* Dark colors for dashboard data pages. */
+html[data-theme="dark"] .admin-data-table th,
+html[data-theme="dark"] .standard-data-table th,
+html[data-theme="dark"] .truck-table th,
+html[data-theme="dark"] .route-management-table th { background: #202c26; border-color: #34443c; color: #aab9b1; }
+html[data-theme="dark"] .admin-data-table td,
+html[data-theme="dark"] .standard-data-table td,
+html[data-theme="dark"] .truck-table td,
+html[data-theme="dark"] .route-management-table td { background: #1a2420; border-color: #34443c; color: #d7e6de; }
+html[data-theme="dark"] .admin-data-table tbody tr:hover td,
+html[data-theme="dark"] .standard-data-table tbody tr:hover td,
+html[data-theme="dark"] .truck-table tbody tr:hover td,
+html[data-theme="dark"] .route-management-table tbody tr:hover td { background: #202c26; }
+html[data-theme="dark"] .empty-cell,
+html[data-theme="dark"] .truck-table-message,
+html[data-theme="dark"] .route-table-message,
+html[data-theme="dark"] .route-assignment-message { color: #aab9b1; }
+html[data-theme="dark"] .tonnage-cell { color: #8ee0b6; }
+html[data-theme="dark"] .accounts-table-card .accounts-profile-actions { background: #1a2420; }
+html[data-theme="dark"] .accounts-table-card .account-profile-trigger { background: #25332c; border-color: #415249; color: #d7e6de; }
+html[data-theme="dark"] .account-verification-status { color: #b9c8c0; }
+html[data-theme="dark"] .account-verification-status.is-pending { color: #f0bd5c; }
+html[data-theme="dark"] .account-verification-status.is-verified, html[data-theme="dark"] .accounts-table-card .account-verification-trigger { color: #8ee0b6; }
+html[data-theme="dark"] .account-verification-feedback { color: #b9c8c0; }
+html[data-theme="dark"] .account-verification-note { background: #203c30; border-color: #3b6650; color: #cfe9db; }
+
+html[data-theme="dark"] .truck-directory-card { background: #1a2420; border-color: #34443c; }
+html[data-theme="dark"] .truck-directory-topline h2 { color: #e6eee9; }
+html[data-theme="dark"] .truck-directory-topline p,
+html[data-theme="dark"] .truck-table-count { color: #aab9b1; }
+html[data-theme="dark"] .truck-preview-notice { background: #203c30; border-color: #3b6650; color: #c2d0c8; }
+html[data-theme="dark"] .truck-preview-notice span { background: #35463d; color: #8ee0b6; }
+html[data-theme="dark"] .truck-search-control,
+html[data-theme="dark"] .activity-search,
+html[data-theme="dark"] .route-history-search-wrapper { background: #25332c; border-color: #415249; color: #aab9b1; }
+html[data-theme="dark"] .truck-search-control input,
+html[data-theme="dark"] .activity-search input,
+html[data-theme="dark"] .route-history-search-wrapper input { color: #e6eee9; }
+html[data-theme="dark"] .truck-search-control input::placeholder,
+html[data-theme="dark"] .activity-search input::placeholder,
+html[data-theme="dark"] .route-history-search-wrapper input::placeholder { color: #aab9b1; }
+html[data-theme="dark"] .truck-table-scroll,
+html[data-theme="dark"] .route-table-scroll { border-color: #34443c; }
+html[data-theme="dark"] .truck-sort-header.is-sorted,
+html[data-theme="dark"] .truck-sort-header.is-sorted svg { color: #8ee0b6; }
+html[data-theme="dark"] .truck-sort-header svg { color: #71877b; }
+html[data-theme="dark"] .truck-number-icon,
+html[data-theme="dark"] .truck-icon-button { background: #202c26; border-color: #415249; color: #d7e6de; }
+html[data-theme="dark"] .truck-icon-button:hover { background: #203c30; border-color: #3b6650; color: #8ee0b6; }
+html[data-theme="dark"] .truck-archive-button:hover { background: #3a2421; border-color: #7d413a; color: #ffb4a9; }
+html[data-theme="dark"] .truck-plate,
+html[data-theme="dark"] .truck-color,
+html[data-theme="dark"] .truck-dimension { color: #c2d0c8; }
+html[data-theme="dark"] .truck-capacity { color: #8ee0b6; }
+html[data-theme="dark"] .availability-available { background: #203c30; color: #8ee0b6; }
+html[data-theme="dark"] .availability-unavailable { background: #3a3020; color: #f0c879; }
+
+html[data-theme="dark"] .route-directory-card { background: #1a2420; border-color: #34443c; }
+html[data-theme="dark"] .route-filter-tabs [data-slot="tabs-list"] { background: #25332c; }
+html[data-theme="dark"] .route-filter-tabs [role="tab"] { color: #b9c8c0; }
+html[data-theme="dark"] .route-filter-tabs [role="tab"][data-selected] { color: #8ee0b6; }
+html[data-theme="dark"] .route-filter-tabs [data-slot="tabs-indicator"] { background: #35463d; }
+html[data-theme="dark"] .route-management-notice { background: #203c30; border-color: #3b6650; color: #c2d0c8; }
+html[data-theme="dark"] .route-management-table th { background: #202c26; border-color: #34443c; color: #aab9b1; }
+html[data-theme="dark"] .route-management-table td { background: #1a2420; border-color: #34443c; color: #c2d0c8; }
+html[data-theme="dark"] .route-management-table tr:hover td { background: #202c26; }
+html[data-theme="dark"] .route-management-table strong { color: #e6eee9; }
+html[data-theme="dark"] .route-management-table small { color: #aab9b1; }
+html[data-theme="dark"] .route-active { background: #203c30; color: #8ee0b6; }
+html[data-theme="dark"] .route-archived { background: #25332c; color: #b9c8c0; }
+
+html[data-theme="dark"] .route-assignment-toolbar { border-color: #34443c; }
+html[data-theme="dark"] .route-assignment-table td > strong { color: #e6eee9; }
+html[data-theme="dark"] .route-stop-count { color: #aab9b1; }
+html[data-theme="dark"] .accounts-toolbar { border-color: #34443c; }
+html[data-theme="dark"] .activity-toolbar { background: #1a2420; border-color: #34443c; }
+html[data-theme="dark"] .activity-toolbar .app-select [data-slot="select-trigger"],
+html[data-theme="dark"] .accounts-toolbar .app-select [data-slot="select-trigger"],
+html[data-theme="dark"] .truck-filter-row .app-select [data-slot="select-trigger"],
+html[data-theme="dark"] .route-assignment-toolbar .app-select [data-slot="select-trigger"],
+html[data-theme="dark"] .route-directory-filters .app-select [data-slot="select-trigger"],
+html[data-theme="dark"] .route-history-card .filter-row .app-select [data-slot="select-trigger"] { background: #25332c; border-color: #415249; color: #e6eee9; }
+html[data-theme="dark"] .route-history-card .filter-row { border-color: #34443c; }
+html[data-theme="dark"] .route-history-card .filter-row input[type="date"] { background: #25332c; border-color: #415249; color: #e6eee9; }
+html[data-theme="dark"] .entries-count { color: #aab9b1; }
+html[data-theme="dark"] .activity-clear-filter { background: #202c26; border-color: #415249; color: #d7e6de; }
+html[data-theme="dark"] .activity-clear-filter:hover { background: #203c30; color: #8ee0b6; }
+
+html[data-theme="dark"] .table-pagination { border-color: #34443c !important; color: #b9c8c0; }
+html[data-theme="dark"] .table-page-size { border-color: #34443c; }
+html[data-theme="dark"] .table-page-count { color: #aab9b1; }
+html[data-theme="dark"] .table-pagination .table-page-input { background: #25332c; border-color: #415249; color: #e6eee9; }
+html[data-theme="dark"] .table-page-controls .button { background: #25332c; border-color: #415249; color: #d7e6de; }
+html[data-theme="dark"] .table-page-controls .button[aria-current="page"] { background: #203c30; border-color: #3b6650; color: #8ee0b6; }
+html[data-theme="dark"] .table-pagination .app-select [data-slot="select-trigger"] { background: #25332c; border-color: #415249; color: #e6eee9; }
+html[data-theme="dark"] [data-slot="select-popover"] { background: #1a2420; border-color: #415249; color: #d7e6de; }
+html[data-theme="dark"] [data-slot="select-popover"] [role="option"] { color: #d7e6de; }
+html[data-theme="dark"] [data-slot="select-popover"] [role="option"][data-focused],
+html[data-theme="dark"] [data-slot="select-popover"] [role="option"][aria-selected="true"] { background: #203c30; color: #8ee0b6; }
+
+html[data-theme="dark"] .app-date-picker [data-slot="label"] { color: #d7e6de; }
+html[data-theme="dark"] .app-date-picker [data-slot="date-input-group"] { background: #25332c; color: #e6eee9; }
+html[data-theme="dark"] .app-date-picker .app-date-clear { color: #b9c8c0; }
+html[data-theme="dark"] .app-calendar-popover,
+html[data-theme="dark"] .tonnage-calendar-popover { background: #1a2420; color: #e6eee9; }
+html[data-theme="dark"] .app-calendar-popover th,
+html[data-theme="dark"] .app-calendar-popover td,
+html[data-theme="dark"] .tonnage-calendar-popover th,
+html[data-theme="dark"] .tonnage-calendar-popover td { color: #d7e6de; }
+
+/* Dark theme for the Route History report modal. */
+html[data-theme="dark"] .route-history-detail-modal { background: #1a2420; border-color: #34443c; color: #e6eee9; }
+html[data-theme="dark"] .route-history-detail-modal .modal-header,
+html[data-theme="dark"] .route-history-detail-modal .modal-body,
+html[data-theme="dark"] .route-history-detail-modal .modal-footer { background: #1a2420; border-color: #34443c; color: #e6eee9; }
+html[data-theme="dark"] .route-history-detail-modal .modal-header h2 { color: #e6eee9; }
+html[data-theme="dark"] .route-history-detail-modal .eyebrow,
+html[data-theme="dark"] .route-history-detail-modal .rh-section-label { color: #8ee0b6; }
+html[data-theme="dark"] .route-history-detail-modal .modal-subtitle { color: #aab9b1; }
+html[data-theme="dark"] .route-history-detail-modal .modal-header button[aria-label="Close route history details"] { color: #aab9b1; }
+html[data-theme="dark"] .route-history-detail-modal .modal-header button[aria-label="Close route history details"]:hover { color: #e6eee9; }
+html[data-theme="dark"] .route-history-detail-modal .detail-table-web,
+html[data-theme="dark"] .route-history-detail-modal .detail-table-ref-web { background: #202c26; border-color: #34443c; }
+html[data-theme="dark"] .route-history-detail-modal .dt-row { border-color: #34443c; }
+html[data-theme="dark"] .route-history-detail-modal .dt-label { color: #aab9b1; }
+html[data-theme="dark"] .route-history-detail-modal .dt-value { color: #e6eee9; }
+html[data-theme="dark"] .route-history-detail-modal .dt-value > span { color: #aab9b1 !important; }
+html[data-theme="dark"] .route-history-detail-modal .dt-value.dt-value-red { color: #ff9b91; }
+html[data-theme="dark"] .route-history-detail-modal .dt-value.dt-value-green { color: #8ee0b6; }
+html[data-theme="dark"] .route-history-detail-modal .rh-expandable button { background: #25332c; border: 1px solid #415249; color: #8ee0b6; }
+html[data-theme="dark"] .route-history-detail-modal .rh-trail-panel { background: #202c26; border-color: #34443c; }
+html[data-theme="dark"] .route-history-detail-modal .rh-legend-title { color: #e6eee9; }
+html[data-theme="dark"] .route-history-detail-modal .rh-legend-row { color: #d7e6de; }
+html[data-theme="dark"] .route-history-detail-modal .rh-legend-exit { background: #1a2420; border-color: #aab9b1; }
+html[data-theme="dark"] .route-history-detail-modal .rh-fig-caption,
+html[data-theme="dark"] .route-history-detail-modal .rh-trail-note { color: #aab9b1; }
+html[data-theme="dark"] .route-history-detail-modal .rh-trail-controls button { background: #25332c; border: 1px solid #415249; color: #d7e6de; }
+html[data-theme="dark"] .route-history-detail-modal .rh-trail-controls button[aria-pressed="true"] { background: #203c30; border-color: #3b6650; color: #8ee0b6; }
+html[data-theme="dark"] .route-history-detail-modal .rh-stop-card { background: #202c26; border-color: #34443c; }
+html[data-theme="dark"] .route-history-detail-modal .rh-stop-row strong { color: #e6eee9; }
+html[data-theme="dark"] .route-history-detail-modal .rh-stop-meta { color: #aab9b1; }
+
+html[data-theme="dark"] .account-menu [role="menuitem"]:not(.account-signout) { color: #e6eee9 !important; }
+html[data-theme="dark"] .account-menu [role="menuitem"]:not(.account-signout)[data-focused] { background: #25332c; }
+
+/* Dark theme for assignment row selectors and actions. */
+html[data-theme="dark"] .route-assignment-table .app-select [data-slot="select-trigger"] { background: #25332c; border-color: #415249; color: #e6eee9; }
+html[data-theme="dark"] .route-assignment-table .app-select [data-slot="select-trigger"][aria-expanded="true"] { background: #2d3c34; }
+html[data-theme="dark"] .route-assignment-table .app-select [data-slot="select-value"] { color: #e6eee9; }
+html[data-theme="dark"] .route-assignment-table .app-select [data-slot="select-indicator"] { color: #aab9b1; }
+html[data-theme="dark"] .route-assignment-table .reassign-button { background: #203c30; border-color: #3b6650; color: #8ee0b6; }
+html[data-theme="dark"] .route-assignment-table .reassign-button:hover:not(:disabled) { background: #28513d; }
+html[data-theme="dark"] .route-assignment-table .reassign-button:disabled { background: #25332c; border-color: #34443c; color: #83968b; }
+
+/* Dark theme for Overview date and filter controls. */
+html[data-theme="dark"] .overview-metrics .app-select [data-slot="select-trigger"] { background: #25332c; border-color: #415249; color: #e6eee9; }
+html[data-theme="dark"] .overview-metrics .app-select [data-slot="select-value"] { color: #e6eee9; }
+html[data-theme="dark"] .overview-metrics .app-select [data-slot="select-indicator"] { color: #aab9b1; }
+html[data-theme="dark"] .tonnage-trend-card .tonnage-date-filter .tonnage-date-picker [data-slot="date-input-group"] { background: #25332c; border: 1px solid #415249; color: #e6eee9; }
+html[data-theme="dark"] .tonnage-trend-card .tonnage-date-picker [data-slot="date-input-group-input-container"],
+html[data-theme="dark"] .tonnage-trend-card .tonnage-date-picker [data-slot="date-input-group-input-container"] * { color: #e6eee9; }
+html[data-theme="dark"] .tonnage-trend-card .tonnage-date-picker [data-slot="date-input-group"] button,
+html[data-theme="dark"] .tonnage-trend-card .tonnage-date-picker [data-slot="date-input-group"] svg { color: #aab9b1; }
+html[data-theme="dark"] .tonnage-trend-card .tonnage-date-presets { border-color: #34443c; }
+html[data-theme="dark"] .tonnage-trend-card .tonnage-date-presets button { color: #d7e6de; }
+html[data-theme="dark"] .tonnage-trend-card .tonnage-date-presets button[aria-pressed="true"] { background: #203c30; color: #8ee0b6; }
+html[data-theme="dark"] .tonnage-trend-card .tonnage-date-presets button:hover { background: #25332c; }
+html[data-theme="dark"] .tonnage-trend-card .tonnage-date-presets button[aria-pressed="true"]:hover { background: #28513d; }
+html[data-theme="dark"] .tonnage-trend-card .tonnage-date-loading { background: #25332c; border-color: #415249; color: #e6eee9; }

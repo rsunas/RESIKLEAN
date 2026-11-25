@@ -22,6 +22,7 @@ const loginRules = [
 
 const googleLoginRules = [
   body('idToken').notEmpty().withMessage('idToken is required'),
+  body('intent').optional().isIn(['login', 'signup']).withMessage('Invalid authentication intent'),
 ];
 
 module.exports = { validate, registerRules, loginRules, googleLoginRules };

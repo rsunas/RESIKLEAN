@@ -10,7 +10,7 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // ── Helper: sign token and send response ──────────────────────────────────────
 const tokenResponse = (user, statusCode, res) => {
-  const token = signToken(user._id);
+  const token = signToken(user._id, user.authVersion || 0);
 
   // Strip password from response (already select:false, but just in case)
   user.password = undefined;
@@ -58,6 +58,13 @@ const login = async (req, res) => {
     const isMatch = await user.matchPassword(password);
     if (!isMatch) return sendError(res, 'Invalid email or password', 401);
 
+    // This is set only by the administrator account-provisioning flow. Existing
+    // local residents and legacy staff records have no requirement and continue
+    // to sign in exactly as before.
+    if (user.emailVerificationRequired && !user.emailVerifiedAt) {
+      return sendError(res, 'Verify your email before signing in.', 403);
+    }
+
     tokenResponse(user, 200, res);
   } catch (err) {
     sendError(res, err.message, 500);
@@ -67,7 +74,7 @@ const login = async (req, res) => {
 // ── POST /api/auth/google ─────────────────────────────────────────────────────
 const googleLogin = async (req, res) => {
   try {
-    const { idToken } = req.body;
+    const { idToken, intent } = req.body;
 
     // Verify token with Google (Accepts Web AND Android Client IDs)
     const ticket = await client.verifyIdToken({
@@ -79,25 +86,43 @@ const googleLogin = async (req, res) => {
     });
 
     const payload = ticket.getPayload();
-    const { email, name, picture } = payload;
+    const { name, picture } = payload;
+    if (!payload.email || payload.email_verified !== true) {
+      return sendError(res, 'A verified Google email is required', 401);
+    }
+    const email = payload.email.trim().toLowerCase();
 
     // Find user by email
     let user = await User.findOne({ email });
+
+    if (user && intent === 'signup') {
+      return sendError(res, 'This email is already registered. Please sign in instead.', 409);
+    }
 
     if (!user) {
       // Create new user if they don't exist
       // Generate a random secure password for Google signups
       const randomPassword = crypto.randomBytes(16).toString('hex');
 
-      user = await User.create({
-        name,
-        email,
-        password: randomPassword,
-        role: 'resident',
-        profilePhotoUrl: picture, // Save Google profile picture
-        authProvider: 'google',
-        isPasswordSet: false,
-      });
+      try {
+        user = await User.create({
+          name,
+          email,
+          password: randomPassword,
+          role: 'resident',
+          profilePhotoUrl: picture, // Save Google profile picture
+          authProvider: 'google',
+          isPasswordSet: false,
+        });
+      } catch (err) {
+        if (err.code !== 11000) throw err;
+        // Another request may have created this email after our lookup.
+        if (intent === 'signup') {
+          return sendError(res, 'This email is already registered. Please sign in instead.', 409);
+        }
+        user = await User.findOne({ email });
+        if (!user) throw err;
+      }
     } else if (!user.profilePhotoUrl && picture) {
       // Optional: Update profile picture if they didn't have one
       user.profilePhotoUrl = picture;
@@ -118,7 +143,7 @@ const getMe = async (req, res) => {
 };
 
 // ── PATCH /api/auth/me ────────────────────────────────────────────────────────
-// Allows the logged-in user to update their own profile (name, phone, barangay, location, password, settings).
+// Allows the logged-in user to update their own profile (name, phone, barangay, location, settings).
 // Sensitive fields like role and email are explicitly blocked.
 const updateMe = async (req, res) => {
   try {
@@ -140,13 +165,8 @@ const updateMe = async (req, res) => {
       user.contact = req.body.phone;
     }
 
-    if (req.body.password !== undefined && req.body.password !== '') {
-      if (typeof req.body.password !== 'string' || req.body.password.trim().length < 6) {
-        return sendError(res, 'Password must be at least 6 characters', 400);
-      }
-      user.password = req.body.password.trim();
-      user.isPasswordSet = true;
-      hasUpdates = true;
+    if (req.body.password !== undefined) {
+      return sendError(res, 'Use the change-password endpoint to update your password', 400);
     }
 
     if (req.body.settings && typeof req.body.settings === 'object') {

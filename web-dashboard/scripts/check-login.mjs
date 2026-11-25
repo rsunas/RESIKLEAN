@@ -29,7 +29,8 @@ let closing = false;
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 try {
   browser = await openBrowser();
-  const exceptions = [], requests = [];
+  const exceptions = [], requests = [], recoveryRequests = [];
+  const recoveryToken = 'a'.repeat(64);
   let pendingLogin;
   const requestError = error => { if (!closing) exceptions.push(error.message); };
   browser.on('Runtime.exceptionThrown', event => exceptions.push(event.exceptionDetails.exception?.description || event.exceptionDetails.text));
@@ -38,6 +39,12 @@ try {
     const url = new URL(event.request.url);
     if (url.pathname === '/__login-qa/auth/login') {
       pendingLogin = event.requestId; requests.push(JSON.parse(event.request.postData));
+    } else if (url.pathname === '/__login-qa/auth/forgot-password') {
+      recoveryRequests.push({ path: url.pathname, body: JSON.parse(event.request.postData) });
+      void browser.send('Fetch.fulfillRequest', { requestId: event.requestId, responseCode: 200, body: Buffer.from(JSON.stringify({ success: true, data: { message: 'Check your inbox and spam folder.' } })).toString('base64'), responseHeaders: [{ name: 'Content-Type', value: 'application/json' }] }).catch(requestError);
+    } else if (url.pathname === '/__login-qa/auth/reset-password') {
+      recoveryRequests.push({ path: url.pathname, body: JSON.parse(event.request.postData) });
+      void browser.send('Fetch.fulfillRequest', { requestId: event.requestId, responseCode: 200, body: Buffer.from(JSON.stringify({ success: true, data: { message: 'Password reset successfully. Sign in with your new password.' } })).toString('base64'), responseHeaders: [{ name: 'Content-Type', value: 'application/json' }] }).catch(requestError);
     } else if (url.pathname.startsWith('/__login-qa')) {
       void browser.send('Fetch.fulfillRequest', { requestId: event.requestId, responseCode: 200, body: Buffer.from(JSON.stringify({ success: true, data: [] })).toString('base64'), responseHeaders: [{ name: 'Content-Type', value: 'application/json' }] }).catch(requestError);
     } else if (url.origin === origin || url.protocol === 'data:') {
@@ -60,6 +67,7 @@ try {
       await browser.send('Emulation.setDeviceMetricsOverride', { width, height: width < 640 ? 844 : 1000, deviceScaleFactor: 1, mobile: false });
       await browser.evaluate(`document.documentElement.style.fontSize = '${fontSize}px'; window.scrollTo(0, 0)`);
       await pause(100);
+      if (width >= 1024) await waitFor(`document.querySelector('.login-illustration').currentSrc.includes('1600')`, `desktop cover source ${width}/${fontSize}`);
       const layout = await browser.evaluate(`(() => {
         const rect = selector => { const r = document.querySelector(selector).getBoundingClientRect(); return { x:r.x, y:r.y, width:r.width, height:r.height, bottom:r.bottom, right:r.right }; };
         return { width: innerWidth, clientWidth: document.documentElement.clientWidth, pageWidth: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight,
@@ -148,6 +156,16 @@ try {
   await checkStateLayouts('error');
   assert.ok((await browser.evaluate(`getComputedStyle(document.querySelector('.login-password-wrap')).boxShadow`)).includes('rgb(179, 38, 30)'));
   assert.ok(await browser.evaluate(`document.documentElement.scrollWidth <= 390`));
+  await browser.evaluate(`document.getElementById('forgot-password-link').click()`);
+  await waitFor(`!!document.getElementById('recovery-email')`, 'recovery request form');
+  await browser.evaluate(`(() => { const input = document.getElementById('recovery-email'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(input, 'admin@example.test'); input.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('.login-recovery-form').requestSubmit(); })()`);
+  await waitFor(`!!document.getElementById('reset-code')`, 'recovery code form');
+  assert.deepEqual(recoveryRequests.at(-1), { path: '/__login-qa/auth/forgot-password', body: { email: 'admin@example.test' } });
+  await browser.evaluate(`(() => { const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; for (const [id,value] of [['reset-code','${recoveryToken}'], ['new-password','recovery-password'], ['confirm-password','recovery-password']]) { const input = document.getElementById(id); set.call(input, value); input.dispatchEvent(new Event('input', { bubbles: true })); } document.querySelector('.login-recovery-form').requestSubmit(); })()`);
+  await waitFor(`document.body.innerText.includes('Password updated')`, 'recovery confirmation');
+  assert.deepEqual(recoveryRequests.at(-1), { path: '/__login-qa/auth/reset-password', body: { token: recoveryToken, password: 'recovery-password' } });
+  await browser.evaluate(`document.querySelector('.login-recovery-back').click()`);
+  await waitFor(`!!document.getElementById('login-submit')`, 'return to login');
   await browser.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
   assert.equal(await browser.evaluate(`getComputedStyle(document.querySelector('.login-form')).animationName`), 'none');
   // Smaller keyboard viewport must scroll, never clip the submit/footer.
@@ -164,5 +182,5 @@ try {
   assert.equal(await browser.evaluate(`sessionStorage.getItem('resiklean_admin_token')`), 'test-only');
   assert.equal(JSON.parse(await browser.evaluate(`sessionStorage.getItem('resiklean_admin_user')`)).role, 'admin');
   assert.deepEqual(exceptions, [], 'No browser runtime exceptions');
-  console.log(JSON.stringify({ layouts: results, additionalStateLayouts: 24, interactions: 'PASS: native validation, focus order/rings, Enter, visibility, loading, API error, role guard, session storage, redirect, reduced motion, keyboard-height scrolling', screenshots: browser.directory }, null, 2));
+  console.log(JSON.stringify({ layouts: results, additionalStateLayouts: 24, interactions: 'PASS: native validation, focus order/rings, Enter, visibility, loading, password reset request/code, API error, role guard, session storage, redirect, reduced motion, keyboard-height scrolling', screenshots: browser.directory }, null, 2));
 } finally { closing = true; if (browser) await browser.close(); await server.close(); }

@@ -35,6 +35,19 @@ const userSchema = new mongoose.Schema(
     // Authentication Metadata
     authProvider: { type: String, enum: ['local', 'google'], default: 'local' },
     isPasswordSet: { type: Boolean, default: true },
+    // Incremented after password recovery so every token issued before recovery stops working.
+    authVersion: { type: Number, default: 0 },
+    passwordResetHash: { type: String, select: false },
+    passwordResetExpires: { type: Date, select: false },
+    passwordResetRequestedAt: { type: Date, select: false },
+    // Only accounts provisioned from the administrator dashboard opt into this
+    // gate. Keeping the default false preserves access for legacy and resident
+    // accounts created through the public registration flow.
+    emailVerificationRequired: { type: Boolean, default: false },
+    emailVerifiedAt: { type: Date },
+    emailVerificationHash: { type: String, select: false },
+    emailVerificationExpires: { type: Date, select: false },
+    emailVerificationRequestedAt: { type: Date, select: false },
     // Resident / User Preferences & Settings
     settings: {
       theme: { type: String, enum: ['light', 'dark', 'system'], default: 'system' },

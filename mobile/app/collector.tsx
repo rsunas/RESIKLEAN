@@ -1,6 +1,5 @@
 import { darkPalette } from '@/constants/mobile-palette';
 import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
-import { PhoneNotificationControls } from '@/components/phone-notification-controls';
 import { DriverRouteLayers, DriverStopLayers } from '@/components/driver-map-layers';
 import { buildMapStops } from '@/lib/driver-map-presentation';
 import { useAppReducedMotion } from '@/hooks/use-app-reduced-motion';
@@ -1742,7 +1741,6 @@ export default function CollectorScreen() {
                 <Text style={[styles.tripButtonText, routePresence.enabled && {color:themeColor('#086B42', darkPalette.accent)}]}>{isUpdatingGeofence ? 'Please wait...' : routePresence.enabled ? 'End trip' : 'Start trip'}</Text>
               </Pressable>
             </View>
-            <PhoneNotificationControls role="driver" tracking={routePresence.enabled} compact />
             {pendingRouteLogs > 0 && <Text style={styles.geofenceQueueText}>{pendingRouteLogs} route log{pendingRouteLogs === 1 ? '' : 's'} queued for sync{failedRouteLogs ? ` (${failedRouteLogs} need attention)` : ''}.</Text>}
           </View>
         )}
@@ -1783,7 +1781,7 @@ export default function CollectorScreen() {
             <Text style={styles.complaintToastText}>{complaintMessage}</Text>
           </ToastMotion>
         ) : null}
-        <Modal animationType="slide" onRequestClose={() => setSelectedComplaint(null)} transparent visible={Boolean(selectedComplaint)}>
+        <Modal animationType="fade" onRequestClose={() => setSelectedComplaint(null)} transparent visible={Boolean(selectedComplaint)}>
           <View style={styles.complaintModalBackdrop}>
             <Pressable accessibilityLabel="Close complaint" onPress={() => setSelectedComplaint(null)} style={styles.complaintModalDismissArea} />
             {closingComplaint ? (
@@ -1965,7 +1963,6 @@ export default function CollectorScreen() {
   const profileScreen = (
     <View style={styles.profileScreen}>
       <ScrollView contentContainerStyle={styles.profileScrollContent} showsVerticalScrollIndicator={false}>
-        <PhoneNotificationControls role="driver" tracking={routePresence.enabled} />
         <SkeletonRegion state={profileSkeleton} placeholder={<SkeletonBlock height={226} radius={24} />}>
         <View style={styles.collectorProfileCard}>
           <CollectorGradient />

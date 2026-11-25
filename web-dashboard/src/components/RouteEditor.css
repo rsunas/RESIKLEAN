@@ -98,3 +98,64 @@
 
 .route-editor-container[data-exiting] { animation: route-editor-enter 200ms ease-in reverse; }
 .route-editor-backdrop[data-exiting] { animation: route-editor-fade 200ms ease-in reverse; }
+
+/* Dark colors for the route editor. */
+html[data-theme="dark"] .route-editor-modal { background: #1a2420; color: #e6eee9; }
+html[data-theme="dark"] .route-editor-heading,
+html[data-theme="dark"] .route-editor-footer { border-color: #34443c; }
+html[data-theme="dark"] .route-editor-heading h2,
+html[data-theme="dark"] .route-stops-heading strong { color: #e6eee9; }
+html[data-theme="dark"] .route-editor-heading p:last-child,
+html[data-theme="dark"] .route-editor-form label span,
+html[data-theme="dark"] .route-stops-heading span,
+html[data-theme="dark"] .route-advanced-options > p,
+html[data-theme="dark"] .route-editor-modal .barangay-combobox > p { color: #aab9b1; }
+html[data-theme="dark"] .route-editor-modal .eyebrow { color: #8ee0b6; }
+html[data-theme="dark"] .route-editor-heading > button { background: #25332c; color: #d7e6de; }
+html[data-theme="dark"] .route-editor-form,
+html[data-theme="dark"] .route-editor-modal .route-editor-form { border-color: #34443c; }
+html[data-theme="dark"] .route-editor-form > label,
+html[data-theme="dark"] .route-editor-form fieldset,
+html[data-theme="dark"] .route-shift-field,
+html[data-theme="dark"] .route-advanced-options summary { color: #d7e6de; }
+html[data-theme="dark"] .route-editor-form input,
+html[data-theme="dark"] .route-editor-form select,
+html[data-theme="dark"] .route-editor-modal .route-editor-form input,
+html[data-theme="dark"] .route-editor-modal .route-editor-form select { background: #25332c; border-color: #415249; color: #e6eee9; }
+html[data-theme="dark"] .route-editor-modal input::placeholder { color: #aab9b1; }
+html[data-theme="dark"] .route-editor-modal .route-editor-form input:focus,
+html[data-theme="dark"] .route-editor-modal .route-editor-form select:focus { background: #2d3c34; }
+html[data-theme="dark"] .route-editor-modal .route-shift-select [data-slot="select-trigger"] { background: #25332c; color: #e6eee9; }
+html[data-theme="dark"] .route-editor-modal .route-shift-select [data-slot="select-trigger"]:focus-visible,
+html[data-theme="dark"] .route-editor-modal .route-shift-select [data-slot="select-trigger"][aria-expanded="true"] { background: #2d3c34; }
+html[data-theme="dark"] .route-editor-modal .route-shift-select [data-slot="select-indicator"],
+html[data-theme="dark"] .route-name-control > svg,
+html[data-theme="dark"] .barangay-field-icon,
+html[data-theme="dark"] .route-editor-modal .barangay-combobox-toggle { color: #aab9b1; }
+html[data-theme="dark"] .route-editor-modal .barangay-combobox-popup,
+html[data-theme="dark"] .route-shift-popover[data-slot="select-popover"] { background: #1a2420; border-color: #415249; }
+html[data-theme="dark"] .route-editor-modal .barangay-combobox-popup [role="option"],
+html[data-theme="dark"] .route-shift-popover [role="option"] { color: #d7e6de; }
+html[data-theme="dark"] .route-editor-modal .barangay-combobox-popup [role="option"]:hover,
+html[data-theme="dark"] .route-editor-modal .barangay-combobox-popup [role="option"][aria-selected="true"],
+html[data-theme="dark"] .route-shift-popover [role="option"]:hover,
+html[data-theme="dark"] .route-shift-popover [role="option"][data-focused],
+html[data-theme="dark"] .route-shift-popover [role="option"][aria-selected="true"] { background: #203c30; color: #8ee0b6; }
+html[data-theme="dark"] .route-editor-modal .route-day-buttons button { background: #25332c; border-color: #415249; color: #d7e6de; }
+html[data-theme="dark"] .route-editor-modal .route-day-buttons button.is-selected { background: #087b5b; border-color: #087b5b; color: #fff; }
+html[data-theme="dark"] .route-editor-modal .route-import-row .outline-button,
+html[data-theme="dark"] .route-editor-modal .route-editor-footer .outline-button { background: #202c26; border-color: #415249; color: #d7e6de; }
+html[data-theme="dark"] .route-stops-card { background: #202c26; }
+html[data-theme="dark"] .route-editor-modal .route-stops-heading { border-color: #34443c; }
+html[data-theme="dark"] .route-editor-modal .route-stops-heading > button { background: #203c30; border-color: #3b6650; color: #8ee0b6; }
+html[data-theme="dark"] .route-editor-modal .route-stop-editor { background: #25332c; border-color: #415249; }
+html[data-theme="dark"] .route-editor-modal .route-stop-editor input { background: #1a2420; border-color: #415249; color: #e6eee9; }
+html[data-theme="dark"] .route-editor-modal .route-stop-actions button { background: #202c26; border-color: #415249; color: #d7e6de; }
+html[data-theme="dark"] .route-editor-modal .route-stop-empty { background: #25332c; border-color: #587063; color: #b9c8c0; }
+html[data-theme="dark"] .route-editor-modal .route-map-toolbar { border-color: #34443c; color: #d7e6de; }
+html[data-theme="dark"] .route-editor-modal .route-map-toolbar span,
+html[data-theme="dark"] .route-editor-modal .route-map-toolbar small { background: #1a2420; color: #e6eee9; }
+html[data-theme="dark"] .route-editor-modal .route-map-token-missing { background: #202c26; color: #b9c8c0; }
+html[data-theme="dark"] .route-editor-modal .route-map-token-missing strong { color: #e6eee9; }
+html[data-theme="dark"] .route-editor-modal .route-map-token-missing code { background: #35463d; color: #d7e6de; }
+html[data-theme="dark"] .route-editor-modal .route-editor-footer { border-color: #34443c; }

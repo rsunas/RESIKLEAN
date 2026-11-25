@@ -75,6 +75,7 @@ export default function AccountModal({ isOpen, onClose, account, setAccount, sub
             </div>
             <div className="account-field account-field-birthday"><AppDatePicker id="account-birthday" label="Birthday" value={account.birthday} onChange={value => update('birthday', value)} min="1900-01-01" max={today('Asia/Manila').toString()} /></div>
             {input('email', 'Email address', 'mail', 'user@nagacity.gov.ph')}
+            <p className="account-verification-note"><FieldIcon name="info" size={15} /><span>A verification email will be sent after this account is created. The account cannot sign in or reset its password until the email is verified.</span></p>
             {input('password', 'Temporary password', 'lock', 'At least 6 characters', { required: true, minLength: 6, type: showPassword ? 'text' : 'password', 'aria-describedby': 'account-password-hint' })}
             <div className="account-field"><label htmlFor="account-photo">Profile picture</label><div className="account-upload">
               <span className="account-upload-avatar">{account.avatarPreview ? <img src={account.avatarPreview} alt="Selected profile preview" /> : <FieldIcon name="user" size={28} />}</span>

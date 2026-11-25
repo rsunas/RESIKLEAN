@@ -28,6 +28,180 @@ export default function Login() {
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [recoveryMode, setRecoveryMode] = useState(false);
+  const [recoveryStep, setRecoveryStep] = useState('request');
+  const [recoveryEmail, setRecoveryEmail] = useState('');
+  const [resetCode, setResetCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [recoveryError, setRecoveryError] = useState('');
+  const [recoveryMessage, setRecoveryMessage] = useState('');
+  const [isRecovering, setIsRecovering] = useState(false);
+  const [verificationMode, setVerificationMode] = useState(false);
+  const [verificationEmail, setVerificationEmail] = useState('');
+  const [verificationCode, setVerificationCode] = useState('');
+  const [verificationError, setVerificationError] = useState('');
+  const [verificationMessage, setVerificationMessage] = useState('');
+  const [isVerifying, setIsVerifying] = useState(false);
+
+  function openRecovery() {
+    setRecoveryMode(true);
+    setRecoveryStep('request');
+    setRecoveryEmail(email);
+    setResetCode('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setRecoveryError('');
+    setRecoveryMessage('');
+  }
+
+  function closeRecovery() {
+    setRecoveryMode(false);
+    setRecoveryError('');
+    setRecoveryMessage('');
+  }
+
+  function openVerification() {
+    setVerificationMode(true);
+    setVerificationEmail(email);
+    setVerificationCode('');
+    setVerificationError('');
+    setVerificationMessage('');
+  }
+
+  function closeVerification() {
+    setVerificationMode(false);
+    setVerificationError('');
+    setVerificationMessage('');
+  }
+
+  async function resendVerification(event) {
+    event.preventDefault();
+    if (!API_URL) {
+      setVerificationError('VITE_API_URL is not configured.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(verificationEmail.trim())) {
+      setVerificationError('Enter a valid email address.');
+      return;
+    }
+    setVerificationError('');
+    setIsVerifying(true);
+    try {
+      const response = await fetch(`${API_URL.replace(/\/$/, '')}/auth/resend-verification`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: verificationEmail.trim() }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.error || 'Unable to resend the verification email.');
+      setVerificationMessage(result.data?.message || 'Check your inbox and spam folder for a verification code.');
+    } catch (caughtError) {
+      setVerificationError(caughtError instanceof Error ? caughtError.message : 'Unable to resend the verification email.');
+    } finally {
+      setIsVerifying(false);
+    }
+  }
+
+  async function verifyEmail(event) {
+    event.preventDefault();
+    if (!API_URL) {
+      setVerificationError('VITE_API_URL is not configured.');
+      return;
+    }
+    if (!/^[a-f0-9]{64}$/i.test(verificationCode.trim())) {
+      setVerificationError('Paste the full verification code from your email.');
+      return;
+    }
+    setVerificationError('');
+    setIsVerifying(true);
+    try {
+      const response = await fetch(`${API_URL.replace(/\/$/, '')}/auth/verify-email`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: verificationCode.trim().toLowerCase() }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) throw new Error(result.error || 'Unable to verify your email.');
+      setVerificationMessage(result.data?.message || 'Email verified. You can now sign in.');
+      setVerificationCode('');
+    } catch (caughtError) {
+      setVerificationError(caughtError instanceof Error ? caughtError.message : 'Unable to verify your email.');
+    } finally {
+      setIsVerifying(false);
+    }
+  }
+
+  async function requestPasswordReset(event) {
+    event.preventDefault();
+    if (!API_URL) {
+      setRecoveryError('VITE_API_URL is not configured.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recoveryEmail.trim())) {
+      setRecoveryError('Enter a valid email address.');
+      return;
+    }
+
+    setRecoveryError('');
+    setIsRecovering(true);
+    try {
+      const response = await fetch(`${API_URL.replace(/\/$/, '')}/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: recoveryEmail.trim() }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || 'Unable to send reset instructions.');
+      }
+      setRecoveryMessage(result.data?.message || 'Check your inbox and spam folder for password reset instructions.');
+      setRecoveryStep('reset');
+    } catch (caughtError) {
+      setRecoveryError(caughtError instanceof Error ? caughtError.message : 'Unable to send reset instructions.');
+    } finally {
+      setIsRecovering(false);
+    }
+  }
+
+  async function resetPassword(event) {
+    event.preventDefault();
+    if (!API_URL) {
+      setRecoveryError('VITE_API_URL is not configured.');
+      return;
+    }
+    if (!/^[a-f0-9]{64}$/.test(resetCode.trim())) {
+      setRecoveryError('Paste the full reset code from your email.');
+      return;
+    }
+    if (newPassword.trim().length < 6) {
+      setRecoveryError('Use a password with at least 6 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setRecoveryError('The passwords do not match.');
+      return;
+    }
+
+    setRecoveryError('');
+    setIsRecovering(true);
+    try {
+      const response = await fetch(`${API_URL.replace(/\/$/, '')}/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: resetCode.trim(), password: newPassword }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || 'Unable to reset your password.');
+      }
+      setRecoveryMessage(result.data?.message || 'Password updated. Sign in with your new password.');
+      setRecoveryStep('complete');
+      setResetCode('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (caughtError) {
+      setRecoveryError(caughtError instanceof Error ? caughtError.message : 'Unable to reset your password.');
+    } finally {
+      setIsRecovering(false);
+    }
+  }
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -69,7 +243,52 @@ export default function Login() {
     <main className="login-page">
       <section className="login-sheet" aria-labelledby="login-title">
         <img alt="ResiKlean logo" className="login-logo" src={logo} width="1125" height="340" />
-        <form className="login-form" onSubmit={handleSubmit} aria-busy={isSubmitting}>
+        {verificationMode ? <form className="login-form login-recovery-form" onSubmit={verifyEmail} aria-busy={isVerifying}>
+          <div className="login-heading"><p className="login-eyebrow">ACCOUNT ACTIVATION</p><h1 id="login-title">Verify your email</h1><p>Admin-created accounts must verify their inbox before signing in or using password recovery.</p></div>
+          <div className="login-fields">
+            <div className="login-field"><label htmlFor="verification-email">Email address</label><div className={`login-input-wrap${verificationError ? ' has-error' : ''}`}><FieldIcon type="mail" /><input id="verification-email" type="email" value={verificationEmail} onChange={(event) => setVerificationEmail(event.target.value)} autoComplete="email" placeholder="you@example.com" required /></div></div>
+            <div className="login-field"><label htmlFor="verification-code">Verification code</label><div className={`login-input-wrap${verificationError ? ' has-error' : ''}`}><FieldIcon type="lock" /><input id="verification-code" type="text" value={verificationCode} onChange={(event) => setVerificationCode(event.target.value)} autoComplete="one-time-code" autoCapitalize="none" placeholder="Paste the code from your email" required /></div></div>
+          </div>
+          {verificationError ? <p className="login-error" role="alert">{verificationError}</p> : null}
+          {verificationMessage ? <p className="login-recovery-message" role="status">{verificationMessage}</p> : null}
+          <Button variant="tertiary" className="login-submit" type="submit" isDisabled={isVerifying}>{isVerifying ? 'Verifying...' : 'Verify email'}</Button>
+          <Button variant="tertiary" className="login-recovery-link" type="button" isDisabled={isVerifying} onPress={resendVerification}>{isVerifying ? 'Please wait...' : 'Resend verification email'}</Button>
+          <Button variant="tertiary" className="login-recovery-back" type="button" onPress={closeVerification}>Back to sign in</Button>
+        </form> : recoveryMode ? <form className="login-form login-recovery-form" onSubmit={recoveryStep === 'request' ? requestPasswordReset : resetPassword} aria-busy={isRecovering}>
+          <div className="login-heading">
+            <p className="login-eyebrow">ACCOUNT RECOVERY</p>
+            <h1 id="login-title">{recoveryStep === 'complete' ? 'Password updated' : 'Reset password'}</h1>
+            <p>{recoveryStep === 'request' ? 'Enter your registered email to receive password reset instructions.' : recoveryStep === 'reset' ? 'Paste the reset code from your email and choose a new password.' : 'Sign in with your new password.'}</p>
+          </div>
+
+          {recoveryStep === 'request' ? <div className="login-fields">
+            <div className="login-field">
+              <label htmlFor="recovery-email">Email address</label>
+              <div className={`login-input-wrap${recoveryError ? ' has-error' : ''}`}><FieldIcon type="mail" /><input id="recovery-email" name="email" type="email" value={recoveryEmail} onChange={(event) => setRecoveryEmail(event.target.value)} autoComplete="email" aria-describedby={recoveryError ? 'recovery-error' : undefined} placeholder="you@example.com" required /></div>
+            </div>
+          </div> : null}
+
+          {recoveryStep === 'reset' ? <div className="login-fields">
+            <div className="login-field">
+              <label htmlFor="reset-code">Reset code</label>
+              <div className={`login-input-wrap${recoveryError ? ' has-error' : ''}`}><FieldIcon type="lock" /><input id="reset-code" name="reset-code" type="text" value={resetCode} onChange={(event) => setResetCode(event.target.value)} autoComplete="one-time-code" autoCapitalize="none" aria-describedby={recoveryError ? 'recovery-error' : undefined} placeholder="Paste the code from your email" required /></div>
+            </div>
+            <div className="login-field">
+              <label htmlFor="new-password">New password</label>
+              <div className={`login-input-wrap login-password-wrap${recoveryError ? ' has-error' : ''}`}><FieldIcon type="lock" /><input id="new-password" name="new-password" type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} autoComplete="new-password" aria-describedby={recoveryError ? 'recovery-error' : undefined} placeholder="At least 6 characters" required minLength="6" /></div>
+            </div>
+            <div className="login-field">
+              <label htmlFor="confirm-password">Confirm new password</label>
+              <div className={`login-input-wrap login-password-wrap${recoveryError ? ' has-error' : ''}`}><FieldIcon type="lock" /><input id="confirm-password" name="confirm-password" type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" aria-describedby={recoveryError ? 'recovery-error' : undefined} placeholder="Re-enter your new password" required minLength="6" /></div>
+            </div>
+          </div> : null}
+
+          {recoveryError ? <p className="login-error" id="recovery-error" role="alert">{recoveryError}</p> : null}
+          {recoveryMessage ? <p className="login-recovery-message" role="status">{recoveryMessage}</p> : null}
+          {recoveryStep !== 'complete' ? <Button variant="tertiary" className="login-submit" type="submit" isDisabled={isRecovering}>{isRecovering ? recoveryStep === 'request' ? 'Sending...' : 'Updating...' : recoveryStep === 'request' ? 'Send reset instructions' : 'Reset password'}</Button> : null}
+          {recoveryStep === 'reset' ? <Button variant="tertiary" className="login-recovery-link" type="button" isDisabled={isRecovering} onPress={() => { setRecoveryStep('request'); setRecoveryError(''); }}>Request a new code</Button> : null}
+          <Button variant="tertiary" className="login-recovery-back" type="button" onPress={closeRecovery}>Back to sign in</Button>
+        </form> : <form className="login-form" onSubmit={handleSubmit} aria-busy={isSubmitting}>
         <div className="login-heading">
           <p className="login-eyebrow">ADMIN PORTAL</p>
           <h1 id="login-title">Welcome back</h1>
@@ -89,8 +308,9 @@ export default function Login() {
 
         {error ? <p className="login-error" id="login-error" role="alert">{error}</p> : null}
         <Button variant="tertiary" id="login-submit" className="login-submit" type="submit" isDisabled={isSubmitting}>{isSubmitting ? 'Signing in…' : <><span>Sign in</span><svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M5 12h14m-6-6 6 6-6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg></>}</Button>
+        <Button variant="tertiary" className="login-recovery-link" id="forgot-password-link" type="button" onPress={openRecovery}>Forgot password?</Button>
         <p className="login-note"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6l8-3Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" /><path d="m8 12 3 3 5-6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg><span>Secure access for authorized SWMO administrators</span></p>
-        </form>
+        </form>}
         <footer className="login-footer">Naga City Solid Waste Management</footer>
       </section>
       <aside className="login-art" aria-hidden="true">
