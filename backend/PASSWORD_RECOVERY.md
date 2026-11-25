@@ -35,3 +35,32 @@ No database migration or account deletion is needed. Recovery adds optional fiel
 Run `npm test -- --runInBand tests/passwordRecovery.test.js tests/localAuthRegression.test.js tests/googleRegistration.test.js tests/authPasswordUpdate.test.js tests/profilePhotoUpdate.test.js` from `backend`.
 
 Before releasing, use a test account to request an actual Gmail message, open the link on an installed app, and try the copy/paste fallback. Confirm the new password works, the old one fails, and the used code fails. Also try an expired code. Automated tests use mocked SMTP and database operations and do not send email or modify real accounts.
+
+## Render Free: use Gmail API over HTTPS
+
+Render Free blocks outbound SMTP on ports 25, 465, and 587. The Gmail SMTP setup above therefore needs a host that permits SMTP. For Render Free, deploy the Gmail API sender and set these variables in the backend service's Environment settings:
+
+```env
+MAIL_PROVIDER=gmail-api
+GMAIL_SENDER=your-resiklean-sender@gmail.com
+GMAIL_CLIENT_ID=your-sender-oauth-client-id
+GMAIL_CLIENT_SECRET=your-sender-oauth-client-secret
+GMAIL_REFRESH_TOKEN=your-sender-refresh-token
+RESET_PASSWORD_URL=resiklean://reset-password
+VERIFY_EMAIL_URL=resiklean://verify-email
+```
+
+`MAIL_FROM` is optional; if set, use the authorized sender address or its configured Gmail alias. SMTP credentials are not required with `MAIL_PROVIDER=gmail-api`. Password recovery and admin-account verification both use this sender. Resident Google login still uses its existing client IDs and scopes.
+
+### Authorize the sender once
+
+1. In Google Cloud, enable the Gmail API and configure the OAuth consent screen for a separate sender project/client. Keep the existing Google sign-in configuration unchanged.
+2. Create a Web application OAuth client with `https://developers.google.com/oauthplayground` as an authorized redirect URI.
+3. Open Google's OAuth Playground. In its settings, enable **Use your own OAuth credentials**, enter the sender client ID/secret, and select offline access.
+4. Authorize only `https://www.googleapis.com/auth/gmail.send`, signing in as the sender Gmail account. Exchange the authorization code for tokens.
+5. Save the refresh token, client ID, client secret, and sender address directly in Render's secret environment settings. Never paste them into chat, source files, logs, or mobile environment variables. Remove the Playground redirect URI after obtaining the token.
+6. Save/redeploy the backend. Request a reset for an existing test account and confirm inbox delivery and successful reset. The implementation tests mock delivery; they do not prove live authorization or delivery.
+
+An external OAuth project in Testing can issue refresh tokens that expire after seven days. Configure the appropriate production audience and meet Google's consent/verification requirements before relying on this for live recovery. Revoked/expired sender authorization requires a new refresh token.
+
+References: [Render Free restrictions](https://render.com/docs/free), [Gmail sending API](https://developers.google.com/workspace/gmail/api/guides/sending), [Google OAuth Playground](https://developers.google.com/oauthplayground/), [OAuth token expiration](https://developers.google.com/identity/protocols/oauth2#expiration).

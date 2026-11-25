@@ -166,6 +166,20 @@ export default function SignupScreen() {
     setIsSubmitting(true);
 
     try {
+      // Google has already authenticated this account. Set its password through
+      // the password endpoint before saving the remaining profile fields.
+      const { response: passwordResponse, payload: passwordResult } = await requestJson<RegisterResponse>(`${API_URL.replace(/\/$/, '')}/auth/change-password`, {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${googleToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ newPassword: password.trim() }),
+      });
+      if (!passwordResponse.ok || !passwordResult.success) {
+        throw new Error(passwordResult.error || passwordResult.errors?.[0]?.msg || 'Unable to set your password. Please try again.');
+      }
+
       const { response, payload: result } = await requestJson<RegisterResponse>(`${API_URL.replace(/\/$/, '')}/auth/me`, {
         method: 'PATCH',
         headers: {
@@ -175,7 +189,6 @@ export default function SignupScreen() {
         body: JSON.stringify({
           name: name.trim(),
           phone: phone.trim(),
-          password: password.trim(),
           location,
           barangay: location,
         }),
