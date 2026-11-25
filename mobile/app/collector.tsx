@@ -1,3 +1,5 @@
+import { darkPalette } from '@/constants/mobile-palette';
+import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { PhoneNotificationControls } from '@/components/phone-notification-controls';
 import { DriverRouteLayers, DriverStopLayers } from '@/components/driver-map-layers';
 import { buildMapStops } from '@/lib/driver-map-presentation';
@@ -285,6 +287,7 @@ function formatStorage(bytes: number) {
 }
 
 function ShiftPills({ hasRoute, shift }: { hasRoute: boolean; shift?: AccountUser['shift'] }) {
+  const styles = useStyles();
   return (
     <View style={styles.shiftPills}>
       <View style={styles.shiftPill}><Text style={styles.shiftPillText}>{displayShift(shift)}</Text></View>
@@ -294,6 +297,7 @@ function ShiftPills({ hasRoute, shift }: { hasRoute: boolean; shift?: AccountUse
 }
 
 function SyncBadge({ hasError, isLoading }: { hasError: boolean; isLoading: boolean }) {
+  const styles = useStyles();
   const label = hasError ? 'Refresh failed' : isLoading ? 'Syncing…' : 'Live data';
   const icon = hasError ? 'alert-circle' : isLoading ? 'refresh-cw' : 'wifi';
   const color = hasError ? '#ffb4a8' : '#f1db5d';
@@ -302,6 +306,7 @@ function SyncBadge({ hasError, isLoading }: { hasError: boolean; isLoading: bool
 }
 
 function StandardHeader({ barangay, hasError, hasRoute, isLoading, shift }: { barangay: string; hasError: boolean; hasRoute: boolean; isLoading: boolean; shift?: AccountUser['shift'] }) {
+  const styles = useStyles();
   const insets = useSafeAreaInsets();
 
   return (
@@ -316,6 +321,7 @@ function StandardHeader({ barangay, hasError, hasRoute, isLoading, shift }: { ba
 }
 
 function HistoryHeader({ hasError, isLoading, route, shift }: { hasError: boolean; isLoading: boolean; route: DriverRoute | null; shift?: AccountUser['shift'] }) {
+  const styles = useStyles();
   const insets = useSafeAreaInsets();
   const stopNames = route?.stops.slice(0, 3).map((stop) => stop.name).join(', ') || 'No collection route scheduled today';
 
@@ -336,6 +342,7 @@ function HistoryHeader({ hasError, isLoading, route, shift }: { hasError: boolea
 
 // Decorative background only; no route or sync state lives in this component.
 function CollectorGradient() {
+  const styles = useStyles();
   return <>
     <LinearGradient pointerEvents="none" colors={['#24846E', '#0D2E27']} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={styles.cardGradient} />
     <View pointerEvents="none" style={styles.cardGradientShade} />
@@ -343,6 +350,8 @@ function CollectorGradient() {
 }
 
 function BottomNavigation({ activeTab, onChange }: { activeTab: CollectorTab; onChange: (tab: CollectorTab) => void }) {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   const insets = useSafeAreaInsets();
   const appTheme = useAppTheme();
   const isDark = appTheme === 'dark';
@@ -358,7 +367,7 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: CollectorTab; on
       {pill.indicator}
       {tabs.map((tab) => {
         const active = activeTab === tab.key;
-        return <Pressable motionDisabled onLayout={(event) => pill.itemLayout(tab.key, event)} accessibilityRole="tab" accessibilityState={{ selected: active }} key={tab.key} onPress={() => onChange(tab.key)} style={styles.navItem}><View onLayout={(event) => pill.iconLayout(tab.key, event)} collapsable={false} style={styles.navIconPill}><Feather color={active ? (isDark ? '#85DCB0' : '#086B42') : (isDark ? '#B4C4BB' : '#5A6761')} name={tab.icon} size={21} /></View><Text numberOfLines={1} adjustsFontSizeToFit style={[styles.navText, isDark && { color: '#B4C4BB' }, active && (isDark ? { color: '#85DCB0' } : styles.navTextActive)]}>{tab.label}</Text></Pressable>;
+        return <Pressable motionDisabled onLayout={(event) => pill.itemLayout(tab.key, event)} accessibilityRole="tab" accessibilityState={{ selected: active }} key={tab.key} onPress={() => onChange(tab.key)} style={styles.navItem}><View onLayout={(event) => pill.iconLayout(tab.key, event)} collapsable={false} style={styles.navIconPill}><Feather color={active ? (isDark ? '#85DCB0' : themeColor('#086B42', darkPalette.accent)) : (isDark ? '#B4C4BB' : themeColor('#5A6761', darkPalette.muted))} name={tab.icon} size={21} /></View><Text numberOfLines={1} adjustsFontSizeToFit style={[styles.navText, isDark && { color: '#B4C4BB' }, active && (isDark ? { color: '#85DCB0' } : styles.navTextActive)]}>{tab.label}</Text></Pressable>;
       })}
     </View>
   );
@@ -380,6 +389,8 @@ function HistoryMapCamera({ center, zoom, group }: { center: [number, number] | 
 }
 
 function StreetRow({ street, last = false }: { street: Street; last?: boolean }) {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   const collected = street.status === 'Collected';
   const statusLabel = street.flaggedForReview ? 'Collected · Review' : street.status;
   return (
@@ -387,7 +398,7 @@ function StreetRow({ street, last = false }: { street: Street; last?: boolean })
       <View style={styles.timelineRail}>
         {!last && <View style={[styles.timelineLine, collected && !street.flaggedForReview && styles.timelineLineCollected]} />}
         <View style={[styles.streetMarker, street.flaggedForReview ? styles.reviewMarker : collected ? styles.collectedMarker : styles.notCollectedMarker]}>
-          {street.flaggedForReview ? <Feather name="flag" color="#5C3B00" size={12} /> : collected ? <Feather name="check" color="#ffffff" size={14} /> : null}
+          {street.flaggedForReview ? <Feather name="flag" color={themeColor("#5C3B00", darkPalette.warning)} size={12} /> : collected ? <Feather name="check" color="#ffffff" size={14} /> : null}
         </View>
       </View>
       <View style={styles.streetInfo}>
@@ -404,12 +415,16 @@ function StreetRow({ street, last = false }: { street: Street; last?: boolean })
 }
 
 function AccountDetail({ label, value }: { label: string; value: string }) {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   const isDarkTheme = useAppTheme() === 'dark';
   const icons: Record<string, React.ComponentProps<typeof Feather>['name']> = { 'Employee ID': 'credit-card', Contact: 'phone', Email: 'mail', Shift: 'clock', 'Assigned route': 'git-branch', 'Assigned truck': 'truck' };
-  return <View style={[styles.accountRow, isDarkTheme && { backgroundColor: '#192A22' }]}><View style={styles.detailIconBadge}><Feather name={icons[label]} size={20} color="#0A7F4F" /></View><View style={styles.flexText}><Text style={[styles.accountLabel, isDarkTheme && { color: '#B4C4BB' }]}>{label}</Text><Text style={[styles.accountValue, isDarkTheme && { color: '#F1F6F3' }, value === 'Not provided' && styles.placeholderValue]}>{value}</Text></View></View>;
+  return <View style={[styles.accountRow, isDarkTheme && { backgroundColor: '#192A22' }]}><View style={styles.detailIconBadge}><Feather name={icons[label]} size={20} color={themeColor("#0A7F4F", darkPalette.accent)} /></View><View style={styles.flexText}><Text style={[styles.accountLabel, isDarkTheme && { color: '#B4C4BB' }]}>{label}</Text><Text style={[styles.accountValue, isDarkTheme && { color: '#F1F6F3' }, value === 'Not provided' && styles.placeholderValue]}>{value}</Text></View></View>;
 }
 
 export default function CollectorScreen() {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   const appTheme = useAppTheme();
   const isDarkTheme = appTheme === 'dark';
   const networkRevision = useNetworkRecovery();
@@ -1629,7 +1644,7 @@ export default function CollectorScreen() {
         {MAPBOX_ACCESS_TOKEN ? (
           isOpeningProofCamera ? (
             <View style={styles.mapPlaceholderLabel}>
-              <ActivityIndicator color="#0A7F4F" size="small" />
+              <ActivityIndicator color={themeColor("#0A7F4F", darkPalette.accent)} size="small" />
               <Text style={styles.mapPlaceholderText}>Map paused while camera is open</Text>
             </View>
           ) : (
@@ -1677,7 +1692,7 @@ export default function CollectorScreen() {
           )
         ) : (
           <View style={styles.mapPlaceholderLabel}>
-            <Feather color="#c05d36" name="alert-circle" size={17} />
+            <Feather color={themeColor("#c05d36", darkPalette.warning)} name="alert-circle" size={17} />
             <Text style={styles.mapPlaceholderText}>Mapbox token is missing</Text>
           </View>
         )}
@@ -1688,18 +1703,18 @@ export default function CollectorScreen() {
             accessibilityRole="image"
             style={[styles.offlineMapBadge, { top: Math.max(insets.top + 16, 52) }]}
           >
-            <Feather color="#c05d36" name="wifi-off" size={17} />
+            <Feather color={themeColor("#c05d36", darkPalette.warning)} name="wifi-off" size={17} />
           </View>
         )}
         {MAPBOX_ACCESS_TOKEN && !routeSkeleton.pending && !assignedRoute && (
           <View style={styles.mapPlaceholderLabel}>
-            <Feather color={loadError ? '#c05d36' : '#4d7e69'} name={loadError ? 'alert-circle' : 'map'} size={17} />
+            <Feather color={loadError ? themeColor('#c05d36', darkPalette.warning) : themeColor('#4d7e69', darkPalette.muted)} name={loadError ? 'alert-circle' : 'map'} size={17} />
             <Text style={styles.mapPlaceholderText}>{loadError || 'No route is scheduled for today.'}</Text>
           </View>
         )}
         {MAPBOX_ACCESS_TOKEN && !routeSkeleton.pending && assignedRoute && routeStops.length === 0 && (
           <View style={styles.mapPlaceholderLabel}>
-            <Feather color="#c77d10" name="map-pin" size={17} />
+            <Feather color={themeColor("#c77d10", darkPalette.warning)} name="map-pin" size={17} />
             <Text style={styles.mapPlaceholderText}>No stops configured for this route.</Text>
           </View>
         )}
@@ -1707,7 +1722,7 @@ export default function CollectorScreen() {
           <View style={styles.geofenceCard}>
             <View style={styles.geofenceHeader}>
               <View style={styles.geofenceStatusRow}>
-                <Feather color={routePresence.enabled && routePresence.state === 'on_route' ? '#07815f' : routePresence.enabled ? '#c77d10' : '#68776e'} name={routePresence.enabled ? 'navigation' : 'map-pin'} size={17} />
+                <Feather color={routePresence.enabled && routePresence.state === 'on_route' ? themeColor('#07815f', darkPalette.accent) : routePresence.enabled ? themeColor('#c77d10', darkPalette.warning) : themeColor('#68776e', darkPalette.muted)} name={routePresence.enabled ? 'navigation' : 'map-pin'} size={17} />
                 <View style={styles.geofenceTextWrap}>
                   <Text style={styles.geofenceTitle}>{monitoringTitle}</Text>
                   <Text style={styles.geofenceCaption}>{monitoringCaption}</Text>
@@ -1724,7 +1739,7 @@ export default function CollectorScreen() {
                 onPress={() => void (routePresence.enabled ? endTrip() : enableBackgroundGeofencing())}
                 style={[styles.tripButton, routePresence.enabled && styles.tripEndButton, (isUpdatingGeofence || (!routePresence.enabled && !monitoringEligible)) && {opacity:0.5}]}
               >
-                <Text style={[styles.tripButtonText, routePresence.enabled && {color:'#086B42'}]}>{isUpdatingGeofence ? 'Please wait...' : routePresence.enabled ? 'End trip' : 'Start trip'}</Text>
+                <Text style={[styles.tripButtonText, routePresence.enabled && {color:themeColor('#086B42', darkPalette.accent)}]}>{isUpdatingGeofence ? 'Please wait...' : routePresence.enabled ? 'End trip' : 'Start trip'}</Text>
               </Pressable>
             </View>
             <PhoneNotificationControls role="driver" tracking={routePresence.enabled} compact />
@@ -1764,7 +1779,7 @@ export default function CollectorScreen() {
         )}
         {complaintMessage ? (
           <ToastMotion style={styles.complaintToast}>
-            <Feather color="#07815f" name="check-circle" size={15} />
+            <Feather color={themeColor("#07815f", darkPalette.accent)} name="check-circle" size={15} />
             <Text style={styles.complaintToastText}>{complaintMessage}</Text>
           </ToastMotion>
         ) : null}
@@ -1779,14 +1794,14 @@ export default function CollectorScreen() {
                     <Text style={styles.complaintSheetTitle}>Collection request</Text>
                   </View>
                   <Pressable accessibilityLabel="Close complaint" onPress={() => setSelectedComplaint(null)} style={styles.complaintCloseButton}>
-                    <Feather color="#314238" name="x" size={20} />
+                    <Feather color={themeColor("#314238", darkPalette.text)} name="x" size={20} />
                   </Pressable>
                 </View>
                 <ScrollView contentContainerStyle={styles.complaintSheetContent} showsVerticalScrollIndicator={false}>
                   {closingComplaint.photoUrl ? <Image accessibilityLabel="Resident complaint photo" source={{ uri: closingComplaint.photoUrl }} style={styles.complaintPhoto} /> : null}
                   <Text style={styles.complaintDescription}>{closingComplaint.description || 'Resident requested collection at this location.'}</Text>
-                  <View style={styles.complaintDetailRow}><Feather color="#07815f" name="map-pin" size={16} /><View style={styles.complaintDetailText}><Text style={styles.complaintDetailLabel}>Exact request location</Text><Text style={styles.complaintDetailValue}>{Number(closingComplaint.photoMetadata?.latitude).toFixed(6)}, {Number(closingComplaint.photoMetadata?.longitude).toFixed(6)}</Text><Text style={styles.complaintDetailCaption}>{closingComplaint.barangay || 'Location captured from resident photo'}</Text></View></View>
-                  <View style={styles.complaintDetailRow}><Feather color="#07815f" name="clock" size={16} /><View style={styles.complaintDetailText}><Text style={styles.complaintDetailLabel}>Submitted</Text><Text style={styles.complaintDetailValue}>{formatTime(closingComplaint.createdAt)}</Text><Text style={styles.complaintDetailCaption}>{closingComplaint.photoMetadata?.capturedAt ? `Photo captured ${formatTime(closingComplaint.photoMetadata.capturedAt)}` : 'Photo capture time unavailable'}</Text></View></View>
+                  <View style={styles.complaintDetailRow}><Feather color={themeColor("#07815f", darkPalette.accent)} name="map-pin" size={16} /><View style={styles.complaintDetailText}><Text style={styles.complaintDetailLabel}>Exact request location</Text><Text style={styles.complaintDetailValue}>{Number(closingComplaint.photoMetadata?.latitude).toFixed(6)}, {Number(closingComplaint.photoMetadata?.longitude).toFixed(6)}</Text><Text style={styles.complaintDetailCaption}>{closingComplaint.barangay || 'Location captured from resident photo'}</Text></View></View>
+                  <View style={styles.complaintDetailRow}><Feather color={themeColor("#07815f", darkPalette.accent)} name="clock" size={16} /><View style={styles.complaintDetailText}><Text style={styles.complaintDetailLabel}>Submitted</Text><Text style={styles.complaintDetailValue}>{formatTime(closingComplaint.createdAt)}</Text><Text style={styles.complaintDetailCaption}>{closingComplaint.photoMetadata?.capturedAt ? `Photo captured ${formatTime(closingComplaint.photoMetadata.capturedAt)}` : 'Photo capture time unavailable'}</Text></View></View>
                   <Pressable
                     disabled={isResolvingComplaint || isOpeningProofCamera}
                     onPress={() => void resolveSelectedComplaint()}
@@ -1813,7 +1828,7 @@ export default function CollectorScreen() {
           <View style={styles.resolveSuccessBackdrop}>
             <View style={styles.resolveSuccessCard}>
               <View style={styles.resolveSuccessIcon}>
-                <Feather color="#07815f" name="check" size={25} />
+                <Feather color={themeColor("#07815f", darkPalette.accent)} name="check" size={25} />
               </View>
               <Text style={styles.resolveSuccessTitle}>Request resolved</Text>
               <Text style={styles.resolveSuccessMessage}>The proof photo was uploaded successfully.</Text>
@@ -1842,7 +1857,7 @@ export default function CollectorScreen() {
             <SkeletonRegion state={routeSkeleton} placeholder={<SkeletonRows kind="stop" count={6} />}>
             {todayStreets.length ? visibleTodayStreets.map((street, index) => <RevealRow key={street.id} animate={revealStops} index={index}><StreetRow street={street} last={index === visibleTodayStreets.length - 1} /></RevealRow>) : (
               <View style={styles.emptyCard}>
-                <Feather color="#7d8c84" name="map-pin" size={18} />
+                <Feather color={themeColor("#7d8c84", darkPalette.muted)} name="map-pin" size={18} />
                 <Text style={styles.emptyStateText}>No stops have been configured for this route yet.</Text>
               </View>
             )}
@@ -1857,7 +1872,7 @@ export default function CollectorScreen() {
                 style={styles.stopsToggle}
               >
                 <Text style={styles.stopsToggleText}>{showAllStops ? 'Show fewer' : `View all ${todayStreets.length} stops`}</Text>
-                <MotionChevron expanded={showAllStops}><Feather name="chevron-down" color="#086B42" size={20} /></MotionChevron>
+                <MotionChevron expanded={showAllStops}><Feather name="chevron-down" color={themeColor("#086B42", darkPalette.accent)} size={20} /></MotionChevron>
               </Pressable>
             )}
           </View>
@@ -1867,7 +1882,7 @@ export default function CollectorScreen() {
             <Text style={styles.sectionHeading}>PAST COLLECTIONS</Text>
             {historyGroups.some(group => group.pendingSync) ? <Pressable accessibilityRole="button" disabled={isSyncingTrails} onPress={() => void syncSavedTrails()} style={styles.syncButton}><Text style={styles.syncButtonText}>{isSyncingTrails ? 'Syncing...' : 'Sync GPS'}</Text></Pressable> : null}
           </View>
-          {historyLoading && historyGroups.length > 0 ? <ActivityIndicator accessibilityLabel="Loading" color="#0A7F4F" /> : null}
+          {historyLoading && historyGroups.length > 0 ? <ActivityIndicator accessibilityLabel="Loading" color={themeColor("#0A7F4F", darkPalette.accent)} /> : null}
           <SkeletonRegion state={historySkeleton} placeholder={<SkeletonRows kind="history" count={3} />}>
           {historyGroups.length ? visibleHistoryGroups.map((group, index) => (
             <RevealRow key={group.id} animate={revealHistory} index={index}>
@@ -1906,7 +1921,7 @@ export default function CollectorScreen() {
                     </Mapbox.MapView>
                   ) : (
                     <View style={styles.historyMapFallback}>
-                      <Feather color="#14a87d" name="map" size={20} />
+                      <Feather color={themeColor("#14a87d", darkPalette.accent)} name="map" size={20} />
                       <Text style={styles.historyMapFallbackText}>Route map</Text>
                     </View>
                   )}
@@ -1918,16 +1933,16 @@ export default function CollectorScreen() {
                   <View style={styles.historyCardMetricRow}>
                     <Text style={styles.historyCardDistance}>{group.distanceMi.toFixed(1)} mi</Text>
                     <View style={styles.historyCardPillRow}>
-                      <View style={styles.historyMiniMetric}><Feather color="#8d9a93" name="trending-up" size={9} /><Text style={styles.historyMiniMetricText}>{group.elevationGainFt} ft</Text></View>
-                      <View style={styles.historyMiniMetric}><Feather color="#8d9a93" name="trending-down" size={9} /><Text style={styles.historyMiniMetricText}>{group.elevationLossFt} ft</Text></View>
+                      <View style={styles.historyMiniMetric}><Feather color={themeColor("#8d9a93", darkPalette.muted)} name="trending-up" size={9} /><Text style={styles.historyMiniMetricText}>{group.elevationGainFt} ft</Text></View>
+                      <View style={styles.historyMiniMetric}><Feather color={themeColor("#8d9a93", darkPalette.muted)} name="trending-down" size={9} /><Text style={styles.historyMiniMetricText}>{group.elevationLossFt} ft</Text></View>
                     </View>
                   </View>
                 </View>
-                <Feather color="#5A6761" name="chevron-right" size={20} />
+                <Feather color={themeColor("#5A6761", darkPalette.muted)} name="chevron-right" size={20} />
               </View>
             </Pressable>
             </RevealRow>
-          )) : <View style={styles.emptyCard}><Feather color="#7d8c84" name="archive" size={18} /><Text style={styles.emptyStateText}>{historyLoadError || 'No past collections yet. After finishing your first collection, it will appear here.'}</Text></View>}
+          )) : <View style={styles.emptyCard}><Feather color={themeColor("#7d8c84", darkPalette.muted)} name="archive" size={18} /><Text style={styles.emptyStateText}>{historyLoadError || 'No past collections yet. After finishing your first collection, it will appear here.'}</Text></View>}
           </SkeletonRegion>
           {historyGroups.length > 3 && (
             <Pressable
@@ -1939,7 +1954,7 @@ export default function CollectorScreen() {
               style={styles.stopsToggle}
             >
               <Text style={styles.stopsToggleText}>{showAllPastCollections ? 'Show fewer' : `View all ${historyGroups.length} collections`}</Text>
-              <MotionChevron expanded={showAllPastCollections}><Feather name="chevron-down" color="#086B42" size={20} /></MotionChevron>
+              <MotionChevron expanded={showAllPastCollections}><Feather name="chevron-down" color={themeColor("#086B42", darkPalette.accent)} size={20} /></MotionChevron>
             </Pressable>
           )}
         </View>
@@ -1968,20 +1983,20 @@ export default function CollectorScreen() {
         </View>
         </SkeletonRegion>
         <View style={styles.profileSyncCard}>
-          <View style={styles.detailIconBadge}><Feather color={isOffline || loadError ? '#B3261E' : '#0A7F4F'} name={isOffline ? 'wifi-off' : loadError ? 'alert-circle' : 'wifi'} size={20} /></View>
+          <View style={styles.detailIconBadge}><Feather color={isOffline || loadError ? themeColor('#B3261E', darkPalette.danger) : themeColor('#0A7F4F', darkPalette.accent)} name={isOffline ? 'wifi-off' : loadError ? 'alert-circle' : 'wifi'} size={20} /></View>
           <View style={styles.syncCopy}><Text style={styles.syncBottomText}>{loadError || (isOffline ? 'Offline mode (using saved route)' : isLoading ? 'Refreshing driver data…' : 'Driver data is up to date')}</Text><Text style={styles.syncCount}>Needs sync · {pendingRouteLogs}</Text></View>
           <Pressable disabled={!session || isLoading} onPress={() => session && void loadDriverData(session.token, collectorId)} style={[styles.syncButton, (!session || isLoading) && styles.syncButtonDisabled]}><Text style={styles.syncButtonText}>{isLoading ? 'Refreshing' : 'Refresh'}</Text></Pressable>
         </View>
 
         {assignedRoute && <View style={[styles.offlineMapCard, styles.offlineMapCardAfterSync]}>
           <View style={styles.offlineMapRow}>
-            <View style={styles.detailIconBadge}><Feather name={offlineMap.downloaded ? 'check' : 'download'} size={20} color="#0A7F4F" /></View>
+            <View style={styles.detailIconBadge}><Feather name={offlineMap.downloaded ? 'check' : 'download'} size={20} color={themeColor("#0A7F4F", darkPalette.accent)} /></View>
             <View style={styles.offlineMapTextWrap}>
               <Text style={styles.offlineMapTitle}>{offlineMap.downloaded ? 'Map downloaded' : offlineMap.downloading ? `Downloading map - ${offlineMap.percentage}%` : 'Download route map'}</Text>
               <Text style={styles.offlineMapCaption}>{offlineMapMessage || (offlineMap.downloaded ? `${formatStorage(offlineMap.completedSizeBytes)} stored on this phone.` : 'Save this assigned route map for use without mobile data.')}</Text>
             </View>
             <Pressable accessibilityRole="button" accessibilityLabel={offlineMap.downloaded ? 'Route map downloaded for offline use' : 'Download route map'} accessibilityState={{ disabled: offlineMap.downloaded || isUpdatingOfflineMap || offlineMap.downloading }} disabled={offlineMap.downloaded || isUpdatingOfflineMap || offlineMap.downloading} onPress={() => void toggleOfflineMap()} style={[styles.offlineMapButton, offlineMap.downloaded && styles.offlineMapButtonDownloaded, (offlineMap.downloaded || isUpdatingOfflineMap || offlineMap.downloading) && styles.geofenceButtonDisabled]}>
-              <Feather color={offlineMap.downloaded ? '#086B42' : '#286349'} name={offlineMap.downloaded ? 'check-circle' : 'download'} size={16} />
+              <Feather color={offlineMap.downloaded ? themeColor('#086B42', darkPalette.accent) : themeColor('#286349', darkPalette.text)} name={offlineMap.downloaded ? 'check-circle' : 'download'} size={16} />
               <Text style={[styles.offlineMapButtonText, offlineMap.downloaded && styles.offlineMapButtonTextSaved]}>{offlineMap.downloaded ? 'Downloaded' : offlineMap.downloading ? 'Downloading…' : isUpdatingOfflineMap ? 'Working…' : 'Download'}</Text>
             </Pressable>
           </View>
@@ -1998,10 +2013,10 @@ export default function CollectorScreen() {
           </SkeletonRegion>
         </View>
 
-        <Pressable accessibilityRole="button" onPress={() => setEditingProfile(true)} style={[{ minHeight: 56, borderRadius: 16, backgroundColor: '#E3F4EB', flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, marginTop: 20 }, isDarkTheme && { backgroundColor: '#192A22' }]}><Feather name="edit-2" size={20} color={isDarkTheme ? '#85DCB0' : '#086B42'} /><Text style={{ color: isDarkTheme ? '#85DCB0' : '#086B42', fontSize: 16, fontWeight: '600' }}>Edit profile</Text></Pressable>
+        <Pressable accessibilityRole="button" onPress={() => setEditingProfile(true)} style={[{ minHeight: 56, borderRadius: 16, backgroundColor: themeColor('#E3F4EB', darkPalette.tint), flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, marginTop: 20 }, isDarkTheme && { backgroundColor: '#192A22' }]}><Feather name="edit-2" size={20} color={isDarkTheme ? '#85DCB0' : themeColor('#086B42', darkPalette.accent)} /><Text style={{ color: isDarkTheme ? '#85DCB0' : '#086B42', fontSize: 16, fontWeight: '600' }}>Edit profile</Text></Pressable>
         <ProfileSettingsRow onSignOut={completeSignOut} />
         <Pressable accessibilityRole="button" onPress={signOut} style={styles.signOutButton}>
-          <Feather color="#B3261E" name="log-out" size={20} />
+          <Feather color={themeColor("#B3261E", darkPalette.danger)} name="log-out" size={20} />
           <Text style={styles.signOutText}>Sign Out</Text>
         </Pressable>
       </ScrollView>
@@ -2044,7 +2059,7 @@ export default function CollectorScreen() {
                       </Mapbox.MapView>
                     ) : (
                       <View style={styles.segmentTrailPlaceholder}>
-                        <Feather color="#8d9a93" name="map" size={28} />
+                        <Feather color={themeColor("#8d9a93", darkPalette.muted)} name="map" size={28} />
                         <Text style={styles.segmentTrailCaption}>Route trail</Text>
                       </View>
                     ));
@@ -2061,7 +2076,7 @@ export default function CollectorScreen() {
         <SafeAreaView style={styles.historyDetailBackdrop}>
           <View style={styles.historyDetailSheet}>
             {isHistoryMapExpanded ? <View style={{ flex: 1, padding: 16, gap: 12 }}>
-              <Pressable accessibilityRole="button" accessibilityLabel="Back to route history report" onPress={() => setIsHistoryMapExpanded(false)} style={styles.offlineMapButton}><Feather name="arrow-left" size={20} color="#0A7F4F" /><Text>Back to report</Text></Pressable>
+              <Pressable accessibilityRole="button" accessibilityLabel="Back to route history report" onPress={() => setIsHistoryMapExpanded(false)} style={styles.offlineMapButton}><Feather name="arrow-left" size={20} color={themeColor("#0A7F4F", darkPalette.accent)} /><Text>Back to report</Text></Pressable>
               <Text style={styles.historySectionLabel}>{selectedHistoryGroup?.routeName || 'Recorded trip'}</Text>
               <View style={{ flex: 1, borderRadius: 20, overflow: 'hidden' }}>{renderHistoryTrailMap()}</View>
               <Text style={styles.segmentTrailCaption}>{selectedHistoryGroup?.pendingSync ? 'Saved on this phone; waiting to sync. ' : ''}{selectedHistoryGroup?.trailPath ? 'Red: recorded travel. ' : 'No GPS line was recorded for this trip. '}{selectedHistoryGroup?.routePath ? 'Dashed: assigned route. ' : 'No assigned route line is available. '}Pinch to zoom and drag to explore.</Text>
@@ -2075,10 +2090,10 @@ export default function CollectorScreen() {
                 <UploadSyncBadge status={selectedHistoryGroup?.pendingSync ? isSyncingTrails ? 'syncing' : selectedHistoryGroup?.syncFailed ? 'failed' : 'pending' : selectedHistoryGroup?.trailPath ? 'synced' : 'unknown'} label={selectedHistoryGroup?.pendingSync ? isSyncingTrails ? 'GPS syncing...' : selectedHistoryGroup?.syncFailed ? 'GPS upload failed - retry' : 'GPS waiting to sync' : selectedHistoryGroup?.trailPath ? 'GPS synced' : 'No GPS trail'} />
               </View>
               <Pressable accessibilityLabel="Close route history" onPress={() => { setIsHistoryMapExpanded(false); setIsHistoryDetailVisible(false); }} style={styles.historyDetailClose}>
-                <Feather color="#314238" name="x" size={20} />
+                <Feather color={themeColor("#314238", darkPalette.text)} name="x" size={20} />
               </Pressable>
             </View>
-              <View style={[styles.historyDetailSegment, isHistoryMapExpanded && { flex: 1 }]}><Pressable accessibilityRole="button" onPress={() => setIsHistoryMapExpanded(value => !value)} style={styles.offlineMapButton}><Feather name={isHistoryMapExpanded ? "minimize-2" : "maximize-2"} size={18} color="#0A7F4F" /><Text>{isHistoryMapExpanded ? "Back to report" : "View full map"}</Text></Pressable>
+              <View style={[styles.historyDetailSegment, isHistoryMapExpanded && { flex: 1 }]}><Pressable accessibilityRole="button" onPress={() => setIsHistoryMapExpanded(value => !value)} style={styles.offlineMapButton}><Feather name={isHistoryMapExpanded ? "minimize-2" : "maximize-2"} size={18} color={themeColor("#0A7F4F", darkPalette.accent)} /><Text>{isHistoryMapExpanded ? "Back to report" : "View full map"}</Text></Pressable>
                 <Text style={styles.historySectionLabel}>SEGMENT TRAIL</Text>
                 <View style={styles.segmentTrailPanel}>
                   <View style={[styles.segmentTrailMapWrap, isHistoryMapExpanded && { flex: 1 }]}>
@@ -2111,7 +2126,7 @@ export default function CollectorScreen() {
                     ) : null}
                     {(selectedHistoryGroup?.flagged ?? 0) > 0 ? (
                       <View style={styles.legendRow}>
-                        <Feather color="#c53030" name="flag" size={11} />
+                        <Feather color={themeColor("#c53030", darkPalette.danger)} name="flag" size={11} />
                         <Text style={styles.legendText}>Dwell: {(selectedHistoryGroup?.flagged ?? 0)} stop{(selectedHistoryGroup?.flagged ?? 0) === 1 ? '' : 's'} flagged for review</Text>
                       </View>
                     ) : null}
@@ -2243,7 +2258,7 @@ export default function CollectorScreen() {
         <View style={styles.finishRouteBackdrop}>
           <View style={styles.finishRouteCard}>
             <View style={[styles.finishRouteIcon, routeActionMessage?.kind === 'error' && styles.finishRouteIconError]}>
-              <Feather color={routeActionMessage?.kind === 'error' ? '#c43d4c' : '#07815f'} name={routeActionMessage?.kind === 'error' ? 'alert-circle' : 'check-circle'} size={22} />
+              <Feather color={routeActionMessage?.kind === 'error' ? themeColor('#c43d4c', darkPalette.danger) : themeColor('#07815f', darkPalette.accent)} name={routeActionMessage?.kind === 'error' ? 'alert-circle' : 'check-circle'} size={22} />
             </View>
             <Text style={styles.finishRouteTitle}>{routeActionMessage?.title}</Text>
             <Text style={styles.finishRouteMessage}>{routeActionMessage?.message}</Text>
@@ -2549,3 +2564,156 @@ const styles = StyleSheet.create({
   stopLogFlagText: { color: '#ffffff', fontSize: 8, fontWeight: '800' },
   stopLogMeta: { color: '#5A6761', fontSize: 12, marginTop: 4 },
 });
+
+// Explicit dark surface and foreground pairs; the light layout stays unchanged.
+const darkStyles = {
+  detailIconBadge: { backgroundColor: darkPalette.tint },
+  placeholderValue: { color: darkPalette.muted },
+  syncCount: { color: darkPalette.muted },
+  timelineLine: { backgroundColor: darkPalette.field },
+  reviewText: { color: darkPalette.warning },
+  sectionHeading: { color: darkPalette.text },
+  navIconPillActive: { backgroundColor: darkPalette.tint },
+  header: { backgroundColor: darkPalette.surface },
+  headerTitle: { color: darkPalette.text },
+  headerSubtitle: { color: darkPalette.muted },
+  safeArea: { backgroundColor: darkPalette.surface },
+  mapPlaceholder: { backgroundColor: darkPalette.field },
+  mapPlaceholderLabel: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  offlineMapBadge: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  mapPlaceholderText: { color: darkPalette.muted },
+  geofenceCard: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  geofenceTitle: { color: darkPalette.text },
+  geofenceCaption: { color: darkPalette.muted },
+  geofenceButtonEnabled: { backgroundColor: darkPalette.field, borderColor: darkPalette.border },
+  geofenceButtonTextEnabled: { color: darkPalette.text },
+  tripEndButton: { backgroundColor: darkPalette.tint },
+  monitoringSwitch: { backgroundColor: darkPalette.field },
+  monitoringSwitchThumb: { backgroundColor: darkPalette.surface },
+  geofenceQueueText: { color: darkPalette.warning },
+  capacityCylinderLabel: { color: darkPalette.text },
+  capacityFloatingCard: { backgroundColor: darkPalette.surface },
+  capacityCylinder: { borderColor: darkPalette.accent },
+  capacityCylinderWarning: { borderColor: darkPalette.warning },
+  capacityCylinderCritical: { borderColor: darkPalette.danger },
+  capacityCylinderTop: { borderBottomColor: darkPalette.accent },
+  capacityCylinderTopWarning: { borderBottomColor: darkPalette.warning },
+  capacityCylinderTopCritical: { borderBottomColor: darkPalette.danger },
+  capacityCylinderPercent: { color: darkPalette.text },
+  capacityNoLoadText: { color: darkPalette.text },
+  routeProgressLabel: { color: darkPalette.text },
+  complaintToast: { backgroundColor: darkPalette.tint, borderColor: darkPalette.border },
+  complaintToastText: { color: darkPalette.text },
+  complaintSheet: { backgroundColor: darkPalette.surface },
+  complaintSheetEyebrow: { color: darkPalette.accent },
+  complaintSheetTitle: { color: darkPalette.text },
+  complaintPhoto: { backgroundColor: darkPalette.field },
+  complaintDescription: { color: darkPalette.text },
+  complaintDetailRow: { borderTopColor: darkPalette.border },
+  complaintDetailLabel: { color: darkPalette.muted },
+  complaintDetailValue: { color: darkPalette.text },
+  complaintDetailCaption: { color: darkPalette.muted },
+  resolveSuccessCard: { backgroundColor: darkPalette.surface },
+  resolveSuccessIcon: { backgroundColor: darkPalette.tint },
+  resolveSuccessTitle: { color: darkPalette.text },
+  resolveSuccessMessage: { color: darkPalette.muted },
+  offlineMapCard: { backgroundColor: darkPalette.field },
+  offlineMapTitle: { color: darkPalette.text },
+  offlineMapCaption: { color: darkPalette.muted },
+  offlineMapButton: { backgroundColor: darkPalette.tint },
+  offlineMapButtonDownloaded: { backgroundColor: darkPalette.tint, borderColor: darkPalette.border },
+  offlineMapButtonText: { color: darkPalette.accent },
+  offlineMapButtonTextSaved: { color: darkPalette.accent },
+  offlineMapButtonTextDownloaded: { color: darkPalette.danger },
+  finishRouteCard: { backgroundColor: darkPalette.surface },
+  finishRouteIcon: { backgroundColor: darkPalette.tint },
+  finishRouteIconError: { backgroundColor: darkPalette.dangerTint },
+  finishRouteTitle: { color: darkPalette.text },
+  finishRouteMessage: { color: darkPalette.muted },
+  assignedLabel: { color: darkPalette.muted },
+  streetSubtitle: { color: darkPalette.muted },
+  todayStopsTitle: { color: darkPalette.text },
+  todayStopsCount: { color: darkPalette.accent },
+  stopsToggle: { backgroundColor: darkPalette.tint },
+  stopsToggleText: { color: darkPalette.accent },
+  dateLabel: { color: darkPalette.accent },
+  emptyStateText: { color: darkPalette.muted },
+  notCollectedMarker: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  reviewMarker: { backgroundColor: darkPalette.warningTint },
+  streetName: { color: darkPalette.text },
+  streetBarangay: { color: darkPalette.muted },
+  collectedPill: { backgroundColor: darkPalette.tint },
+  notCollectedPill: { backgroundColor: darkPalette.field },
+  streetTime: { color: darkPalette.muted },
+  collectedText: { color: darkPalette.accent },
+  notCollectedText: { color: darkPalette.muted },
+  avatar: { backgroundColor: darkPalette.tint },
+  avatarText: { color: darkPalette.accent },
+  collectorBarangay: { color: darkPalette.muted },
+  profileSyncCard: { backgroundColor: darkPalette.field },
+  profileSyncLabel: { color: darkPalette.text },
+  profileSyncNumber: { color: darkPalette.text },
+  accountCard: { backgroundColor: darkPalette.surface },
+  accountHeading: { color: darkPalette.text },
+  accountRow: { borderBottomColor: darkPalette.border },
+  accountLabel: { color: darkPalette.muted },
+  accountValue: { color: darkPalette.text },
+  signOutButton: { backgroundColor: darkPalette.dangerTint },
+  signOutText: { color: darkPalette.danger },
+  syncBottomBar: { backgroundColor: darkPalette.surface, borderTopColor: darkPalette.border },
+  syncBottomText: { color: darkPalette.text },
+  syncButton: { backgroundColor: darkPalette.tint },
+  syncButtonText: { color: darkPalette.accent },
+  bottomNav: { backgroundColor: darkPalette.surface, borderTopColor: darkPalette.border },
+  navText: { color: darkPalette.muted },
+  navTextActive: { color: darkPalette.accent },
+  emptyCard: { backgroundColor: darkPalette.field },
+  historyCard: { backgroundColor: darkPalette.field },
+  historyCardMap: { backgroundColor: darkPalette.tint },
+  historyMapFallbackText: { color: darkPalette.muted },
+  historyCardTitle: { color: darkPalette.text },
+  historyCardDate: { color: darkPalette.muted },
+  historyCardDistance: { color: darkPalette.accent },
+  historyMiniMetricText: { color: darkPalette.muted },
+  historyFlagOff: { backgroundColor: darkPalette.field },
+  greeneryPill: { backgroundColor: darkPalette.tint },
+  greeneryText: { color: darkPalette.accent },
+  historyNoMetricText: { color: darkPalette.muted },
+  historyTrailStartMarker: { borderColor: darkPalette.border },
+  historyTrailEndMarker: { backgroundColor: darkPalette.surface },
+  historyDetailBackdrop: { backgroundColor: darkPalette.surface },
+  historyDetailSheet: { backgroundColor: darkPalette.surface },
+  historyDetailEyebrow: { color: darkPalette.accent },
+  historyDetailTitle: { color: darkPalette.text },
+  historyDetailSubtitle: { color: darkPalette.muted },
+  historyDetailClose: { backgroundColor: darkPalette.field },
+  historySectionLabel: { color: darkPalette.text },
+  detailTable: { backgroundColor: darkPalette.field },
+  detailTableRef: { backgroundColor: darkPalette.field },
+  detailRow: { borderBottomColor: darkPalette.border },
+  detailRowTwoCol: { borderBottomColor: darkPalette.border },
+  detailLabel: { color: darkPalette.muted },
+  detailValue: { color: darkPalette.text },
+  detailValueMono: { color: darkPalette.text },
+  detailSubvalue: { color: darkPalette.muted },
+  detailValueRed: { color: darkPalette.danger },
+  detailValueGreen: { color: darkPalette.accent },
+  detailValueRedBold: { color: darkPalette.danger },
+  detailValueGreenBold: { color: darkPalette.accent },
+  segmentTrailMapWrap: { backgroundColor: darkPalette.field },
+  segmentTrailCaption: { color: darkPalette.muted },
+  segmentFigCaption: { color: darkPalette.muted },
+  legendText: { color: darkPalette.text },
+  trailExitDot: { borderColor: darkPalette.border },
+  trailStopDot: { borderColor: darkPalette.border },
+  trailEntryMarker: { borderColor: darkPalette.border },
+  trailExitMarker: { backgroundColor: darkPalette.surface },
+  trailExitMarkerText: { color: darkPalette.danger },
+  historyStopMarker: { borderColor: darkPalette.border },
+  stopLogCard: { backgroundColor: darkPalette.field },
+  stopLogName: { color: darkPalette.text },
+  stopLogMeta: { color: darkPalette.muted },
+};
+function useStyles() {
+  return useThemedStyles(styles, darkStyles);
+}

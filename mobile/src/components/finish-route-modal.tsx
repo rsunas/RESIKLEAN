@@ -1,3 +1,5 @@
+import { darkPalette } from '@/constants/mobile-palette';
+import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -9,6 +11,8 @@ import { ROUTE_FINISH_COUNTDOWN_SECONDS, startRouteFinishCountdown } from '@/lib
 export function FinishRouteModal({ visible, busy = false, onCancel, onConfirm }: {
   visible: boolean; busy?: boolean; onCancel: () => void; onConfirm: () => void;
 }) {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   const [seconds, setSeconds] = useState<number | null>(null);
   const cancelCountdown = useRef<(() => void) | null>(null);
   const callbacks = useRef({ onCancel, onConfirm, busy });
@@ -55,7 +59,7 @@ export function FinishRouteModal({ visible, busy = false, onCancel, onConfirm }:
     <SafeAreaView style={styles.backdrop}>
       <View accessibilityViewIsModal style={styles.card}>
         <ScrollView contentContainerStyle={styles.content}>
-          <View style={styles.icon}><Feather name="flag" size={24} color="#0A7F4F" /></View>
+          <View style={styles.icon}><Feather name="flag" size={24} color={themeColor("#0A7F4F", darkPalette.accent)} /></View>
           <Text style={styles.eyebrow}>END TODAY'S SHIFT</Text>
           <Text accessibilityRole="header" style={styles.title}>Finish route collection?</Text>
           <Text style={styles.message}>This ends your trip, closes today's route and submits your collection history to admin. Offline records will sync when you reconnect.</Text>
@@ -91,3 +95,17 @@ const styles = StyleSheet.create({
   cancelText: { color: '#086B42', fontSize: 14, fontWeight: '700', textAlign: 'center' },
   confirmText: { color: '#ffffff', fontSize: 14, fontWeight: '700', textAlign: 'center' },
 });
+
+// Explicit dark surface and foreground pairs; the light layout stays unchanged.
+const darkStyles = {
+  card: { backgroundColor: darkPalette.surface },
+  icon: { backgroundColor: darkPalette.tint },
+  eyebrow: { color: darkPalette.accent },
+  title: { color: darkPalette.text },
+  message: { color: darkPalette.muted },
+  cancel: { borderColor: darkPalette.border },
+  cancelText: { color: darkPalette.accent },
+};
+function useStyles() {
+  return useThemedStyles(styles, darkStyles);
+}

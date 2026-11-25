@@ -1,3 +1,5 @@
+import { darkPalette } from '@/constants/mobile-palette';
+import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { useCallback, useEffect, useState } from 'react';
 import { Modal, Platform, Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { Feather, MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-icons';
@@ -19,6 +21,7 @@ export function useSegregationGuide() {
 }
 
 function CategoryCard({ category, onPress }: { category: SegregationCategory; onPress: () => void }) {
+  const styles = useStyles();
   return <Pressable accessibilityRole="button" accessibilityLabel={`${category.title}, opens details`} onPress={onPress} style={({ pressed }) => [styles.cardPressable, pressed && styles.cardPressed]}>
     <LinearGradient colors={category.gradient} start={{ x: 0.2, y: 0 }} end={{ x: 0.8, y: 1 }} style={styles.categoryCard}>
       <View style={styles.cardTopRow}>
@@ -32,6 +35,8 @@ function CategoryCard({ category, onPress }: { category: SegregationCategory; on
 }
 
 function GuideItem({ id, category, excluded, width }: { id: GuideItemId; category: SegregationCategory; excluded?: boolean; width: number }) {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   const item = GUIDE_ITEMS[id];
   const photo = ITEM_IMAGES[id];
   return <View accessible accessibilityLabel={`${item.label}, ${excluded ? 'does not go' : 'goes'} in this bin`} style={[styles.item, { width }]}>
@@ -42,11 +47,12 @@ function GuideItem({ id, category, excluded, width }: { id: GuideItemId; categor
       </View>}
       {excluded ? <View style={styles.excludedBadge}><Feather name="x" size={15} color={UI.white} /></View> : null}
     </View>
-    <Text style={[styles.itemLabel, excluded && { color: UI.muted }]}>{item.label}</Text>
+    <Text style={[styles.itemLabel, excluded && { color: themeColor(UI.muted, darkPalette.muted) }]}>{item.label}</Text>
   </View>;
 }
 
 export function SegregationGuide({ selected: activeCategory, openGuide, closeGuide }: ReturnType<typeof useSegregationGuide>) {
+  const styles = useStyles();
   const selected = useClosingValue(activeCategory);
   const insets = useSafeAreaInsets();
   const { width, height, fontScale } = useWindowDimensions();
@@ -131,3 +137,18 @@ const styles = StyleSheet.create({
   tipStrip: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 14, borderLeftWidth: 4, borderTopLeftRadius: 4, borderBottomLeftRadius: 4, borderTopRightRadius: 14, borderBottomRightRadius: 14, backgroundColor: UI.tipSurface },
   tipText: { color: UI.ink, flex: 1, fontSize: UI.font.tip, fontWeight: '600' },
 });
+
+// Explicit dark surface and foreground pairs; the light layout stays unchanged.
+const darkStyles = {
+  sectionTitle: { color: darkPalette.text },
+  sectionSubtitle: { color: darkPalette.muted },
+  sheet: { backgroundColor: darkPalette.surface },
+  groupLabel: { color: darkPalette.text },
+  itemLabel: { color: darkPalette.text },
+  excludedBadge: { borderColor: darkPalette.border },
+  tipStrip: { backgroundColor: darkPalette.field },
+  tipText: { color: darkPalette.text },
+};
+function useStyles() {
+  return useThemedStyles(styles, darkStyles);
+}

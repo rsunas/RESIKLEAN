@@ -1,3 +1,5 @@
+import { darkPalette } from '@/constants/mobile-palette';
+import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { ResidentAvatar } from './resident-avatar';
 /**
  * ResidentSettingsModal
@@ -99,6 +101,7 @@ const DEFAULT_SETTINGS: UserSettings = {
 // ─── Section Header ───────────────────────────────────────────────────────────
 
 function SectionHeader({ label }: { label: string }) {
+  const ss = useSs();
   return <Text style={ss.sectionHeader}>{label}</Text>;
 }
 
@@ -123,6 +126,7 @@ function SettingRow({
   onPress?: () => void;
   isLast?: boolean;
 }) {
+  const ss = useSs();
   return (
     <Pressable
       accessibilityRole={onPress ? 'button' : 'none'}
@@ -151,13 +155,15 @@ function PreferenceTabs({ value, onChange, options }: {
   onChange: (value: string) => void;
   options: { key: string; label: string; icon?: 'sun' | 'moon' | 'smartphone'; flag?: string }[];
 }) {
+  const themeColor = useThemeColor();
+  const ss = useSs();
   return (
     <Tabs value={value} onValueChange={onChange} animation="disable-all">
       <Tabs.List style={ss.pillRow}>
         <Tabs.Indicator style={ss.pillIndicator} />
         {options.map((option) => (
           <Tabs.Trigger key={option.key} value={option.key} style={ss.pill}>
-            {option.icon ? <Feather accessible={false} name={option.icon} size={14} color={value === option.key ? '#086B42' : '#5A6761'} /> : null}
+            {option.icon ? <Feather accessible={false} name={option.icon} size={14} color={value === option.key ? themeColor('#086B42', darkPalette.accent) : themeColor('#5A6761', darkPalette.muted)} /> : null}
             {option.flag ? <Text style={ss.pillFlag}>{option.flag}</Text> : null}
             <Tabs.Label numberOfLines={1} adjustsFontSizeToFit style={[ss.pillText, value === option.key && ss.pillTextActive]}>{option.label}</Tabs.Label>
           </Tabs.Trigger>
@@ -192,8 +198,15 @@ function WasteGuideCard({
   accentColor: string;
   items: string[];
 }) {
+  const ss = useSs();
+  const themeColor = useThemeColor();
   const [expanded, setExpanded] = useState(false);
-  const categoryColor = ({ Biodegradable: '#0A7F4F', 'Non-Biodegradable': '#1A56C4', Recyclables: '#B45309', Hazardous: '#B3261E' } as Record<string, string>)[category] || color;
+  const categoryColor = ({
+    Biodegradable: themeColor('#0A7F4F', darkPalette.accent),
+    'Non-Biodegradable': themeColor('#1A56C4', darkPalette.blue),
+    Recyclables: themeColor('#B45309', darkPalette.warning),
+    Hazardous: themeColor('#B3261E', darkPalette.danger),
+  } as Record<string, string>)[category] || themeColor(color, darkPalette.accent);
   return (
     <Pressable
       accessibilityRole="button"
@@ -204,7 +217,7 @@ function WasteGuideCard({
       <View style={ss.wasteCardHeader}>
         <View style={[ss.wasteDot, { backgroundColor: categoryColor }]} />
         <Text style={[ss.wasteCategory, { color: categoryColor }]}>{category}</Text>
-        <MotionChevron expanded={expanded}><Feather color={color} name="chevron-down" size={15} /></MotionChevron>
+        <MotionChevron expanded={expanded}><Feather color={categoryColor} name="chevron-down" size={15} /></MotionChevron>
       </View>
       <AccordionBody expanded={expanded}>
         <View style={ss.wasteItems}>
@@ -223,6 +236,8 @@ function WasteGuideCard({
 // ─── FAQ Item ─────────────────────────────────────────────────────────────────
 
 function FaqItem({ question, answer }: { question: string; answer: string }) {
+  const themeColor = useThemeColor();
+  const ss = useSs();
   const [open, setOpen] = useState(false);
 
   const toggle = () => {
@@ -233,7 +248,7 @@ function FaqItem({ question, answer }: { question: string; answer: string }) {
     <Pressable accessibilityRole="button" accessibilityState={{ expanded: open }} onPress={toggle} style={ss.faqItem}>
       <View style={ss.faqHeader}>
         <Text style={ss.faqQuestion}>{question}</Text>
-        <MotionChevron expanded={open}><Feather color="#07815f" name={open ? 'minus' : 'plus'} size={15} /></MotionChevron>
+        <MotionChevron expanded={open}><Feather color={themeColor("#07815f", darkPalette.accent)} name={open ? 'minus' : 'plus'} size={15} /></MotionChevron>
       </View>
       <AccordionBody expanded={open}><Text style={ss.faqAnswer}>{answer}</Text></AccordionBody>
     </Pressable>
@@ -255,6 +270,8 @@ export function ChangePasswordModal({
   isPasswordSet: boolean;
   onClose: () => void;
 }) {
+  const themeColor = useThemeColor();
+  const ss = useSs();
   const insets = useSafeAreaInsets();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -339,7 +356,7 @@ export function ChangePasswordModal({
           {/* Header */}
           <View style={ss.cpHeader}>
             <View style={ss.cpHeaderIcon}>
-              <Feather color="#07815f" name="lock" size={18} />
+              <Feather color={themeColor("#07815f", darkPalette.accent)} name="lock" size={18} />
             </View>
             <View style={{ flex: 1, marginLeft: 12 }}>
               <Text style={ss.cpTitle}>{isPasswordSet ? 'Change Password' : 'Set a Password'}</Text>
@@ -348,7 +365,7 @@ export function ChangePasswordModal({
               </Text>
             </View>
             <Pressable hitSlop={10} onPress={handleClose}>
-              <Feather color="#8a9b92" name="x" size={20} />
+              <Feather color={themeColor("#8a9b92", darkPalette.muted)} name="x" size={20} />
             </Pressable>
           </View>
 
@@ -361,13 +378,13 @@ export function ChangePasswordModal({
                     autoCapitalize="none"
                     onChangeText={setCurrentPassword}
                     placeholder="Current password"
-                    placeholderTextColor="#9aa69f"
+                    placeholderTextColor={themeColor("#9aa69f", darkPalette.muted)}
                     secureTextEntry={!showCurrent}
                     style={ss.cpInput}
                     value={currentPassword}
                   />
                   <Pressable hitSlop={10} onPress={() => setShowCurrent((v) => !v)} style={ss.cpEye}>
-                    <Feather color="#8a9b92" name={showCurrent ? 'eye-off' : 'eye'} size={16} />
+                    <Feather color={themeColor("#8a9b92", darkPalette.muted)} name={showCurrent ? 'eye-off' : 'eye'} size={16} />
                   </Pressable>
                 </View>
               </>
@@ -379,13 +396,13 @@ export function ChangePasswordModal({
                 autoCapitalize="none"
                 onChangeText={setNewPassword}
                 placeholder="At least 6 characters"
-                placeholderTextColor="#9aa69f"
+                placeholderTextColor={themeColor("#9aa69f", darkPalette.muted)}
                 secureTextEntry={!showNew}
                 style={ss.cpInput}
                 value={newPassword}
               />
               <Pressable hitSlop={10} onPress={() => setShowNew((v) => !v)} style={ss.cpEye}>
-                <Feather color="#8a9b92" name={showNew ? 'eye-off' : 'eye'} size={16} />
+                <Feather color={themeColor("#8a9b92", darkPalette.muted)} name={showNew ? 'eye-off' : 'eye'} size={16} />
               </Pressable>
             </View>
 
@@ -395,13 +412,13 @@ export function ChangePasswordModal({
                 autoCapitalize="none"
                 onChangeText={setConfirmPassword}
                 placeholder="Repeat new password"
-                placeholderTextColor="#9aa69f"
+                placeholderTextColor={themeColor("#9aa69f", darkPalette.muted)}
                 secureTextEntry={!showConfirm}
                 style={ss.cpInput}
                 value={confirmPassword}
               />
               <Pressable hitSlop={10} onPress={() => setShowConfirm((v) => !v)} style={ss.cpEye}>
-                <Feather color="#8a9b92" name={showConfirm ? 'eye-off' : 'eye'} size={16} />
+                <Feather color={themeColor("#8a9b92", darkPalette.muted)} name={showConfirm ? 'eye-off' : 'eye'} size={16} />
               </Pressable>
             </View>
 
@@ -430,6 +447,8 @@ export function ChangePasswordModal({
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSignOut, onSessionUpdate }: Props) {
+  const themeColor = useThemeColor();
+  const ss = useSs();
   const { updatePreferences } = useAppPreferences();
   const appTheme = useAppTheme();
   const insets = useSafeAreaInsets();
@@ -597,10 +616,10 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
   const officeAddress = 'Roxas Ave., Concepcion Pequeña, Naga City, Naga City, Philippines, 4400';
   const contactEmail = 'swmo@naga.gov.ph';
   const fallbackWasteGuide = appInfo?.wasteGuide ?? [
-    { category: 'Biodegradable', color: '#07815f', accentColor: '#07815f', items: ['Food scraps', 'Garden waste', 'Paper', 'Cardboard'] },
-    { category: 'Non-Biodegradable', color: '#2f70d7', accentColor: '#2f70d7', items: ['Plastic bags', 'Styrofoam', 'Tin cans (non-recyclable)', 'Rubber'] },
-    { category: 'Recyclables', color: '#b07800', accentColor: '#e8a000', items: ['Glass bottles', 'Aluminum cans', 'Plastic bottles (PET)', 'Newspapers'] },
-    { category: 'Hazardous', color: '#c0392b', accentColor: '#e74c3c', items: ['Batteries', 'Paint containers', 'Medical waste', 'E-waste'] },
+    { category: 'Biodegradable', color: themeColor('#07815f', darkPalette.accent), accentColor: '#07815f', items: ['Food scraps', 'Garden waste', 'Paper', 'Cardboard'] },
+    { category: 'Non-Biodegradable', color: themeColor('#2f70d7', darkPalette.blue), accentColor: '#2f70d7', items: ['Plastic bags', 'Styrofoam', 'Tin cans (non-recyclable)', 'Rubber'] },
+    { category: 'Recyclables', color: themeColor('#b07800', darkPalette.warning), accentColor: '#e8a000', items: ['Glass bottles', 'Aluminum cans', 'Plastic bottles (PET)', 'Newspapers'] },
+    { category: 'Hazardous', color: themeColor('#c0392b', darkPalette.danger), accentColor: '#e74c3c', items: ['Batteries', 'Paint containers', 'Medical waste', 'E-waste'] },
   ];
   const fallbackFaqs = appInfo?.faqs ?? [
     { question: 'What time does collection happen?', answer: 'Collection schedules vary by barangay. Check the Home tab for your next scheduled pickup.' },
@@ -617,10 +636,10 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
         {/* ── Header ─────────────────────────────────────────── */}
         <View style={ss.header}>
           <Pressable accessibilityLabel="Back" hitSlop={10} onPress={onClose} style={ss.headerBack}>
-            <Feather color="#07815f" name="chevron-left" size={22} />
+            <Feather color={themeColor("#07815f", darkPalette.accent)} name="chevron-left" size={22} />
           </Pressable>
           <Text style={[ss.headerTitle, appTheme === 'dark' && { color: '#F1F6F3' }]}>Settings</Text>
-          <View style={ss.headerBack}>{isSavingSettings ? <ActivityIndicator color="#0A7F4F" size="small" /> : null}</View>
+          <View style={ss.headerBack}>{isSavingSettings ? <ActivityIndicator color={themeColor("#0A7F4F", darkPalette.accent)} size="small" /> : null}</View>
         </View>
 
         {/* Account data is already in the session; FAQs have real fallback copy
@@ -655,8 +674,8 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
             <SectionHeader label="Appearance" />
             <View style={[ss.card, appTheme === 'dark' && { backgroundColor: '#1A2420' }]}>
               <View style={ss.cardRowNoBorder}>
-                <View style={[ss.settingIcon, { backgroundColor: '#e8f4ff' }]}>
-                  <Feather color="#2f70d7" name="sun" size={16} />
+                <View style={[ss.settingIcon, { backgroundColor: themeColor('#e8f4ff', darkPalette.blueTint) }]}>
+                  <Feather color={themeColor("#2f70d7", darkPalette.blue)} name="sun" size={16} />
                 </View>
                 <View style={{ flex: 1, marginLeft: 12 }}>
                   <Text style={ss.settingText}>Theme</Text>
@@ -669,8 +688,8 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
             <SectionHeader label="Language" />
             <View style={[ss.card, appTheme === 'dark' && { backgroundColor: '#1A2420' }]}>
               <View style={ss.cardRowNoBorder}>
-                <View style={[ss.settingIcon, { backgroundColor: '#fff7e6' }]}>
-                  <Feather color="#c17a00" name="globe" size={16} />
+                <View style={[ss.settingIcon, { backgroundColor: themeColor('#fff7e6', darkPalette.warningTint) }]}>
+                  <Feather color={themeColor("#c17a00", darkPalette.warning)} name="globe" size={16} />
                 </View>
                 <View style={{ flex: 1, marginLeft: 12 }}>
                   <Text style={ss.settingText}>App Language</Text>
@@ -687,8 +706,8 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
                 <View style={[ss.card, appTheme === 'dark' && { backgroundColor: '#1A2420' }]}>
                   <SettingRow
                     icon="bell"
-                    iconBg="#e8faf0"
-                    iconColor="#07815f"
+                    iconBg={themeColor("#e8faf0", darkPalette.tint)}
+                    iconColor={themeColor("#07815f", darkPalette.accent)}
                     label="Push Notifications"
                     sublabel="Master toggle for all notifications"
                     right={
@@ -704,8 +723,8 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
                   />
                   <SettingRow
                     icon="truck"
-                    iconBg="#f0f9ff"
-                    iconColor="#2f70d7"
+                    iconBg={themeColor("#f0f9ff", darkPalette.blueTint)}
+                    iconColor={themeColor("#2f70d7", darkPalette.blue)}
                     label="Collection Reminders"
                     sublabel="One alert when collection starts or is underway, and one when it ends"
                     right={
@@ -722,8 +741,8 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
                   />
                   <SettingRow
                     icon="message-square"
-                    iconBg="#f5f0ff"
-                    iconColor="#7c4dff"
+                    iconBg={themeColor("#f5f0ff", darkPalette.purpleTint)}
+                    iconColor={themeColor('#7c4dff', darkPalette.purple)}
                     isLast
                     label="Announcements"
                     sublabel="SWMO news and official notices"
@@ -748,8 +767,8 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
             <View style={ss.card}>
               <SettingRow
                 icon="lock"
-                iconBg="#e8faf0"
-                iconColor="#07815f"
+                iconBg={themeColor("#e8faf0", darkPalette.tint)}
+                iconColor={themeColor("#07815f", darkPalette.accent)}
                 isLast
                 label={isPasswordSet ? 'Change Password' : 'Set a Password'}
                 onPress={() => setShowChangePassword(true)}
@@ -767,7 +786,7 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
             {/* Office contact */}
             <View style={ss.card}>
               <View style={ss.infoSectionLabel}>
-                <Feather color="#07815f" name="mail" size={14} />
+                <Feather color={themeColor("#07815f", darkPalette.accent)} name="mail" size={14} />
                 <Text style={ss.infoSectionLabelText}>CONTACT SWMO</Text>
               </View>
                 <Pressable
@@ -777,7 +796,7 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
                   style={[ss.hotlineRow, ss.settingRowBorder]}
                 >
                   <View style={ss.hotlineIconWrap}>
-                    <Feather color="#07815f" name="mail" size={14} />
+                    <Feather color={themeColor("#07815f", darkPalette.accent)} name="mail" size={14} />
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={ss.hotlineLabel}>Email</Text>
@@ -789,7 +808,7 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
                 </Pressable>
               <View style={[ss.hotlineRow, { borderBottomWidth: 0 }]}>
                 <View style={ss.hotlineIconWrap}>
-                  <Feather color="#07815f" name="map-pin" size={14} />
+                  <Feather color={themeColor("#07815f", darkPalette.accent)} name="map-pin" size={14} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={ss.hotlineLabel}>Office Address</Text>
@@ -801,7 +820,7 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
             {/* Waste Segregation Guide */}
             <View style={ss.card}>
               <View style={ss.infoSectionLabel}>
-                <MaterialCommunityIcons color="#07815f" name="recycle" size={14} />
+                <MaterialCommunityIcons color={themeColor("#07815f", darkPalette.accent)} name="recycle" size={14} />
                 <Text style={ss.infoSectionLabelText}>WASTE SEGREGATION GUIDE</Text>
               </View>
               {fallbackWasteGuide.map((guide) => (
@@ -818,7 +837,7 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
             {/* FAQs */}
             <View style={ss.card}>
               <View style={ss.infoSectionLabel}>
-                <Feather color="#07815f" name="help-circle" size={14} />
+                <Feather color={themeColor("#07815f", darkPalette.accent)} name="help-circle" size={14} />
                 <Text style={ss.infoSectionLabelText}>FREQUENTLY ASKED QUESTIONS</Text>
               </View>
               {fallbackFaqs.map((faq) => (
@@ -829,7 +848,7 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
             {/* App version */}
             <View style={ss.versionRow}>
               <View style={ss.versionBadge}>
-                <MaterialCommunityIcons color="#07815f" name="leaf" size={12} />
+                <MaterialCommunityIcons color={themeColor("#07815f", darkPalette.accent)} name="leaf" size={12} />
                 <Text style={ss.versionText}>RESIKLEAN v{appVersion}</Text>
               </View>
               <Text style={ss.versionSub}>Naga City Solid Waste Management</Text>
@@ -839,7 +858,7 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
             <SectionHeader label="Danger Zone" />
             <View style={ss.dangerCard}>
               <View style={ss.dangerIcon}>
-                <Feather color="#B3261E" name="alert-triangle" size={18} />
+                <Feather color={themeColor("#B3261E", darkPalette.danger)} name="alert-triangle" size={18} />
               </View>
               <View style={{ flex: 1, marginLeft: 12 }}>
                 <Text style={ss.dangerTitle}>Delete Account</Text>
@@ -855,10 +874,10 @@ export function ResidentSettingsModal({ visible, session, apiUrl, onClose, onSig
               style={[ss.dangerButton, isDeletingAccount && ss.disabledButton]}
             >
               {isDeletingAccount ? (
-                <ActivityIndicator color="#B3261E" size="small" />
+                <ActivityIndicator color={themeColor("#B3261E", darkPalette.danger)} size="small" />
               ) : (
                 <>
-                  <Feather color="#B3261E" name="trash-2" size={15} />
+                  <Feather color={themeColor("#B3261E", darkPalette.danger)} name="trash-2" size={15} />
                   <Text style={ss.dangerButtonText}>Delete My Account</Text>
                 </>
               )}
@@ -986,3 +1005,57 @@ const ss = StyleSheet.create({
   // Shared
   disabledButton: { opacity: 0.55 },
 });
+
+// Explicit dark surface and foreground pairs; the light layout stays unchanged.
+const darkStyles = {
+  pillIndicator: { backgroundColor: darkPalette.surface },
+  screen: { backgroundColor: darkPalette.surface },
+  header: { backgroundColor: darkPalette.surface, borderBottomColor: darkPalette.border },
+  headerTitle: { color: darkPalette.text },
+  loadingText: { color: darkPalette.muted },
+  globalError: { backgroundColor: darkPalette.dangerTint, borderColor: darkPalette.border, color: darkPalette.danger },
+  sectionHeader: { color: darkPalette.muted },
+  accountName: { color: darkPalette.text },
+  accountEmail: { color: darkPalette.muted },
+  googleBadge: { backgroundColor: darkPalette.blueTint, borderColor: darkPalette.border },
+  card: { backgroundColor: darkPalette.surface },
+  settingRowBorder: { borderBottomColor: darkPalette.border },
+  settingText: { color: darkPalette.text },
+  settingSubtext: { color: darkPalette.muted },
+  pillRow: { backgroundColor: darkPalette.field },
+  pillActive: { backgroundColor: darkPalette.tint },
+  pillText: { color: darkPalette.muted },
+  pillTextActive: { color: darkPalette.accent },
+  infoSectionLabelText: { color: darkPalette.text },
+  hotlineIconWrap: { backgroundColor: darkPalette.tint },
+  hotlineLabel: { color: darkPalette.muted },
+  hotlineNumber: { color: darkPalette.text },
+  callBadge: { backgroundColor: darkPalette.tint },
+  callBadgeText: { color: darkPalette.accent },
+  wasteCard: { borderBottomColor: darkPalette.border },
+  wasteItemText: { color: darkPalette.text },
+  faqItem: { borderBottomColor: darkPalette.border },
+  faqQuestion: { color: darkPalette.text },
+  faqAnswer: { color: darkPalette.muted },
+  versionBadge: { backgroundColor: darkPalette.tint },
+  versionText: { color: darkPalette.accent },
+  versionSub: { color: darkPalette.muted },
+  dangerCard: { backgroundColor: darkPalette.dangerTint },
+  dangerIcon: { backgroundColor: darkPalette.dangerTint },
+  dangerTitle: { color: darkPalette.danger },
+  dangerSubtext: { color: darkPalette.danger },
+  dangerButtonText: { color: darkPalette.danger },
+  cpSheet: { backgroundColor: darkPalette.surface },
+  cpHandle: { backgroundColor: darkPalette.field },
+  cpHeaderIcon: { backgroundColor: darkPalette.tint },
+  cpTitle: { color: darkPalette.text },
+  cpSubtitle: { color: darkPalette.muted },
+  cpLabel: { color: darkPalette.muted },
+  cpInputRow: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  cpInput: { color: darkPalette.text },
+  cpError: { color: darkPalette.danger },
+  cpSuccess: { color: darkPalette.accent },
+};
+function useSs() {
+  return useThemedStyles(ss, darkStyles);
+}

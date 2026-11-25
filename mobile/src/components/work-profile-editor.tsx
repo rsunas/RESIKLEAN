@@ -1,3 +1,5 @@
+import { darkPalette } from '@/constants/mobile-palette';
+import { useThemeColor } from '@/hooks/use-themed-styles';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Platform, View } from 'react-native';
 import type { ImagePickerAsset } from 'expo-image-picker';
@@ -6,6 +8,7 @@ import { AppText as Text } from './app-text';
 import { MotionPressable as Pressable } from './app-motion';
 import { getSession, saveSession, type AuthSession } from '@/lib/session';
 export function WorkProfileEditor({ onClose, onSaved }: { onClose:()=>void; onSaved:(session:AuthSession)=>void }) {
+  const themeColor = useThemeColor();
   const [session,setSession]=useState<AuthSession|null>(null);
   const [name,setName]=useState(''),[phone,setPhone]=useState(''),[location,setLocation]=useState('');
   const [photo,setPhoto]=useState<ImagePickerAsset|null>(null),[removed,setRemoved]=useState(false);
@@ -40,6 +43,6 @@ export function WorkProfileEditor({ onClose, onSaved }: { onClose:()=>void; onSa
       const updated={token:session.token,user:result.data};await saveSession(updated);onSaved(updated);onClose();
     }catch(e){setError(e instanceof Error?e.message:'Unable to save your profile.');}finally{setBusy(false);}
   };
-  if(!session)return <View style={{flex:1,padding:24,justifyContent:'center',backgroundColor:'white'}}>{error?<Text accessibilityRole="alert">{error}</Text>:<ActivityIndicator color="#0A7F4F"/>}<Pressable onPress={onClose} accessibilityRole="button" style={{padding:20}}><Text>Back to profile</Text></Pressable></View>;
+  if(!session)return <View style={{flex:1,padding:24,justifyContent:'center',backgroundColor:themeColor('white', darkPalette.surface)}}>{error?<Text accessibilityRole="alert">{error}</Text>:<ActivityIndicator color={themeColor("#0A7F4F", darkPalette.accent)}/>}<Pressable onPress={onClose} accessibilityRole="button" style={{padding:20}}><Text>Back to profile</Text></Pressable></View>;
   return <ResidentProfileEditor session={session} apiUrl={apiUrl} name={name} phone={phone} location={location} photo={photo} removed={removed} busy={busy} error={error} setName={setName} setPhone={setPhone} setLocation={setLocation} setPhoto={setPhoto} setRemoved={setRemoved} save={save} close={onClose}/>;
 }

@@ -1,3 +1,5 @@
+import { darkPalette } from '@/constants/mobile-palette';
+import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { Skeleton, SkeletonGroup } from 'heroui-native';
 import { useEffect, useRef, useState, createContext, useContext, type PropsWithChildren, type ReactNode } from 'react';
 import { StyleSheet, View, type DimensionValue } from 'react-native';
@@ -56,6 +58,7 @@ export type SkeletonState = ReturnType<typeof useSkeletonVisible>;
 
 /** One accessible loading announcement, not dozens of focusable rectangles. */
 export function SkeletonRegion({ state, placeholder, children }: PropsWithChildren<{ state: SkeletonState; placeholder: ReactNode }>) {
+  const styles = useStyles();
   const reduced = useSkeletonMotion();
   const wasVisible = useRef(false);
   useEffect(() => { if (state.visible) wasVisible.current = true; }, [state.visible]);
@@ -68,14 +71,16 @@ export function SkeletonRegion({ state, placeholder, children }: PropsWithChildr
 }
 
 export function SkeletonBlock({ width = '100%', height, radius = 8 }: { width?: DimensionValue; height: number; radius?: number }) {
+  const themeColor = useThemeColor();
   const grouped = useContext(InSkeletonGroup);
   const reduced = useSkeletonMotion();
   const Block = grouped ? SkeletonGroup.Item : Skeleton;
-  return <Block {...(!grouped ? {isLoading:true, variant: reduced ? 'none' as const : 'shimmer' as const} : {})} accessible={false} focusable={false} style={{ width, height, maxWidth: '100%', borderRadius: radius, backgroundColor: '#E8EDEA', overflow: 'hidden' }} />;
+  return <Block {...(!grouped ? {isLoading:true, variant: reduced ? 'none' as const : 'shimmer' as const} : {})} accessible={false} focusable={false} style={{ width, height, maxWidth: '100%', borderRadius: radius, backgroundColor: themeColor('#E8EDEA', darkPalette.field), overflow: 'hidden' }} />;
 }
 
 type RowKind = 'weekly' | 'report' | 'complaint' | 'account' | 'stop' | 'history' | 'staff' | 'chat' | 'faq';
 export function SkeletonRow({ kind, index = 0 }: { kind: RowKind; index?: number }) {
+  const styles = useStyles();
   if (kind === 'chat') return <View style={[styles.chat, { alignItems: index % 2 ? 'flex-end' : 'flex-start' }]}><SkeletonBlock width="60%" height={48} radius={18} /></View>;
   if (kind === 'faq') return <View style={styles.weekly}><SkeletonBlock width="70%" height={14} /></View>;
   if (kind === 'weekly') return <View style={styles.weekly}><SkeletonBlock width={96} height={14} /><SkeletonBlock width={118} height={30} radius={10} /></View>;
@@ -112,3 +117,16 @@ const styles = StyleSheet.create({
   measurements: { flexDirection: 'row', gap: 8, borderTopWidth: 1, borderColor: '#DCE4DF', paddingTop: 12, marginTop: 12 },
   chat: { paddingVertical: 8 },
 });
+
+// Explicit dark surface and foreground pairs; the light layout stays unchanged.
+const darkStyles = {
+  weekly: { borderColor: darkPalette.border },
+  listRow: { borderColor: darkPalette.border },
+  account: { borderColor: darkPalette.border },
+  historyCard: { backgroundColor: darkPalette.field },
+  staffCard: { backgroundColor: darkPalette.field },
+  measurements: { borderColor: darkPalette.border },
+};
+function useStyles() {
+  return useThemedStyles(styles, darkStyles);
+}

@@ -1,3 +1,5 @@
+import { darkPalette } from '@/constants/mobile-palette';
+import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
 import { Card } from 'heroui-native';
 import { useState } from 'react';
@@ -12,6 +14,8 @@ type SignOutConfirmModalProps = {
 };
 
 export function SignOutConfirmModal({ visible, onCancel, onConfirm }: SignOutConfirmModalProps) {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   const [isSigningOut, setIsSigningOut] = useState(false);
 
   const confirmSignOut = async () => {
@@ -27,7 +31,7 @@ export function SignOutConfirmModal({ visible, onCancel, onConfirm }: SignOutCon
     <Modal animationType="fade" onRequestClose={onCancel} transparent visible={visible}>
       <View style={styles.backdrop}>
         <Card style={styles.card}>
-          <View style={styles.icon}><Feather color="#d94855" name="log-out" size={22} /></View>
+          <View style={styles.icon}><Feather color={themeColor("#d94855", darkPalette.danger)} name="log-out" size={22} /></View>
           <AppText style={styles.title}>Sign out?</AppText>
           <AppText style={styles.message}>Are you sure you want to sign out of this account?</AppText>
           <View style={styles.actions}>
@@ -57,3 +61,16 @@ const styles = StyleSheet.create({
   confirmText: { color: '#ffffff', fontSize: 12, fontWeight: '800' },
   disabledButton: { opacity: 0.6 },
 });
+
+// Explicit dark surface and foreground pairs; the light layout stays unchanged.
+const darkStyles = {
+  card: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  icon: { backgroundColor: darkPalette.dangerTint },
+  title: { color: darkPalette.text },
+  message: { color: darkPalette.muted },
+  cancelButton: { borderColor: darkPalette.border },
+  cancelText: { color: darkPalette.text },
+};
+function useStyles() {
+  return useThemedStyles(styles, darkStyles);
+}

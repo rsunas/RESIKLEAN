@@ -1,7 +1,11 @@
+import { darkPalette } from '@/constants/mobile-palette';
+import { useThemedStyles } from '@/hooks/use-themed-styles';
 import { forwardRef, useEffect, useRef, useState, type PropsWithChildren } from 'react';
 import { Modal, Pressable, StyleSheet, View, type LayoutChangeEvent, type ModalProps, type PressableProps, type ViewProps } from 'react-native';
 import Animated, { cancelAnimation, Easing, FadeIn, FadeOut, LayoutAnimationConfig, ReduceMotion, runOnJS, useAnimatedStyle, useSharedValue, withDelay, withTiming } from 'react-native-reanimated';
 import { useAppReducedMotion } from '@/hooks/use-app-reduced-motion';
+import { useAppTheme } from '@/hooks/app-preferences';
+import { StatusBar } from 'expo-status-bar';
 
 export const MOTION = { tab: 180, pill: 250, content: 250, accordion: 200, press: 100, stagger: 40 } as const;
 const enterEase = Easing.out(Easing.cubic);
@@ -24,6 +28,7 @@ function slideExit(dx: number, dy: number, duration = MOTION.content) {
 
 /** Reanimated retains only exiting native views, not another mounted React screen. */
 export function TabTransition({ activeKey, children }: PropsWithChildren<{ activeKey: string }>) {
+  const styles = useStyles();
   const reduced = useAppReducedMotion();
   return <View collapsable={false} style={styles.flex}>
     <LayoutAnimationConfig skipEntering>
@@ -34,6 +39,7 @@ export function TabTransition({ activeKey, children }: PropsWithChildren<{ activ
 
 type Rect = { x: number; y: number; width: number; height: number };
 export function useSlidingTabPill(activeKey: string) {
+  const styles = useStyles();
   const reduced = useAppReducedMotion();
   const [frames, setFrames] = useState<Record<string, { item?: Rect; icon?: Rect }>>({});
   const x = useSharedValue(0), y = useSharedValue(0), opacity = useSharedValue(0);
@@ -88,9 +94,13 @@ export const MotionPressable = forwardRef<View, PressableProps & { motionDisable
 });
 
 /** Same native modal, visibility and dismiss callbacks; no navigation interception. */
-export function MotionModal({ animationType = 'slide', ...props }: ModalProps) {
+export function MotionModal({ animationType = 'slide', children, ...props }: ModalProps) {
   const reduced = useAppReducedMotion();
-  return <Modal {...props} animationType={reduced && animationType !== 'none' ? 'fade' : animationType} />;
+  const theme = useAppTheme();
+  return <Modal {...props} animationType={reduced && animationType !== 'none' ? 'fade' : animationType}>
+    {props.visible ? <StatusBar style={theme === 'dark' ? 'light' : 'dark'} /> : null}
+    {children}
+  </Modal>;
 }
 
 /** Keep just the last detail data available for the native dismiss animation. */
@@ -125,6 +135,7 @@ export function MotionChevron({ expanded, children }: PropsWithChildren<{ expand
 }
 
 export function AccordionBody({ expanded, children }: PropsWithChildren<{ expanded: boolean }>) {
+  const styles = useStyles();
   const reduced = useAppReducedMotion();
   const [mounted, setMounted] = useState(expanded);
   const progress = useSharedValue(expanded ? 1 : 0);
@@ -171,3 +182,11 @@ const styles = StyleSheet.create({
   pill: { position: 'absolute', left: 0, top: 0, width: 56, height: 32, borderRadius: 16, backgroundColor: '#E3F4EB' },
   accordion: { transformOrigin: 'top' },
 });
+
+// Explicit dark surface and foreground pairs; the light layout stays unchanged.
+const darkStyles = {
+  pill: { backgroundColor: darkPalette.tint },
+};
+function useStyles() {
+  return useThemedStyles(styles, darkStyles);
+}

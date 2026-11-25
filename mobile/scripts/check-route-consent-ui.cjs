@@ -76,7 +76,7 @@ async function main() {
     const Text = ({ style, ...props }) => React.createElement(RN.Text, { ...props, style: [style, { fontSize: (style?.fontSize || 14) * 1.1 * scale }] });
     const Icon = ({ size }) => React.createElement(View, { style: { width: size, height: size, flexShrink: 0 } });
     const Modal = ({ children }) => React.createElement(View, { style: { height: 640 } }, children);
-    const component = evaluate(functions.get('RouteMonitoringConsentModal'), { React, Modal, SafeAreaView: View, ScrollView: RN.ScrollView, View, Pressable: RN.Pressable, Text, Feather: Icon, styles });
+    const component = evaluate(functions.get('RouteMonitoringConsentModal'), { React, Modal, SafeAreaView: View, ScrollView: RN.ScrollView, View, Pressable: RN.Pressable, Text, Feather: Icon, styles, useStyles: () => styles, useThemeColor: () => light => light, darkPalette: require('./mobile-theme-fixture.cjs').darkPalette });
     const actions = [];
     const tree = component({ visible: true, onCancel: () => actions.push('cancel'), onEnable: () => actions.push('enable') });
     tree.props.onRequestClose();

@@ -1,3 +1,5 @@
+import { darkPalette } from '@/constants/mobile-palette';
+import { useThemedStyles } from '@/hooks/use-themed-styles';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, Linking, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { AppText as Text } from '@/components/app-text';
@@ -5,6 +7,7 @@ import { ensureNotificationPermissionsAsync, getPhoneNotificationStatus, sendPho
 
 type Props = { role: 'resident' | 'driver'; tracking?: boolean; compact?: boolean };
 export function PhoneNotificationControls({ role, tracking = false, compact = false }: Props) {
+  const styles = useStyles();
   const [status, setStatus] = useState<Awaited<ReturnType<typeof getPhoneNotificationStatus>> | null>(null);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -55,3 +58,14 @@ const styles = StyleSheet.create({
   button: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 10 },
   buttonText: { color: '#086B42', fontWeight: '700', fontSize: 13 },
 });
+
+// Explicit dark surface and foreground pairs; the light layout stays unchanged.
+const darkStyles = {
+  card: { backgroundColor: darkPalette.field },
+  title: { color: darkPalette.text },
+  body: { color: darkPalette.muted },
+  buttonText: { color: darkPalette.accent },
+};
+function useStyles() {
+  return useThemedStyles(styles, darkStyles);
+}

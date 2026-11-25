@@ -1,3 +1,5 @@
+import { darkPalette } from '@/constants/mobile-palette';
+import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { useNetworkRecovery } from '@/hooks/use-network-recovery';
 import { useAppTheme } from '@/hooks/app-preferences';
 import { requestJson } from '@/lib/network-request';
@@ -344,6 +346,8 @@ function auditPhotoMetadata(photo: AuditPhoto) {
 }
 
 function AuditPhotoField({ disabled, label, loading, onPress, photo }: { disabled: boolean; label: string; loading?: boolean; onPress: () => void; photo: AuditPhoto | null }) {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   const isDarkTheme = useAppTheme() === 'dark';
   return (
     <View style={styles.photoSlot}>
@@ -365,8 +369,8 @@ function AuditPhotoField({ disabled, label, loading, onPress, photo }: { disable
         <View style={[styles.photoOverlay, photo && styles.photoOverlayAttached]}>
           <View style={[styles.cameraBadge, isDarkTheme && { backgroundColor: '#21372C' }, photo && styles.cameraBadgeAttached, loading && styles.cameraBadgeLoading]}>
             {loading
-              ? <ActivityIndicator color="#07815f" size="small" />
-              : <Feather color={photo ? '#ffffff' : '#07815f'} name={photo ? 'check' : 'camera'} size={21} />}
+              ? <ActivityIndicator color={themeColor("#07815f", darkPalette.accent)} size="small" />
+              : <Feather color={photo ? '#ffffff' : themeColor('#07815f', darkPalette.accent)} name={photo ? 'check' : 'camera'} size={21} />}
           </View>
           <Text style={[styles.photoTitle, isDarkTheme && { color: '#F1F6F3' }, photo && styles.photoOverlayTitle]}>
             {loading ? `Opening camera...` : photo ? `${label} photo attached` : `Capture ${label} photo`}
@@ -379,18 +383,21 @@ function AuditPhotoField({ disabled, label, loading, onPress, photo }: { disable
 }
 
 function SelectField({ disabled = false, loading = false, error, icon, label, onChange, options, placeholder, value }: { disabled?: boolean; loading?: boolean; error?: string; icon: 'truck' | 'map-pin' | 'user' | 'trending-up'; label: string; onChange: (value: string) => void; options: AppSelectOption[]; placeholder: string; value: string }) {
+  const styles = useStyles();
   const isDarkTheme = useAppTheme() === 'dark';
   const skeleton = useSkeletonVisible(loading, options.length > 0, error);
   return <SkeletonRegion state={skeleton} placeholder={<View style={styles.selectSkeleton}><Text style={[styles.measurementLabel, isDarkTheme && { color: '#B4C4BB' }]}>{label}</Text><SkeletonBlock height={56} radius={16} /></View>}><StaffSearchSelect disabled={disabled} leadingIcon={icon} label={label} onChange={onChange} options={options} placeholder={placeholder} value={value} /></SkeletonRegion>;
 }
 
 function MeasurementField({ label, value }: { label: string; value: string }) {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   const isDarkTheme = useAppTheme() === 'dark';
   return (
     <View style={styles.measurementField}>
       <Text style={[styles.measurementLabel, isDarkTheme && { color: '#B4C4BB' }]}>{label}</Text>
       <View style={[styles.measurementInputWrap, isDarkTheme && { backgroundColor: '#192A22' }]}>
-        <Feather color={isDarkTheme ? '#85DCB0' : '#95a49d'} name="lock" size={12} />
+        <Feather color={isDarkTheme ? '#85DCB0' : themeColor('#95a49d', darkPalette.muted)} name="lock" size={12} />
         <Text accessibilityLabel={`${label}, locked`} style={[styles.measurementValue, isDarkTheme && { color: '#F1F6F3' }]}>{value || '—'}</Text>
       </View>
     </View>
@@ -398,6 +405,8 @@ function MeasurementField({ label, value }: { label: string; value: string }) {
 }
 
 function BottomNavigation({ activeTab, onChange }: { activeTab: Tab; onChange: (tab: Tab) => void }) {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   const insets = useSafeAreaInsets();
   const appTheme = useAppTheme();
   const isDark = appTheme === 'dark';
@@ -423,7 +432,7 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: Tab; onChange: (
             onPress={() => onChange(item.key)}
             style={styles.navItem}>
             <View onLayout={(event) => pill.iconLayout(item.key, event)} collapsable={false} style={styles.navIcon}>
-              <Feather color={active ? '#086B42' : '#5A6761'} name={item.icon} size={21} />
+              <Feather color={active ? themeColor('#086B42', darkPalette.accent) : themeColor('#5A6761', darkPalette.muted)} name={item.icon} size={21} />
             </View>
             <Text style={[styles.navLabel, isDark && { color: '#B4C4BB' }, active && (isDark ? { color: '#85DCB0' } : styles.navLabelActive)]}>{item.label}</Text>
           </Pressable>
@@ -434,6 +443,8 @@ function BottomNavigation({ activeTab, onChange }: { activeTab: Tab; onChange: (
 }
 
 export default function StaffScreen() {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   const appTheme = useAppTheme();
   const isDarkTheme = appTheme === 'dark';
   const networkRevision = useNetworkRecovery();
@@ -1252,7 +1263,7 @@ export default function StaffScreen() {
       <Text style={[styles.inputTitle, isDarkTheme && { color: '#F1F6F3' }]}>Volumetric Input</Text>
       {isOffline && (
         <View style={styles.offlineBanner}>
-          <Feather color="#5C3B00" name="wifi-off" size={18} />
+          <Feather color={themeColor("#5C3B00", darkPalette.warning)} name="wifi-off" size={18} />
           <Text style={styles.offlineBannerText}>
             Offline Mode · Measurements are stored locally and will sync when internet returns
           </Text>
@@ -1341,11 +1352,11 @@ export default function StaffScreen() {
             <View key={position} style={styles.measurementField}>
               <Text style={[styles.measurementLabel, isDarkTheme && { color: '#B4C4BB' }]}>{position[0].toUpperCase() + position.slice(1)} (cm)</Text>
               <TextInput accessibilityLabel={`${position} pile height in centimetres`} keyboardType="decimal-pad"
-                value={pileHeights[position]} placeholder="0" placeholderTextColor={isDarkTheme ? '#5A6761' : undefined} style={[styles.notesInput, { minHeight: 48 }, isDarkTheme && { backgroundColor: '#21372C', color: '#F1F6F3' }]}
+                value={pileHeights[position]} placeholder="0" placeholderTextColor={isDarkTheme ? themeColor('#5A6761', darkPalette.muted) : undefined} style={[styles.notesInput, { minHeight: 48 }, isDarkTheme && { backgroundColor: '#21372C', color: '#F1F6F3' }]}
                 onChangeText={value => { setPileHeights(current => ({ ...current, [position]: value })); setTonnagePreview(null); }} />
             </View>
           ))}
-        </View> : <View style={styles.fieldGroup}><Text style={[styles.measurementLabel, isDarkTheme && { color: '#B4C4BB' }]}>Pile Height (m)</Text><TextInput accessibilityLabel="pile height in metres" keyboardType="decimal-pad" value={pileHeightM} onChangeText={value => { setPileHeightM(value); setTonnagePreview(null); }} placeholder="0" placeholderTextColor={isDarkTheme ? '#5A6761' : undefined} style={[styles.notesInput, isDarkTheme && { backgroundColor: '#21372C', color: '#F1F6F3' }]} /></View>}
+        </View> : <View style={styles.fieldGroup}><Text style={[styles.measurementLabel, isDarkTheme && { color: '#B4C4BB' }]}>Pile Height (m)</Text><TextInput accessibilityLabel="pile height in metres" keyboardType="decimal-pad" value={pileHeightM} onChangeText={value => { setPileHeightM(value); setTonnagePreview(null); }} placeholder="0" placeholderTextColor={isDarkTheme ? themeColor('#5A6761', darkPalette.muted) : undefined} style={[styles.notesInput, isDarkTheme && { backgroundColor: '#21372C', color: '#F1F6F3' }]} /></View>}
         <Text style={[styles.formSectionTitle, styles.sectionSpacing, isDarkTheme && { color: '#F1F6F3' }]}>Measurements</Text>
         <View style={styles.measurementRow}>
           <MeasurementField label="Length (m)" value={length} />
@@ -1360,13 +1371,13 @@ export default function StaffScreen() {
           disabled={!selectedTruck}
           onPress={previewTonnage}
           style={[styles.calculateButton, isDarkTheme && { backgroundColor: '#192A22' }, !selectedTruck && styles.calculateButtonDisabled]}>
-          <MaterialCommunityIcons color={selectedTruck ? (isDarkTheme ? '#85DCB0' : '#07815f') : '#91a19a'} name="calculator-variant-outline" size={20} />
+          <MaterialCommunityIcons color={selectedTruck ? (isDarkTheme ? '#85DCB0' : themeColor('#07815f', darkPalette.accent)) : themeColor('#91a19a', darkPalette.muted)} name="calculator-variant-outline" size={20} />
           <Text style={[styles.calculateButtonLabel, isDarkTheme && { color: '#85DCB0' }, !selectedTruck && styles.calculateButtonLabelDisabled]}>Calculate Tonnage</Text>
         </Pressable>
 
         {message === 'Select a truck with complete registered dimensions before calculating tonnage.' ? (
           <View style={styles.calculationError} accessibilityRole="alert">
-            <Feather name="alert-circle" size={16} color="#B3261E" />
+            <Feather name="alert-circle" size={16} color={themeColor("#B3261E", darkPalette.danger)} />
             <Text style={styles.calculationErrorText}>{message}</Text>
           </View>
         ) : null}
@@ -1410,7 +1421,7 @@ export default function StaffScreen() {
             multiline
             onChangeText={setNotes}
             placeholder="Add an observation about this load"
-            placeholderTextColor="#5A6761"
+            placeholderTextColor={themeColor("#5A6761", darkPalette.muted)}
             style={[styles.notesInput, isDarkTheme && { backgroundColor: '#21372C', color: '#F1F6F3' }]}
             textAlignVertical="top"
             value={notes}
@@ -1436,7 +1447,7 @@ export default function StaffScreen() {
       {pendingSync > 0 && (
         <View style={styles.pendingSyncCard}>
           <View style={styles.pendingSyncLeft}>
-            <MaterialCommunityIcons color="#b47800" name="cloud-sync" size={24} />
+            <MaterialCommunityIcons color={themeColor("#b47800", darkPalette.warning)} name="cloud-sync" size={24} />
             <View style={{ marginLeft: 10, flex: 1 }}>
               <Text style={styles.pendingSyncTitle}>
                 {pendingSync} Offline Measurement{pendingSync > 1 ? 's' : ''} Stored
@@ -1469,7 +1480,7 @@ export default function StaffScreen() {
       {historyError ? <Text accessibilityRole="alert" style={styles.dataError}>{historyError}</Text> : null}
       {!historyError && history.length === 0 ? (
         <Card style={styles.emptyHistoryCard}>
-          <View style={styles.emptyHistoryIcon}><MaterialCommunityIcons color="#0A7F4F" name="clipboard-text-outline" size={30} /></View>
+          <View style={styles.emptyHistoryIcon}><MaterialCommunityIcons color={themeColor("#0A7F4F", darkPalette.accent)} name="clipboard-text-outline" size={30} /></View>
           <Text style={styles.emptyHistoryTitle}>No submissions yet</Text>
           <Text style={styles.emptyHistoryText}>Your completed truckload submissions will appear here after you submit one.</Text>
         </Card>
@@ -1496,7 +1507,7 @@ export default function StaffScreen() {
               </View>
               <View style={styles.historyRight}>
                 <NativeText numberOfLines={1} style={styles.tonnage}>{formatHistoryTonnage(submission.tonnes)}</NativeText>
-                <Feather color={isDarkTheme ? '#85DCB0' : '#5A6761'} name="chevron-right" size={20} />
+                <Feather color={isDarkTheme ? '#85DCB0' : themeColor('#5A6761', darkPalette.muted)} name="chevron-right" size={20} />
               </View>
             </View>
             <View style={[styles.historyMeasurements, isDarkTheme && { borderTopColor: '#203228' }]}>
@@ -1567,10 +1578,10 @@ export default function StaffScreen() {
           </SkeletonRegion>
         </View>
 
-        <Pressable accessibilityRole="button" onPress={() => setEditingProfile(true)} style={[{ minHeight: 56, borderRadius: 16, backgroundColor: '#E3F4EB', flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, marginTop: 20 }, isDarkTheme && { backgroundColor: '#192A22' }]}><Feather name="edit-2" size={20} color={isDarkTheme ? '#85DCB0' : '#086B42'}/><Text style={{ color: isDarkTheme ? '#85DCB0' : '#086B42', fontSize: 16, fontWeight: '600' }}>Edit profile</Text></Pressable>
+        <Pressable accessibilityRole="button" onPress={() => setEditingProfile(true)} style={[{ minHeight: 56, borderRadius: 16, backgroundColor: themeColor('#E3F4EB', darkPalette.tint), flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, marginTop: 20 }, isDarkTheme && { backgroundColor: '#192A22' }]}><Feather name="edit-2" size={20} color={isDarkTheme ? '#85DCB0' : themeColor('#086B42', darkPalette.accent)}/><Text style={{ color: isDarkTheme ? '#85DCB0' : '#086B42', fontSize: 16, fontWeight: '600' }}>Edit profile</Text></Pressable>
         <ProfileSettingsRow onSignOut={completeSignOut} />
         <Pressable accessibilityRole="button" onPress={signOut} style={styles.signOutButton}>
-          <Feather color="#B3261E" name="log-out" size={20} />
+          <Feather color={themeColor("#B3261E", darkPalette.danger)} name="log-out" size={20} />
           <Text style={styles.signOutText}>Sign out</Text>
         </Pressable>
       </ScrollView>
@@ -1616,12 +1627,14 @@ export default function StaffScreen() {
 }
 
 function ProfileAccountRow({ icon, label, value, last = false }: { icon: 'id-card' | 'phone' | 'mail' | 'map-pin' | 'clock'; label: string; value: string; last?: boolean }) {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   const isDarkTheme = useAppTheme() === 'dark';
   const placeholder = value === 'Not provided' || value === 'Not assigned';
   return (
     <View style={[styles.profileAccountRow, isDarkTheme && { borderBottomColor: '#203228' }, last && { borderBottomWidth: 0 }]}>
       <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={[styles.profileAccountIcon, isDarkTheme && { backgroundColor: '#21372C' }]}>
-        {icon === 'id-card' ? <MaterialCommunityIcons name="card-account-details-outline" size={20} color="#0A7F4F" /> : <Feather name={icon} size={20} color="#0A7F4F" />}
+        {icon === 'id-card' ? <MaterialCommunityIcons name="card-account-details-outline" size={20} color={themeColor("#0A7F4F", darkPalette.accent)} /> : <Feather name={icon} size={20} color={themeColor("#0A7F4F", darkPalette.accent)} />}
       </View>
       <View style={styles.profileAccountCopy}>
         <Text style={[styles.profileAccountLabel, isDarkTheme && { color: '#B4C4BB' }]}>{label}</Text>
@@ -1879,3 +1892,100 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 });
+
+// Explicit dark surface and foreground pairs; the light layout stays unchanged.
+const darkStyles = {
+  safeArea: { backgroundColor: darkPalette.surface },
+  header: { backgroundColor: darkPalette.surface },
+  headerTitle: { color: darkPalette.text },
+  headerSubtitle: { color: darkPalette.muted },
+  inputEyebrow: { color: darkPalette.accent },
+  inputTitle: { color: darkPalette.text },
+  formSectionTitle: { color: darkPalette.text },
+  calculationErrorText: { color: darkPalette.danger },
+  validationMessage: { color: darkPalette.danger },
+  navIconActive: { backgroundColor: darkPalette.tint },
+  sectionEyebrow: { color: darkPalette.muted },
+  formCard: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  label: { color: darkPalette.muted },
+  required: { color: darkPalette.danger },
+  selectField: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  selectText: { color: darkPalette.text },
+  measurementLabel: { color: darkPalette.text },
+  measurementInputWrap: { backgroundColor: darkPalette.field },
+  measurementValue: { color: darkPalette.text },
+  helperText: { color: darkPalette.muted },
+  truckLoadError: { color: darkPalette.warning },
+  calculateButton: { backgroundColor: darkPalette.tint },
+  calculateButtonDisabled: { backgroundColor: darkPalette.field, borderColor: darkPalette.border },
+  calculateButtonLabel: { color: darkPalette.accent },
+  calculateButtonLabelDisabled: { color: darkPalette.muted },
+  modeSelector: { backgroundColor: darkPalette.field },
+  modeOptionText: { color: darkPalette.text },
+  tonnagePreview: { backgroundColor: darkPalette.tint },
+  tonnagePreviewLabel: { color: darkPalette.accent },
+  tonnagePreviewFormula: { color: darkPalette.text },
+  tonnagePreviewValue: { color: darkPalette.text },
+  photoField: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  photoFieldAttached: { backgroundColor: darkPalette.field },
+  photoInstruction: { color: darkPalette.muted },
+  cameraBadge: { backgroundColor: darkPalette.tint },
+  cameraBadgeLoading: { backgroundColor: darkPalette.tint },
+  photoTitle: { color: darkPalette.text },
+  photoCaption: { color: darkPalette.muted },
+  notesInput: { backgroundColor: darkPalette.field, color: darkPalette.text },
+  message: { color: darkPalette.accent },
+  placeholderNote: { color: darkPalette.muted },
+  dataError: { color: darkPalette.warning },
+  emptyHistoryCard: { backgroundColor: darkPalette.field },
+  emptyHistoryIcon: { backgroundColor: darkPalette.tint },
+  emptyHistoryTitle: { color: darkPalette.text },
+  emptyHistoryText: { color: darkPalette.muted },
+  bottomNav: { backgroundColor: darkPalette.surface, borderTopColor: darkPalette.border },
+  navLabel: { color: darkPalette.muted },
+  navLabelActive: { color: darkPalette.accent },
+  clearHistoryFilters: { backgroundColor: darkPalette.tint },
+  clearHistoryFiltersText: { color: darkPalette.accent },
+  historyPageTitle: { color: darkPalette.text },
+  recordCount: { color: darkPalette.muted },
+  historyCard: { backgroundColor: darkPalette.field },
+  historyBarangay: { color: darkPalette.text },
+  historyMissingArea: { color: darkPalette.muted },
+  historyDriver: { color: darkPalette.muted },
+  tonnage: { color: darkPalette.accent },
+  historyMeasurements: { borderTopColor: darkPalette.border },
+  historyMeasurementLabel: { color: darkPalette.muted },
+  historyMeasurementValue: { color: darkPalette.text },
+  avatar: { backgroundColor: darkPalette.tint },
+  avatarText: { color: darkPalette.accent },
+  profileArea: { color: darkPalette.muted },
+  staffBadge: { backgroundColor: darkPalette.tint },
+  staffBadgeText: { color: darkPalette.purple },
+  statCaption: { color: darkPalette.muted },
+  accountHeading: { color: darkPalette.text },
+  profileAccountRow: { borderBottomColor: darkPalette.border },
+  profileAccountIcon: { backgroundColor: darkPalette.tint },
+  profileAccountLabel: { color: darkPalette.muted },
+  profileAccountValue: { color: darkPalette.text },
+  profileAccountPlaceholder: { color: darkPalette.muted },
+  signOutButton: { backgroundColor: darkPalette.dangerTint },
+  signOutText: { color: darkPalette.danger },
+  pickerSheet: { backgroundColor: darkPalette.surface },
+  sheetHandle: { backgroundColor: darkPalette.field },
+  pickerTitle: { color: darkPalette.text },
+  pickerStatus: { color: darkPalette.muted },
+  pickerOption: { borderBottomColor: darkPalette.border },
+  pickerOptionText: { color: darkPalette.text },
+  offlineBanner: { backgroundColor: darkPalette.warningTint },
+  offlineBannerText: { color: darkPalette.warning },
+  offlinePill: { backgroundColor: darkPalette.field, borderColor: darkPalette.border },
+  offlinePillText: { color: darkPalette.muted },
+  pendingSyncCard: { backgroundColor: darkPalette.field, borderColor: darkPalette.border },
+  pendingSyncTitle: { color: darkPalette.warning },
+  pendingSyncSubtext: { color: darkPalette.muted },
+  pendingPillWrap: { backgroundColor: darkPalette.warningTint },
+  pendingPillText: { color: darkPalette.warning },
+};
+function useStyles() {
+  return useThemedStyles(styles, darkStyles);
+}

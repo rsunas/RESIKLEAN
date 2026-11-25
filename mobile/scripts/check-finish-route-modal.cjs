@@ -42,6 +42,7 @@ const AppState = { currentState: 'active', addEventListener: (_, fn) => {
 function appState(state) { AppState.currentState = state; [...listeners].forEach(fn => fn(state)); }
 const jsx = (type, props) => ({ type, props });
 const { FinishRouteModal } = load('src/components/finish-route-modal.tsx', {
+  ...require('./mobile-theme-fixture.cjs').themeDependencies('dark'),
   react: hooks,
   'react/jsx-runtime': { jsx, jsxs: jsx },
   'react-native': { AppState, ScrollView: 'scroll', View: 'view', StyleSheet: { create: value => value } },

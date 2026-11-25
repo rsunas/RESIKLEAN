@@ -1,6 +1,7 @@
 import * as SecureStore from 'expo-secure-store';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type PropsWithChildren } from 'react';
 import { Appearance, useColorScheme } from 'react-native';
+import { Uniwind } from 'uniwind';
 
 export type ThemePreference = 'light' | 'dark';
 export type AppLanguage = 'en' | 'fil';
@@ -21,7 +22,10 @@ export function AppPreferencesProvider({ children }: PropsWithChildren) {
     });
   }, []);
   useEffect(() => { if (hydrated) void SecureStore.setItemAsync(KEY, JSON.stringify(preferences)); }, [hydrated, preferences]);
-  useEffect(() => { Appearance.setColorScheme(preferences.theme); }, [preferences.theme]);
+  useEffect(() => {
+    Appearance.setColorScheme(preferences.theme);
+    Uniwind.setTheme(preferences.theme);
+  }, [preferences.theme]);
   const updatePreferences = useCallback((next: Partial<Preferences>) => {
     setPreferences(current => ({ ...current, ...next }));
   }, []);

@@ -1,3 +1,5 @@
+import { darkCategoryColors, darkPalette } from '@/constants/mobile-palette';
+import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { Feather, MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-icons';
 import { Image } from 'expo-image';
@@ -11,6 +13,8 @@ type Collection = { wasteType: GuideCategoryId; timeWindows: string[] };
 type Props = { today: string; collections: Collection[]; unavailable: boolean; openGuide: (id: GuideCategoryId) => void };
 
 export function ResidentTodayCollection({ today, collections, unavailable, openGuide }: Props) {
+  const styles = useStyles();
+  const themeColor = useThemeColor();
   const { fontScale } = useWindowDimensions();
   const date = new Date(today + 'T12:00:00+08:00');
   const weekday = date.toLocaleDateString('en-PH', { weekday: 'long', timeZone: 'Asia/Manila' });
@@ -38,8 +42,8 @@ export function ResidentTodayCollection({ today, collections, unavailable, openG
         </View>) : <Text style={styles.windowText}>Time unavailable</Text>}</View>
       </View>
       <Pressable accessibilityRole="button" accessibilityLabel="See what goes in this bin, opens guide" onPress={() => openGuide(category.id)} style={({ pressed }) => [styles.button, pressed && { opacity: 0.85 }]}>
-        <Text style={[styles.buttonText, { color: category.dark }]}>See what goes in this bin</Text>
-        <View style={[styles.buttonCircle, { backgroundColor: category.tint }]}><Feather name="chevron-right" size={20} color={category.dark} /></View>
+        <Text style={[styles.buttonText, { color: themeColor(category.dark, darkCategoryColors[category.id].text) }]}>See what goes in this bin</Text>
+        <View style={[styles.buttonCircle, { backgroundColor: themeColor(category.tint, darkCategoryColors[category.id].tint) }]}><Feather name="chevron-right" size={20} color={themeColor(category.dark, darkCategoryColors[category.id].text)} /></View>
       </Pressable>
     </LinearGradient>;
   })}</View>;
@@ -64,3 +68,14 @@ const styles = StyleSheet.create({
   emptyDate: { color: UI.muted, fontSize: 20, fontWeight: '700' },
   emptyText: { color: UI.muted, fontSize: 14 },
 });
+
+// Explicit dark surface and foreground pairs; the light layout stays unchanged.
+const darkStyles = {
+  button: { backgroundColor: darkPalette.surface },
+  empty: { backgroundColor: darkPalette.field },
+  emptyDate: { color: darkPalette.muted },
+  emptyText: { color: darkPalette.muted },
+};
+function useStyles() {
+  return useThemedStyles(styles, darkStyles);
+}

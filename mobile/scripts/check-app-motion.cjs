@@ -45,6 +45,7 @@ const raw = fs.readFileSync(path.join(__dirname, '../src/components/app-motion.t
 const js = ts.transpileModule(raw, { compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2020 } }).outputText;
 const api = {};
 const mocks = { react: hooks, 'react/jsx-runtime': require('react/jsx-runtime'), 'react-native': native, 'react-native-reanimated': animated, '@/hooks/use-app-reduced-motion': { useAppReducedMotion: () => reduced } };
+Object.assign(mocks, require('./mobile-theme-fixture.cjs').themeDependencies('dark'));
 new Function('require', 'exports', js)(name => { assert.ok(mocks[name], `Unexpected dependency: ${name}`); return mocks[name]; }, api);
 function harness(fn) {
   const instance = { slots: [], values: [], cursor: 0, effects: [], dirty: false };

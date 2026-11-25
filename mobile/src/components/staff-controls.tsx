@@ -1,3 +1,5 @@
+import { darkPalette } from '@/constants/mobile-palette';
+import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { useRef, useState } from 'react';
 import { Keyboard, PanResponder, ScrollView, StyleSheet, TextInput, View, useWindowDimensions } from 'react-native';
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
@@ -10,6 +12,7 @@ export { SearchableSelect as StaffSearchSelect } from '@/components/searchable-s
 
 export const validSlope = (value: string) => /^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim()) && Number.isFinite(Number(value)) && Number(value) >= 0;
 export function StaffSlopeInput({value, onChange}: {value: string; onChange: (value: string) => void}) {
+  const styles = useStyles();
   const numeric = Number(value);
   return <View style={styles.field}>
     <Text style={styles.title}>Slope (m³)</Text>
@@ -32,6 +35,8 @@ export function filterStaffHistory<T extends RecordRow>(rows: T[], query: string
   return rows.filter(row => (!driver || historyText(row.driver) === driver) && (!area || historyText(row.barangay) === area) && (!truck || historyText(row.truckPlate) === truck) && (!status || row.status === status) && [row.driver, row.barangay, row.truckPlate, row.submittedAt].join(' ').toLowerCase().includes(search));
 }
 export function StaffHistoryFilters({rows, value, onChange}: {rows: RecordRow[]; value: string[]; onChange: (query: string, driver: string, area: string, truck: string, status: string) => void}) {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   const [query, ...filters] = value;
   const searchInput = useRef<TextInput>(null);
   const [focused, setFocused] = useState(false);
@@ -58,11 +63,11 @@ export function StaffHistoryFilters({rows, value, onChange}: {rows: RecordRow[];
   return <View style={styles.filters}>
     <View style={styles.searchRow}>
       <View style={styles.historySearch}>
-        <Feather name="search" size={20} color="#5A6761" />
-        <TextInput ref={searchInput} accessibilityLabel="Search submission history" placeholder="Search driver, area or truck…" placeholderTextColor="#5A6761" value={query} onChangeText={text => update(text)} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} returnKeyType="search" style={[styles.historySearchInput, { minHeight: Math.max(48, 15 * fontScale * 1.4 + 16) }]} />
+        <Feather name="search" size={20} color={themeColor("#5A6761", darkPalette.muted)} />
+        <TextInput ref={searchInput} accessibilityLabel="Search submission history" placeholder="Search driver, area or truck…" placeholderTextColor={themeColor("#5A6761", darkPalette.muted)} value={query} onChangeText={text => update(text)} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} returnKeyType="search" style={[styles.historySearchInput, { minHeight: Math.max(48, 15 * fontScale * 1.4 + 16) }]} />
       </View>
       <Pressable accessibilityRole="button" accessibilityLabel={activeCount ? `Filters, ${activeCount} active` : 'Filters'} accessibilityState={{expanded:open}} onPress={() => { searchInput.current?.blur(); Keyboard.dismiss(); setFocused(false); setDraft([...filters]); setOpen(true); }} style={[styles.filterButton, activeCount > 0 && styles.filterButtonActive]}>
-        <Feather name="filter" size={22} color={activeCount ? '#086B42' : '#35463F'}/>
+        <Feather name="filter" size={22} color={activeCount ? themeColor('#086B42', darkPalette.accent) : themeColor('#35463F', darkPalette.text)}/>
         {activeCount > 0 ? <View style={styles.filterBadge}><Text allowFontScaling={false} style={styles.filterBadgeText}>{activeCount}</Text></View> : null}
       </Pressable>
     </View>
@@ -70,7 +75,7 @@ export function StaffHistoryFilters({rows, value, onChange}: {rows: RecordRow[];
     {activeCount > 0 ? <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" style={styles.chipScroll} contentContainerStyle={styles.chips}>
       {fields.map((field,index) => filters[index] ? <View key={field.key} style={styles.filterChip}>
         <Text numberOfLines={1} ellipsizeMode="tail" style={styles.filterChipText}>{field.chip}: {filters[index]}</Text>
-        <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${field.label} filter: ${filters[index]}`} hitSlop={6} onPress={() => update(query, filters.map((item,i) => i === index ? '' : item))} style={styles.removeChip}><Feather name="x" size={16} color="#086B42"/></Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel={`Remove ${field.label} filter: ${filters[index]}`} hitSlop={6} onPress={() => update(query, filters.map((item,i) => i === index ? '' : item))} style={styles.removeChip}><Feather name="x" size={16} color={themeColor("#086B42", darkPalette.accent)}/></Pressable>
       </View> : null)}
       <Pressable accessibilityRole="button" onPress={() => update(query, ['', '', '', ''])} style={styles.clearAll}><Text style={styles.clearAllText}>Clear all</Text></Pressable>
     </ScrollView> : null}
@@ -113,3 +118,30 @@ const styles=StyleSheet.create({
  chipScroll:{marginTop:12},chips:{alignItems:'center',gap:8,paddingRight:4},filterChip:{minHeight:36,maxWidth:280,paddingLeft:12,paddingRight:6,paddingVertical:4,borderRadius:10,backgroundColor:'#E3F4EB',flexDirection:'row',alignItems:'center',gap:6},filterChipText:{flexShrink:1,color:'#086B42',fontSize:13,fontWeight:'600'},removeChip:{width:24,height:24,alignItems:'center',justifyContent:'center'},clearAll:{minHeight:36,justifyContent:'center',paddingHorizontal:8},clearAllText:{fontSize:13,fontWeight:'600',color:'#086B42'},
  sheetRoot:{flex:1,justifyContent:'flex-end'},sheetBackdrop:{...StyleSheet.absoluteFillObject,backgroundColor:'rgba(13,30,24,0.5)'},sheet:{backgroundColor:'white',borderTopLeftRadius:28,borderTopRightRadius:28,paddingTop:10,paddingHorizontal:20},dragHandle:{width:40,height:4,borderRadius:2,backgroundColor:'#C9D3CE',alignSelf:'center',marginBottom:12},sheetHeading:{flexDirection:'row',alignItems:'center',justifyContent:'space-between',marginBottom:16},sheetTitle:{fontSize:22,fontWeight:'700',color:'#121A16'},resetButton:{minHeight:44,justifyContent:'center',paddingLeft:16},resetText:{fontSize:15,fontWeight:'600',color:'#086B42'},sheetFields:{flexShrink:1},sheetFieldsContent:{gap:16,paddingBottom:4},showResults:{minHeight:56,paddingVertical:14,paddingHorizontal:16,borderRadius:18,backgroundColor:'#0A7F4F',alignItems:'center',justifyContent:'center',marginTop:24},showResultsText:{fontSize:17,fontWeight:'700',color:'white'},noResults:{opacity:0.45},
 });
+
+// Explicit dark surface and foreground pairs; the light layout stays unchanged.
+const darkStyles = {
+  label: { color: darkPalette.text },
+  title: { color: darkPalette.text },
+  trigger: { backgroundColor: darkPalette.field },
+  value: { color: darkPalette.text },
+  input: { backgroundColor: darkPalette.field, color: darkPalette.text },
+  hint: { color: darkPalette.muted },
+  error: { color: darkPalette.danger },
+  dialog: { backgroundColor: darkPalette.surface },
+  historySearch: { backgroundColor: darkPalette.field },
+  historySearchInput: { color: darkPalette.text },
+  filterButton: { backgroundColor: darkPalette.field },
+  filterButtonActive: { backgroundColor: darkPalette.tint },
+  filterBadge: { borderColor: darkPalette.border },
+  filterChip: { backgroundColor: darkPalette.tint },
+  filterChipText: { color: darkPalette.accent },
+  clearAllText: { color: darkPalette.accent },
+  sheet: { backgroundColor: darkPalette.surface },
+  dragHandle: { backgroundColor: darkPalette.field },
+  sheetTitle: { color: darkPalette.text },
+  resetText: { color: darkPalette.accent },
+};
+function useStyles() {
+  return useThemedStyles(styles, darkStyles);
+}

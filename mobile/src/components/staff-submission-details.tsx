@@ -1,3 +1,5 @@
+import { darkPalette } from '@/constants/mobile-palette';
+import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { UploadSyncBadge } from '@/components/upload-sync-badge';
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
 import { Image as ExpoImage } from 'expo-image';
@@ -47,6 +49,8 @@ export function StaffSubmissionDetails({ submission, onClose, visible = true, sy
   visible?: boolean;
   syncing?: boolean;
 }) {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   const insets = useSafeAreaInsets();
   // Preserve the legacy single-photo fallback, without replacing either real
   // side/back image. A component key in Staff resets UI state for each record.
@@ -85,7 +89,7 @@ export function StaffSubmissionDetails({ submission, onClose, visible = true, sy
 
   const placeholder = (fullScreen = false) => (
     <View accessibilityLabel={`${photoLabel} unavailable`} style={[styles.placeholder, fullScreen && styles.viewerPlaceholder]}>
-      <Feather name="camera" size={28} color={fullScreen ? '#FFFFFF' : '#5A6761'} />
+      <Feather name="camera" size={28} color={fullScreen ? '#FFFFFF' : themeColor('#5A6761', darkPalette.muted)} />
       <Text style={[styles.placeholderText, fullScreen && styles.viewerText]}>{photoLabel} unavailable</Text>
     </View>
   );
@@ -100,7 +104,7 @@ export function StaffSubmissionDetails({ submission, onClose, visible = true, sy
             ) : placeholder()}
             {photoSkeleton.pending ? <View pointerEvents="none" style={styles.heroImage}><SkeletonRegion state={photoSkeleton} placeholder={<SkeletonBlock height={210} radius={0} />} /></View> : null}
             <Pressable accessibilityRole="button" accessibilityLabel="Back to submission history" onPress={onClose} style={styles.backButton}>
-              <Feather name="chevron-left" color="#121A16" size={24} />
+              <Feather name="chevron-left" color={themeColor("#121A16", darkPalette.text)} size={24} />
             </Pressable>
             <View style={styles.heroControls}>
               <View accessibilityRole="tablist" accessibilityLabel="Submission photos" style={styles.photoTabs}>
@@ -189,10 +193,12 @@ export function StaffSubmissionDetails({ submission, onClose, visible = true, sy
 }
 
 function LoadDetailRow({ icon, label, value }: { icon: 'truck' | 'map-pin' | 'user'; label: string; value: string }) {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   return (
     <View style={styles.loadRow}>
       <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.iconBadge}>
-        <Feather name={icon} size={20} color="#0A7F4F" />
+        <Feather name={icon} size={20} color={themeColor("#0A7F4F", darkPalette.accent)} />
       </View>
       <View style={styles.loadCopy}>
         <Text style={styles.loadLabel}>{label}</Text>
@@ -203,6 +209,7 @@ function LoadDetailRow({ icon, label, value }: { icon: 'truck' | 'map-pin' | 'us
 }
 
 function ReceiptRow({ label, value }: { label: string; value: string }) {
+  const styles = useStyles();
   return (
     <View style={styles.receiptRow}>
       <Text style={styles.receiptLabel}>{label}</Text>
@@ -268,3 +275,33 @@ const styles = StyleSheet.create({
   fullPhoto: { flex: 1, width: '100%' },
   viewerPlaceholder: { paddingBottom: 0 },
 });
+
+// Explicit dark surface and foreground pairs; the light layout stays unchanged.
+const darkStyles = {
+  screen: { backgroundColor: darkPalette.tint },
+  scroll: { backgroundColor: darkPalette.field },
+  hero: { backgroundColor: darkPalette.tint },
+  placeholderText: { color: darkPalette.text },
+  backButton: { backgroundColor: darkPalette.surface },
+  photoTabSelected: { backgroundColor: darkPalette.surface },
+  photoTabLabelSelected: { color: darkPalette.text },
+  titleCard: { backgroundColor: darkPalette.surface },
+  eyebrow: { color: darkPalette.accent },
+  title: { color: darkPalette.text },
+  date: { color: darkPalette.muted },
+  card: { backgroundColor: darkPalette.surface },
+  heading: { color: darkPalette.text },
+  iconBadge: { backgroundColor: darkPalette.tint },
+  loadLabel: { color: darkPalette.muted },
+  loadValue: { color: darkPalette.text },
+  receiptLabel: { color: darkPalette.muted },
+  receiptValue: { color: darkPalette.text },
+  receiptDivider: { borderColor: darkPalette.border },
+  notes: { color: darkPalette.text },
+  bottomBar: { backgroundColor: darkPalette.surface, borderTopColor: darkPalette.border },
+  tonnageLabel: { color: darkPalette.muted },
+  tonnageValue: { color: darkPalette.text },
+};
+function useStyles() {
+  return useThemedStyles(styles, darkStyles);
+}

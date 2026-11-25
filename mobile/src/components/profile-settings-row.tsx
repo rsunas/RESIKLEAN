@@ -1,3 +1,5 @@
+import { darkPalette } from '@/constants/mobile-palette';
+import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
 import { useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
@@ -10,6 +12,8 @@ import { getSession, type AuthSession } from '@/lib/session';
 
 /** Opens the same settings modal as Resident Profile; no separate preferences. */
 export function ProfileSettingsRow({ onSignOut }: { onSignOut: () => void }) {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   const isDark = useAppTheme() === 'dark';
   const [session, setSession] = useState<AuthSession | null>(null);
   const [visible, setVisible] = useState(false);
@@ -26,15 +30,15 @@ export function ProfileSettingsRow({ onSignOut }: { onSignOut: () => void }) {
   };
   return <>
     <Pressable accessibilityLabel="Settings" accessibilityRole="button" onPress={open} style={[styles.row, isDark && { backgroundColor: '#192A22' }]}>
-      <View accessible={false} style={[styles.badge, isDark && { backgroundColor: '#21372C' }]}><Feather name="settings" size={20} color="#0A7F4F" /></View>
+      <View accessible={false} style={[styles.badge, isDark && { backgroundColor: '#21372C' }]}><Feather name="settings" size={20} color={themeColor("#0A7F4F", darkPalette.accent)} /></View>
       <Text style={[styles.label, isDark && { color: '#F1F6F3' }]}>Settings</Text>
-      <Feather name="chevron-right" size={20} color={isDark ? '#85DCB0' : '#5A6761'} />
+      <Feather name="chevron-right" size={20} color={isDark ? '#85DCB0' : themeColor('#5A6761', darkPalette.muted)} />
     </Pressable>
     {session ? <ResidentSettingsModal apiUrl={process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '') ?? ''} session={session} visible={visible} onClose={() => setVisible(false)} onSessionUpdate={setSession} onSignOut={onSignOut} /> : null}
     <Pressable accessibilityRole="button" onPress={() => setPrivacyVisible(true)} style={[styles.row, isDark && { backgroundColor: '#192A22' }]}>
-      <View accessible={false} style={[styles.badge, isDark && { backgroundColor: '#21372C' }]}><Feather name="shield" size={20} color="#0A7F4F" /></View>
+      <View accessible={false} style={[styles.badge, isDark && { backgroundColor: '#21372C' }]}><Feather name="shield" size={20} color={themeColor("#0A7F4F", darkPalette.accent)} /></View>
       <Text style={[styles.label, isDark && { color: '#F1F6F3' }]}>Privacy Policy</Text>
-      <Feather name="chevron-right" size={20} color={isDark ? '#85DCB0' : '#5A6761'} />
+      <Feather name="chevron-right" size={20} color={isDark ? '#85DCB0' : themeColor('#5A6761', darkPalette.muted)} />
     </Pressable>
     <PrivacyPolicyModal visible={privacyVisible} onClose={() => setPrivacyVisible(false)} />
   </>;
@@ -45,3 +49,13 @@ const styles = StyleSheet.create({
   badge: { alignItems: 'center', backgroundColor: '#E3F4EB', borderRadius: 18, height: 36, width: 36, justifyContent: 'center' },
   label: { color: '#121A16', flex: 1, fontSize: 16, fontWeight: '600' },
 });
+
+// Explicit dark surface and foreground pairs; the light layout stays unchanged.
+const darkStyles = {
+  row: { backgroundColor: darkPalette.field },
+  badge: { backgroundColor: darkPalette.tint },
+  label: { color: darkPalette.text },
+};
+function useStyles() {
+  return useThemedStyles(styles, darkStyles);
+}

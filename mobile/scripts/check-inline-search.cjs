@@ -4,6 +4,7 @@ const Input=()=>null;
 const hooks={...React,useState(initial){const i=cursor++;if(!(i in state))state[i]=initial;return[state[i],v=>state[i]=v];},useRef:()=>({current:{blur(){},focus(){focused++;}}}),useEffect:fn=>effects.push(fn)};
 const mocks={react:hooks,'react-native':{...RN,Keyboard:{dismiss(){dismissed++;}},useWindowDimensions:()=>({fontScale:1})},'heroui-native':{Input},'expo/node_modules/@expo/vector-icons':{Feather:()=>null},'@/components/app-text':{AppText:RN.Text}};
 const output={};const js=ts.transpileModule(fs.readFileSync(__dirname+'/../src/components/searchable-select.tsx','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,jsx:ts.JsxEmit.ReactJSX,target:ts.ScriptTarget.ES2022}}).outputText;
+Object.assign(mocks, require('./mobile-theme-fixture.cjs').themeDependencies('dark'));
 new Function('require','exports',js)(name=>mocks[name]||require(name),output);
 const props={value:'Abella',options:[{value:'Abella',label:'Abella',description:'Area 5'},{value:'Balatas',label:'Balatas',description:'Area 9'}],onChange:v=>{props.value=v;},onSearchFocus(){focused++;}};
 function tree(){cursor=0;effects=[];return output.SearchableSelect(props);}

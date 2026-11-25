@@ -45,3 +45,4 @@ example
 
 # Local exported UI verification build
 /.expo-web-check/
+/.theme-check/

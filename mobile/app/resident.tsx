@@ -1,3 +1,5 @@
+import { darkPalette } from '@/constants/mobile-palette';
+import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { AppSelect } from '@/components/app-select';
 import { WASTE_CATEGORY_OPTIONS, wasteCategoryLabel } from '@/lib/waste-categories';
 import { useNetworkRecovery } from '@/hooks/use-network-recovery';
@@ -274,16 +276,20 @@ function normalizeScheduleData(data: ScheduleData | LegacyScheduleData | null, f
 }
 
 function WastePill({ type, hero = false }: { type: 'Biodegradable' | 'Non-Biodegradable'; hero?: boolean }) {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   const biodegradable = type === 'Biodegradable';
   return (
     <View style={[styles.wastePill, biodegradable ? styles.bioPill : styles.nonBioPill, hero && styles.heroWastePill]}>
-      <MaterialCommunityIcons color={hero ? '#FFFFFF' : biodegradable ? '#086B42' : '#1A56C4'} name={biodegradable ? 'leaf' : 'recycle'} size={16} />
+      <MaterialCommunityIcons color={hero ? '#FFFFFF' : biodegradable ? themeColor('#086B42', darkPalette.accent) : themeColor('#1A56C4', darkPalette.blue)} name={biodegradable ? 'leaf' : 'recycle'} size={16} />
       <Text style={[styles.wastePillText, biodegradable ? styles.bioPillText : styles.nonBioPillText, hero && styles.heroWasteText]}>{type}</Text>
     </View>
   );
 }
 
 function MonthlyScheduleCalendar({ collections }: { collections: UpcomingCollection[] }) {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(new Date()));
   const [selectedDate, setSelectedDate] = useState(() => new Date());
   const [isExpanded, setIsExpanded] = useState(false);
@@ -313,13 +319,13 @@ function MonthlyScheduleCalendar({ collections }: { collections: UpcomingCollect
         <Text style={styles.calendarMonthTitle}>{monthLabel}</Text>
         <View style={styles.calendarHeaderActions}>
           <Pressable accessibilityLabel="Previous month" hitSlop={10} onPress={() => changeMonth(-1)} style={styles.calendarHeaderButton}>
-            <Feather color="#315043" name="chevron-left" size={24} />
+            <Feather color={themeColor("#315043", darkPalette.text)} name="chevron-left" size={24} />
           </Pressable>
           <Pressable accessibilityLabel="Next month" hitSlop={10} onPress={() => changeMonth(1)} style={styles.calendarHeaderButton}>
-            <Feather color="#315043" name="chevron-right" size={24} />
+            <Feather color={themeColor("#315043", darkPalette.text)} name="chevron-right" size={24} />
           </Pressable>
           <Pressable accessibilityLabel={isExpanded ? 'Collapse calendar' : 'Expand calendar'} accessibilityState={{ expanded: isExpanded }} hitSlop={10} onPress={() => setIsExpanded((expanded) => !expanded)} style={styles.calendarHeaderButton}>
-            <MotionChevron expanded={isExpanded}><Feather color="#315043" name="chevron-down" size={24} /></MotionChevron>
+            <MotionChevron expanded={isExpanded}><Feather color={themeColor("#315043", darkPalette.text)} name="chevron-down" size={24} /></MotionChevron>
           </Pressable>
         </View>
       </View>
@@ -356,7 +362,7 @@ function MonthlyScheduleCalendar({ collections }: { collections: UpcomingCollect
 
       <AccordionBody expanded={isExpanded}>
         <View style={styles.selectedCalendarDay}>
-          <Feather color="#07815f" name="calendar" size={22} />
+          <Feather color={themeColor("#07815f", darkPalette.accent)} name="calendar" size={22} />
           {selectedCollection ? (
             <View style={styles.selectedCalendarEventText}>
               <Text style={styles.selectedCalendarEventDate}>{formatDate(selectedDate, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</Text>
@@ -372,6 +378,7 @@ function MonthlyScheduleCalendar({ collections }: { collections: UpcomingCollect
 }
 
 function StatusPill({ status }: { status: string }) {
+  const styles = useStyles();
   const normalized = status.toLowerCase();
   const style = normalized === 'resolved' ? styles.resolvedPill : normalized === 'rejected' ? styles.rejectedPill : styles.scheduledPill;
   const textStyle = normalized === 'resolved' ? styles.resolvedText : normalized === 'rejected' ? styles.rejectedText : styles.scheduledText;
@@ -387,6 +394,7 @@ function StatusPill({ status }: { status: string }) {
 }
 
 function RealtimeStatus({ status }: { status: SocketStatus }) {
+  const styles = useStyles();
   const [visible, setVisible] = useState(true);
   const connectionSkeleton = useSkeletonVisible(status === 'connecting', status === 'connected');
 
@@ -417,6 +425,8 @@ function RealtimeStatus({ status }: { status: SocketStatus }) {
 }
 
 function BottomNavigation({ activeTab, onChange, unreadAnnouncements = 0, unreadComplaints = 0 }: { activeTab: ResidentTab; onChange: (tab: ResidentTab) => void; unreadAnnouncements?: number; unreadComplaints?: number }) {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   const insets = useSafeAreaInsets();
   const appTheme = useAppTheme();
   const isDark = appTheme === 'dark';
@@ -436,7 +446,7 @@ function BottomNavigation({ activeTab, onChange, unreadAnnouncements = 0, unread
         const Icon = tab.icon;
         return (
           <Pressable motionDisabled onLayout={(event) => pill.itemLayout(tab.key, event)} accessibilityRole="tab" accessibilityState={{ selected: active }} key={tab.key} onPress={() => onChange(tab.key)} style={styles.navItem}>
-            <View onLayout={(event) => pill.iconLayout(tab.key, event)} style={styles.navIcon}><Icon color={active ? (isDark ? '#85DCB0' : '#086B42') : (isDark ? '#B4C4BB' : '#5A6761')} size={22} strokeWidth={1.8} />{tab.key === 'schedule' && unreadAnnouncements > 0 ? <View style={styles.navBadge}><Text style={styles.navBadgeText}>{unreadAnnouncements > 99 ? '99+' : unreadAnnouncements}</Text></View> : null}{tab.key === 'report' && unreadComplaints > 0 ? <View style={styles.navBadge}><Text style={styles.navBadgeText}>{unreadComplaints > 99 ? '99+' : unreadComplaints}</Text></View> : null}</View>
+            <View onLayout={(event) => pill.iconLayout(tab.key, event)} style={styles.navIcon}><Icon color={active ? (isDark ? '#85DCB0' : themeColor('#086B42', darkPalette.accent)) : (isDark ? '#B4C4BB' : themeColor('#5A6761', darkPalette.muted))} size={22} strokeWidth={1.8} />{tab.key === 'schedule' && unreadAnnouncements > 0 ? <View style={styles.navBadge}><Text style={styles.navBadgeText}>{unreadAnnouncements > 99 ? '99+' : unreadAnnouncements}</Text></View> : null}{tab.key === 'report' && unreadComplaints > 0 ? <View style={styles.navBadge}><Text style={styles.navBadgeText}>{unreadComplaints > 99 ? '99+' : unreadComplaints}</Text></View> : null}</View>
             <Text style={[styles.navText, isDark && { color: '#B4C4BB' }, active && (isDark ? { color: '#85DCB0' } : styles.navTextActive)]}>{tab.label}</Text>
           </Pressable>
         );
@@ -446,6 +456,7 @@ function BottomNavigation({ activeTab, onChange, unreadAnnouncements = 0, unread
 }
 
 function HomeSectionLabel({ label, onViewAll, first = false }: { label: string; onViewAll?: () => void; first?: boolean }) {
+  const styles = useStyles();
   const isDarkTheme = useAppTheme() === 'dark';
   return (
     <View style={[styles.homeSectionRow, first && styles.homeFirstSection]}>
@@ -462,6 +473,7 @@ function HomeSectionLabel({ label, onViewAll, first = false }: { label: string; 
 }
 
 function AnnouncementCard({ item }: { item: Announcement }) {
+  const styles = useStyles();
   const isDarkTheme = useAppTheme() === 'dark';
   const isNew = item.publishedAt ? Date.now() - new Date(item.publishedAt).getTime() < 24 * 60 * 60 * 1000 : false;
   const relative = item.publishedAt ? formatDate(item.publishedAt, { month: 'short', day: 'numeric' }) : '';
@@ -474,6 +486,8 @@ function AnnouncementCard({ item }: { item: Announcement }) {
 }
 
 function ReportList({ reports, onSelect, showPhoto, animate = false }: { reports: ApiReport[]; onSelect: (report: ApiReport) => void; showPhoto?: boolean; animate?: boolean }) {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   const isDarkTheme = useAppTheme() === 'dark';
   if (!reports.length) {
     return <Text style={styles.complaintsEmpty}>No complaints yet. Tap + to message SWMO Support.</Text>;
@@ -494,10 +508,10 @@ function ReportList({ reports, onSelect, showPhoto, animate = false }: { reports
               <View style={styles.reportThumbnail}>
                 {report.photoUrl
                   ? <Image source={{ uri: report.photoUrl }} style={styles.reportThumbnailImage} />
-                  : <Feather color="#07815f" name="image" size={18} />}
+                  : <Feather color={themeColor("#07815f", darkPalette.accent)} name="image" size={18} />}
               </View>
             ) : (
-              <View style={[styles.complaintIcon, isDarkTheme && { backgroundColor: '#173E2D' }]}><Feather color={isDarkTheme ? '#85DCB0' : '#0A7F4F'} name="message-circle" size={20} /></View>
+              <View style={[styles.complaintIcon, isDarkTheme && { backgroundColor: '#173E2D' }]}><Feather color={isDarkTheme ? '#85DCB0' : themeColor('#0A7F4F', darkPalette.accent)} name="message-circle" size={20} /></View>
             )}
             <View style={styles.complaintCopy}>
               <Text numberOfLines={1} style={[styles.complaintSubject, isDarkTheme && { color: '#F1F6F3' }]}>{getReportSubject(report)}</Text>
@@ -505,7 +519,7 @@ function ReportList({ reports, onSelect, showPhoto, animate = false }: { reports
               <Text style={styles.complaintPreview}>Waste category: {wasteCategoryLabel(report.wasteCategory)}</Text>
               <View style={styles.complaintMeta}><StatusPill status={report.status} /></View>
             </View>
-            <Feather color="#5A6761" name="chevron-right" size={20} />
+            <Feather color={themeColor("#5A6761", darkPalette.muted)} name="chevron-right" size={20} />
           </View>
         </Pressable>
         </RevealRow>
@@ -515,6 +529,8 @@ function ReportList({ reports, onSelect, showPhoto, animate = false }: { reports
 }
 
 export default function ResidentScreen() {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   const appTheme = useAppTheme();
   const isDarkTheme = appTheme === 'dark';
   const networkRevision = useNetworkRecovery();
@@ -1131,9 +1147,9 @@ export default function ResidentScreen() {
         >
           <View style={styles.photoEmptyPickerIcon}>
             {isCapturingPhoto ? (
-              <ActivityIndicator color="#07815f" size="small" />
+              <ActivityIndicator color={themeColor("#07815f", darkPalette.accent)} size="small" />
             ) : (
-              <Feather color="#07815f" name="camera" size={22} />
+              <Feather color={themeColor("#07815f", darkPalette.accent)} name="camera" size={22} />
             )}
           </View>
           <View style={styles.photoEmptyPickerCopy}>
@@ -1144,7 +1160,7 @@ export default function ResidentScreen() {
               Required · helps SWMO verify and locate uncollected waste.
             </Text>
           </View>
-          <Feather color="#07815f" name="chevron-right" size={18} />
+          <Feather color={themeColor("#07815f", darkPalette.accent)} name="chevron-right" size={18} />
         </Pressable>
       );
     }
@@ -1187,7 +1203,7 @@ export default function ResidentScreen() {
         <View style={styles.aiResultContainer}>
           {aiDetection.status === 'scanning' ? (
             <View style={styles.aiScanningBanner}>
-              <ActivityIndicator color="#07815f" size="small" />
+              <ActivityIndicator color={themeColor("#07815f", darkPalette.accent)} size="small" />
               <View style={styles.aiTextColumn}>
                 <Text style={styles.aiScanningTitle}>Analyzing with Detection AI...</Text>
                 <Text style={styles.aiScanningSubtext}>Scanning image for waste bags via Roboflow</Text>
@@ -1196,7 +1212,7 @@ export default function ResidentScreen() {
           ) : aiDetection.status === 'done' && aiDetection.verified ? (
             <View style={styles.aiVerifiedBanner}>
               <View style={styles.aiBadgeIconSuccess}>
-                <Feather color="#07815f" name="check" size={15} />
+                <Feather color={themeColor("#07815f", darkPalette.accent)} name="check" size={15} />
               </View>
               <View style={styles.aiTextColumn}>
                 <View style={styles.aiTitleRow}>
@@ -1215,7 +1231,7 @@ export default function ResidentScreen() {
           ) : aiDetection.status === 'done' && !aiDetection.verified ? (
             <View style={styles.aiUnverifiedBanner}>
               <View style={styles.aiBadgeIconWarning}>
-                <Feather color="#8d5a1b" name="alert-circle" size={15} />
+                <Feather color={themeColor("#8d5a1b", darkPalette.warning)} name="alert-circle" size={15} />
               </View>
               <View style={styles.aiTextColumn}>
                 <Text style={styles.aiUnverifiedTitle}>AI: No waste bags confirmed</Text>
@@ -1224,7 +1240,7 @@ export default function ResidentScreen() {
             </View>
           ) : (
             <View style={styles.aiPendingBanner}>
-              <Feather color="#527062" name="cpu" size={14} />
+              <Feather color={themeColor("#527062", darkPalette.muted)} name="cpu" size={14} />
               <Text style={styles.aiPendingText}>AI verification will confirm waste on submission</Text>
             </View>
           )}
@@ -1233,15 +1249,15 @@ export default function ResidentScreen() {
         {/* Photo Metadata Grid */}
         <View style={styles.metadataSection}>
           <Pressable accessibilityRole="button" accessibilityLabel="Photo metadata" accessibilityState={{ expanded: photoMetadataExpanded }} onPress={() => setPhotoMetadataExpanded(value => !value)} style={styles.metadataHeader}>
-            <Feather color="#61746a" name="info" size={12} />
+            <Feather color={themeColor("#61746a", darkPalette.muted)} name="info" size={12} />
             <Text style={styles.metadataSectionTitle}>PHOTO METADATA</Text>
-            <MotionChevron expanded={photoMetadataExpanded}><Feather color="#61746a" name="chevron-down" size={18} /></MotionChevron>
+            <MotionChevron expanded={photoMetadataExpanded}><Feather color={themeColor("#61746a", darkPalette.muted)} name="chevron-down" size={18} /></MotionChevron>
           </Pressable>
           <AccordionBody expanded={photoMetadataExpanded}>
           <View style={styles.metadataGrid}>
             <View style={styles.metadataItem}>
               <View style={styles.metadataIconWrap}>
-                <Feather color="#07815f" name="map-pin" size={13} />
+                <Feather color={themeColor("#07815f", darkPalette.accent)} name="map-pin" size={13} />
               </View>
               <View style={styles.metadataTextWrap}>
                 <Text style={styles.metadataLabel}>LOCATION</Text>
@@ -1258,7 +1274,7 @@ export default function ResidentScreen() {
 
             <View style={styles.metadataItem}>
               <View style={styles.metadataIconWrap}>
-                <Feather color="#07815f" name="clock" size={13} />
+                <Feather color={themeColor("#07815f", darkPalette.accent)} name="clock" size={13} />
               </View>
               <View style={styles.metadataTextWrap}>
                 <Text style={styles.metadataLabel}>TIMESTAMP</Text>
@@ -1273,7 +1289,7 @@ export default function ResidentScreen() {
 
             <View style={styles.metadataItem}>
               <View style={styles.metadataIconWrap}>
-                <Feather color="#07815f" name="maximize" size={13} />
+                <Feather color={themeColor("#07815f", darkPalette.accent)} name="maximize" size={13} />
               </View>
               <View style={styles.metadataTextWrap}>
                 <Text style={styles.metadataLabel}>RESOLUTION</Text>
@@ -1290,7 +1306,7 @@ export default function ResidentScreen() {
 
             <View style={styles.metadataItem}>
               <View style={styles.metadataIconWrap}>
-                <Feather color="#07815f" name="hard-drive" size={13} />
+                <Feather color={themeColor("#07815f", darkPalette.accent)} name="hard-drive" size={13} />
               </View>
               <View style={styles.metadataTextWrap}>
                 <Text style={styles.metadataLabel}>FILE SIZE</Text>
@@ -1509,7 +1525,7 @@ export default function ResidentScreen() {
   const homeScreen = (
     <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
       <HomeSectionLabel first label="Today's collection" />
-      {isLoadingSchedule && schedule ? <ActivityIndicator accessibilityLabel="Loading" color="#0A7F4F" /> : null}
+      {isLoadingSchedule && schedule ? <ActivityIndicator accessibilityLabel="Loading" color={themeColor("#0A7F4F", darkPalette.accent)} /> : null}
       <SkeletonRegion state={scheduleSkeleton} placeholder={<View style={styles.nextCollectionSkeleton}><SkeletonBlock height={270} radius={24} /></View>}>
       <View style={styles.todayCardSpacing}>
         <ResidentTodayCollection today={todayDate} collections={todayCollections} unavailable={Boolean(scheduleError || !schedule)} openGuide={openGuide} />
@@ -1527,7 +1543,7 @@ export default function ResidentScreen() {
       <SegregationGuide selected={selectedGuide} openGuide={openGuide} closeGuide={closeGuide} />
 
       <HomeSectionLabel label="My recent reports" onViewAll={() => setActiveTab('report')} />
-      {isLoadingReports && pastReports.length > 0 ? <ActivityIndicator accessibilityLabel="Loading" color="#0A7F4F" /> : null}
+      {isLoadingReports && pastReports.length > 0 ? <ActivityIndicator accessibilityLabel="Loading" color={themeColor("#0A7F4F", darkPalette.accent)} /> : null}
       <View style={styles.homeFlatList}>
         <SkeletonRegion state={reportsSkeleton} placeholder={<SkeletonRows kind="report" count={3} />}>
           {reportError ? <Text style={styles.errorMessage}>{reportError}</Text> : null}
@@ -1543,7 +1559,7 @@ export default function ResidentScreen() {
       <View style={styles.announcementFilters}><Pressable onPress={() => changeAnnouncementScope('all')} style={[styles.announcementFilter, announcementScope === 'all' && styles.announcementFilterActive]}><Text style={[styles.announcementFilterText, announcementScope === 'all' && styles.announcementFilterTextActive]}>All</Text></Pressable><Pressable onPress={() => changeAnnouncementScope('mine')} style={[styles.announcementFilter, announcementScope === 'mine' && styles.announcementFilterActive]}><Text style={[styles.announcementFilterText, announcementScope === 'mine' && styles.announcementFilterTextActive]}>My area</Text></Pressable></View>
       {announcementError ? <Text style={styles.errorMessage}>{announcementError}</Text> : null}
       {announcements.map(item => <AnnouncementCard item={item} key={item.id} />)}
-      {announcementLoading && !announcements.length ? <ActivityIndicator color="#0A7F4F" /> : null}
+      {announcementLoading && !announcements.length ? <ActivityIndicator color={themeColor("#0A7F4F", darkPalette.accent)} /> : null}
       {!announcementLoading && !announcements.length && !announcementError ? <Text style={styles.emptyScheduleText}>No announcements yet.</Text> : null}
     </ScrollView>
   );
@@ -1556,7 +1572,7 @@ export default function ResidentScreen() {
 
       <Card style={styles.reportChatComposerCard}>
         <View style={styles.reportChatComposerHeading}>
-          <View style={styles.reportChatComposerIcon}><Feather color="#07815f" name="message-circle" size={20} /></View>
+          <View style={styles.reportChatComposerIcon}><Feather color={themeColor("#07815f", darkPalette.accent)} name="message-circle" size={20} /></View>
           <View style={styles.reportChatComposerHeadingText}>
             <Text style={styles.reportChatComposerTitle}>Start a report</Text>
             <Text style={styles.reportChatComposerSubtitle}>Send a message and photo to SWMO.</Text>
@@ -1565,14 +1581,14 @@ export default function ResidentScreen() {
 
         {renderPhotoProofSection()}
 
-        <TextInput multiline onChangeText={setDescription} placeholder="What happened? Write a message..." placeholderTextColor="#5A6761" selectionColor="#0A7F4F" style={styles.reportChatDraftInput} value={description} />
+        <TextInput multiline onChangeText={setDescription} placeholder="What happened? Write a message..." placeholderTextColor={themeColor("#5A6761", darkPalette.muted)} selectionColor="#0A7F4F" style={styles.reportChatDraftInput} value={description} />
         {reportMessage ? <Text accessibilityRole="alert" style={reportMessage.includes('submitted') ? styles.successMessage : styles.errorMessage}>{reportMessage}</Text> : null}
-        <View style={styles.reportChatComposerActions}><Pressable disabled={isCapturingPhoto} onPress={capturePhoto} style={[styles.retakeButton, isCapturingPhoto && styles.disabledButton]}>{isCapturingPhoto ? <ActivityIndicator color="#07815f" size="small" /> : <Feather color="#07815f" name="camera" size={15} />}<Text style={styles.retakeText}>{isCapturingPhoto ? 'Opening camera...' : selectedPhoto ? 'Retake photo' : 'Take photo'}</Text></Pressable><Pressable disabled={isSubmitting} onPress={submitReport} style={[styles.submitButton, isSubmitting && styles.disabledButton]}>{isSubmitting ? <ActivityIndicator color="#ffffff" /> : <><Feather color="#ffffff" name="send" size={15} /><Text style={styles.submitButtonText}>Send report</Text></>}</Pressable></View>
+        <View style={styles.reportChatComposerActions}><Pressable disabled={isCapturingPhoto} onPress={capturePhoto} style={[styles.retakeButton, isCapturingPhoto && styles.disabledButton]}>{isCapturingPhoto ? <ActivityIndicator color={themeColor("#07815f", darkPalette.accent)} size="small" /> : <Feather color={themeColor("#07815f", darkPalette.accent)} name="camera" size={15} />}<Text style={styles.retakeText}>{isCapturingPhoto ? 'Opening camera...' : selectedPhoto ? 'Retake photo' : 'Take photo'}</Text></Pressable><Pressable disabled={isSubmitting} onPress={submitReport} style={[styles.submitButton, isSubmitting && styles.disabledButton]}>{isSubmitting ? <ActivityIndicator color="#ffffff" /> : <><Feather color="#ffffff" name="send" size={15} /><Text style={styles.submitButtonText}>Send report</Text></>}</Pressable></View>
       </Card>
 
       <Card style={styles.card}>
         <View style={styles.cardTopRow}><Text style={styles.cardHeading}>YOUR REPORT CONVERSATIONS</Text>{pastReports.length ? <Text style={styles.reportCount}>{pastReports.length}</Text> : null}</View>
-        {isLoadingReports ? <ActivityIndicator color="#07815f" style={styles.loadingReports} /> : null}
+        {isLoadingReports ? <ActivityIndicator color={themeColor("#07815f", darkPalette.accent)} style={styles.loadingReports} /> : null}
         {reportError ? <Text style={styles.errorMessage}>{reportError}</Text> : null}
         {!isLoadingReports && !reportError ? <ReportList onSelect={setSelectedReport} reports={pastReports} /> : null}
       </Card>
@@ -1583,7 +1599,7 @@ export default function ResidentScreen() {
     <View style={[styles.complaintsPage, isDarkTheme && { backgroundColor: '#101815' }]}>
       <View style={styles.newComplaintHeader}>
         <Pressable accessibilityLabel="Back to complaints" accessibilityRole="button" onPress={() => { setIsCreatingReport(false); setReportMessage(''); setAiDetection({ status: 'idle' }); }} style={styles.newComplaintBack}>
-          <Feather color="#07815f" name="chevron-left" size={23} />
+          <Feather color={themeColor("#07815f", darkPalette.accent)} name="chevron-left" size={23} />
         </Pressable>
         <View style={styles.newComplaintHeaderText}>
           <Text style={styles.newComplaintTitle}>New complaint</Text>
@@ -1592,11 +1608,11 @@ export default function ResidentScreen() {
       </View>
       <ScrollView contentContainerStyle={styles.newComplaintContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <Text style={styles.fieldLabel}>Subject</Text>
-        <TextInput onChangeText={setReportSubject} accessibilityLabel="Subject" placeholder="e.g. Missed collection on Gen. Luna St." placeholderTextColor="#5A6761" style={styles.newComplaintInput} value={reportSubject} />
+        <TextInput onChangeText={setReportSubject} accessibilityLabel="Subject" placeholder="e.g. Missed collection on Gen. Luna St." placeholderTextColor={themeColor("#5A6761", darkPalette.muted)} style={styles.newComplaintInput} value={reportSubject} />
         <Text style={styles.fieldLabel}>Waste category</Text>
         <AppSelect appearance="auth" leadingIcon="tag" placeholder="Select waste category" value={wasteCategory} onChange={setWasteCategory} options={WASTE_CATEGORY_OPTIONS} disabled={isSubmitting} />
         <Text style={styles.fieldLabel}>Message</Text>
-        <TextInput multiline onChangeText={setDescription} accessibilityLabel="Message" placeholder="Describe the issue — street, number of bags, how long it has been there..." placeholderTextColor="#5A6761" style={[styles.newComplaintInput, styles.newComplaintMessageInput]} value={description} />
+        <TextInput multiline onChangeText={setDescription} accessibilityLabel="Message" placeholder="Describe the issue — street, number of bags, how long it has been there..." placeholderTextColor={themeColor("#5A6761", darkPalette.muted)} style={[styles.newComplaintInput, styles.newComplaintMessageInput]} value={description} />
         <Text style={styles.fieldLabel}>Photo proof</Text>
         {renderPhotoProofSection()}
         {reportMessage ? <ToastMotion><Text accessibilityRole="alert" style={reportMessage.startsWith('Complaint sent') ? styles.successMessage : styles.errorMessage}>{reportMessage}</Text></ToastMotion> : null}
@@ -1622,7 +1638,7 @@ export default function ResidentScreen() {
       <ScrollView contentContainerStyle={styles.complaintsListContent} showsVerticalScrollIndicator={false}>
         {reportMessage ? <ToastMotion><Text accessibilityRole="alert" style={reportMessage.startsWith('Complaint sent') ? styles.successMessage : styles.errorMessage}>{reportMessage}</Text></ToastMotion> : null}
         <View style={[styles.complaintsListCard, isDarkTheme && { backgroundColor: '#101815' }]}>
-          {isLoadingReports && pastReports.length > 0 ? <ActivityIndicator accessibilityLabel="Loading" color="#0A7F4F" /> : null}
+          {isLoadingReports && pastReports.length > 0 ? <ActivityIndicator accessibilityLabel="Loading" color={themeColor("#0A7F4F", darkPalette.accent)} /> : null}
           <SkeletonRegion state={reportsSkeleton} placeholder={<SkeletonRows kind="complaint" count={7} />}>
           {reportError ? <Text style={styles.errorMessage}>{reportError}</Text> : null}
           {pastReports.length || !reportError ? <ReportList animate={revealReports} onSelect={setSelectedReport} reports={pastReports} /> : null}
@@ -1653,17 +1669,17 @@ export default function ResidentScreen() {
             </View>
           </View>
           <View style={styles.profileHeroDivider} />
-          <Pressable accessibilityRole="button" onPress={() => { setProfileMessage(''); setProfilePhoto(null); setProfilePhotoRemoved(false); setProfileName(session?.user.name || ''); setProfilePhone(session?.user.phone || ''); setProfileLocation(session?.user.location || session?.user.barangay || ''); setIsEditingProfile(true); }} style={styles.editProfileButton}><Feather color="#0B5D44" name="edit-2" size={20} /><Text style={styles.editProfileText}>Edit Profile</Text></Pressable>
+          <Pressable accessibilityRole="button" onPress={() => { setProfileMessage(''); setProfilePhoto(null); setProfilePhotoRemoved(false); setProfileName(session?.user.name || ''); setProfilePhone(session?.user.phone || ''); setProfileLocation(session?.user.location || session?.user.barangay || ''); setIsEditingProfile(true); }} style={styles.editProfileButton}><Feather color={themeColor("#0B5D44", darkPalette.accent)} name="edit-2" size={20} /><Text style={styles.editProfileText}>Edit Profile</Text></Pressable>
           {profileMessage ? <ToastMotion><Text style={styles.profileHeroMessage}>{profileMessage}</Text></ToastMotion> : null}
       </View>}
 
       <View style={styles.menuCard}>
-        <Pressable accessibilityRole="button" onPress={() => setIsSettingsVisible(true)} style={styles.menuRow}><View accessible={false} style={styles.profileMenuBadge}><Feather color="#0A7F4F" name="settings" size={20} /></View><Text style={styles.menuText}>Settings & Preferences</Text><Feather color="#5A6761" name="chevron-right" size={20} /></Pressable>
-        <Pressable accessibilityRole="button" onPress={() => setActiveTab('home')} style={styles.menuRow}><View accessible={false} style={styles.profileMenuBadge}><Feather color="#0A7F4F" name="calendar" size={20} /></View><Text style={styles.menuText}>Collection Schedule</Text><Feather color="#5A6761" name="chevron-right" size={20} /></Pressable>
-        <Pressable accessibilityRole="button" onPress={() => setIsPrivacyVisible(true)} style={[styles.menuRow, { borderBottomWidth: 0 }]}><View accessible={false} style={styles.profileMenuBadge}><Feather color="#0A7F4F" name="shield" size={20} /></View><Text style={styles.menuText}>Privacy Policy</Text><Feather color="#5A6761" name="chevron-right" size={20} /></Pressable>
+        <Pressable accessibilityRole="button" onPress={() => setIsSettingsVisible(true)} style={styles.menuRow}><View accessible={false} style={styles.profileMenuBadge}><Feather color={themeColor("#0A7F4F", darkPalette.accent)} name="settings" size={20} /></View><Text style={styles.menuText}>Settings & Preferences</Text><Feather color={themeColor("#5A6761", darkPalette.muted)} name="chevron-right" size={20} /></Pressable>
+        <Pressable accessibilityRole="button" onPress={() => setActiveTab('home')} style={styles.menuRow}><View accessible={false} style={styles.profileMenuBadge}><Feather color={themeColor("#0A7F4F", darkPalette.accent)} name="calendar" size={20} /></View><Text style={styles.menuText}>Collection Schedule</Text><Feather color={themeColor("#5A6761", darkPalette.muted)} name="chevron-right" size={20} /></Pressable>
+        <Pressable accessibilityRole="button" onPress={() => setIsPrivacyVisible(true)} style={[styles.menuRow, { borderBottomWidth: 0 }]}><View accessible={false} style={styles.profileMenuBadge}><Feather color={themeColor("#0A7F4F", darkPalette.accent)} name="shield" size={20} /></View><Text style={styles.menuText}>Privacy Policy</Text><Feather color={themeColor("#5A6761", darkPalette.muted)} name="chevron-right" size={20} /></Pressable>
       </View>
 
-      <Pressable accessibilityRole="button" onPress={signOut} style={styles.signOutButton}><Feather color="#B3261E" name="log-out" size={20} /><Text style={styles.signOutText}>Sign Out</Text></Pressable>
+      <Pressable accessibilityRole="button" onPress={signOut} style={styles.signOutButton}><Feather color={themeColor("#B3261E", darkPalette.danger)} name="log-out" size={20} /><Text style={styles.signOutText}>Sign Out</Text></Pressable>
     </ScrollView>
   );
 
@@ -2028,3 +2044,183 @@ const styles = StyleSheet.create({
   metadataValue: { color: '#1f382a', fontSize: 11, fontWeight: '700', marginTop: 1 },
   metadataCaption: { color: '#95a49c', fontSize: 9, marginTop: 1 },
 });
+
+// Explicit dark surface and foreground pairs; the light layout stays unchanged.
+const darkStyles = {
+  newComplaintFooter: { backgroundColor: darkPalette.surface },
+  navIconActive: { backgroundColor: darkPalette.tint },
+  safeArea: { backgroundColor: darkPalette.surface },
+  residentHeader: { backgroundColor: darkPalette.surface },
+  headerGreetingText: { color: darkPalette.muted },
+  headerName: { color: darkPalette.text },
+  newsScreenTitle: { color: darkPalette.text },
+  newsScreenSubtitle: { color: darkPalette.muted },
+  announcementFilter: { borderColor: darkPalette.border },
+  announcementFilterText: { color: darkPalette.text },
+  newsCard: { backgroundColor: darkPalette.field },
+  newsCategory: { color: darkPalette.accent },
+  newsThumbnail: { backgroundColor: darkPalette.tint },
+  newsHeadline: { color: darkPalette.text },
+  newsDate: { color: darkPalette.muted },
+  newsExcerpt: { color: darkPalette.muted },
+  greeting: { color: darkPalette.muted },
+  name: { color: darkPalette.text },
+  location: { color: darkPalette.muted },
+  screenTitle: { color: darkPalette.text },
+  screenSubtitle: { color: darkPalette.muted },
+  realtimeStatusText: { color: darkPalette.accent },
+  card: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  calendarCard: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  calendarMonthTitle: { color: darkPalette.text },
+  calendarWeekday: { color: darkPalette.muted },
+  calendarDivider: { backgroundColor: darkPalette.field },
+  monthDateCircleSelected: { backgroundColor: darkPalette.tint },
+  monthDateText: { color: darkPalette.text },
+  monthDateTextSelected: { color: darkPalette.accent },
+  calendarLegend: { borderTopColor: darkPalette.border },
+  calendarLegendText: { color: darkPalette.muted },
+  selectedCalendarDay: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  selectedCalendarEventDate: { color: darkPalette.text },
+  selectedCalendarEventTime: { color: darkPalette.muted },
+  selectedCalendarEmpty: { color: darkPalette.muted },
+  cardHeading: { color: darkPalette.muted },
+  viewAll: { color: darkPalette.accent },
+  homeSectionLabel: { color: darkPalette.text },
+  emptyScheduleText: { color: darkPalette.muted },
+  bioPill: { backgroundColor: darkPalette.tint },
+  nonBioPill: { backgroundColor: darkPalette.blueTint },
+  bioPillText: { color: darkPalette.accent },
+  nonBioPillText: { color: darkPalette.blue },
+  recentReportRow: { borderBottomColor: darkPalette.border },
+  reportLocation: { color: darkPalette.text },
+  reportMeta: { color: darkPalette.muted },
+  reportDescription: { color: darkPalette.muted },
+  scheduledPill: { backgroundColor: darkPalette.blueTint },
+  resolvedPill: { backgroundColor: darkPalette.tint },
+  rejectedPill: { backgroundColor: darkPalette.dangerTint },
+  scheduledText: { color: darkPalette.blue },
+  resolvedText: { color: darkPalette.accent },
+  rejectedText: { color: darkPalette.danger },
+  upcomingBio: { backgroundColor: darkPalette.field, borderColor: darkPalette.border },
+  upcomingNonBio: { backgroundColor: darkPalette.blueTint, borderColor: darkPalette.border },
+  collectionDate: { color: darkPalette.text },
+  collectionTime: { color: darkPalette.muted },
+  reportCard: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  reportChatComposerCard: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  reportChatComposerIcon: { backgroundColor: darkPalette.tint },
+  reportChatComposerTitle: { color: darkPalette.text },
+  reportChatComposerSubtitle: { color: darkPalette.muted },
+  reportAttachmentEmpty: { backgroundColor: darkPalette.field, borderColor: darkPalette.border },
+  reportAttachmentIcon: { backgroundColor: darkPalette.tint },
+  reportAttachmentTitle: { color: darkPalette.text },
+  reportAttachmentSubtitle: { color: darkPalette.muted },
+  reportChatDraftInput: { backgroundColor: darkPalette.field, borderColor: darkPalette.border, color: darkPalette.text },
+  photoMetadataHintText: { color: darkPalette.muted },
+  reportCount: { color: darkPalette.accent },
+  complaintsPage: { backgroundColor: darkPalette.surface },
+  complaintsTitle: { color: darkPalette.text },
+  complaintsSubtitle: { color: darkPalette.muted },
+  complaintsListCard: { backgroundColor: darkPalette.surface },
+  complaintsEmpty: { color: darkPalette.muted },
+  complaintRowPressable: { borderBottomColor: darkPalette.border },
+  complaintIcon: { backgroundColor: darkPalette.tint },
+  complaintSubject: { color: darkPalette.text },
+  complaintPreview: { color: darkPalette.muted },
+  complaintDate: { color: darkPalette.muted },
+  newComplaintHeader: { backgroundColor: darkPalette.surface, borderBottomColor: darkPalette.border },
+  newComplaintTitle: { color: darkPalette.text },
+  newComplaintSubtitle: { color: darkPalette.muted },
+  newComplaintInput: { backgroundColor: darkPalette.field, color: darkPalette.text },
+  photoEmpty: { backgroundColor: darkPalette.field, borderColor: darkPalette.border },
+  cameraIcon: { backgroundColor: darkPalette.tint },
+  photoEmptyTitle: { color: darkPalette.text },
+  photoEmptySubtext: { color: darkPalette.muted },
+  fieldLabel: { color: darkPalette.text },
+  descriptionInput: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border, color: darkPalette.text },
+  retakeButton: { borderColor: darkPalette.border },
+  retakeText: { color: darkPalette.text },
+  successMessage: { color: darkPalette.accent },
+  errorMessage: { color: darkPalette.danger },
+  emptyReportText: { color: darkPalette.muted },
+  pastReportRow: { borderBottomColor: darkPalette.border },
+  reportThumbnail: { backgroundColor: darkPalette.tint },
+  profilePhotoButton: { backgroundColor: darkPalette.tint },
+  profilePhotoHint: { color: darkPalette.muted },
+  profileCard: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  profileTitle: { color: darkPalette.text },
+  avatar: { backgroundColor: darkPalette.tint },
+  avatarText: { color: darkPalette.accent },
+  editProfileButton: { backgroundColor: darkPalette.surface },
+  editProfileText: { color: darkPalette.accent },
+  profileEditTitle: { color: darkPalette.text },
+  profileFieldLabel: { color: darkPalette.muted },
+  profileInput: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border, color: darkPalette.text },
+  profileCancelButton: { borderColor: darkPalette.border },
+  profileCancelText: { color: darkPalette.text },
+  profileMenuBadge: { backgroundColor: darkPalette.tint },
+  menuRow: { borderBottomColor: darkPalette.border },
+  menuText: { color: darkPalette.text },
+  signOutButton: { backgroundColor: darkPalette.dangerTint },
+  signOutText: { color: darkPalette.danger },
+  reportDetailsSheet: { backgroundColor: darkPalette.surface },
+  reportDetailsEyebrow: { color: darkPalette.accent },
+  reportDetailsTitle: { color: darkPalette.text },
+  reportDetailsClose: { backgroundColor: darkPalette.field },
+  reportDetailsPhoto: { backgroundColor: darkPalette.field },
+  reportNoPhotoCard: { backgroundColor: darkPalette.field },
+  reportNoPhotoText: { color: darkPalette.muted },
+  reportDetailsDate: { color: darkPalette.muted },
+  reportDetailsSectionTitle: { color: darkPalette.muted },
+  reportStatusTracker: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  trackerTitle: { color: darkPalette.muted },
+  trackerDot: { backgroundColor: darkPalette.field },
+  trackerConnector: { backgroundColor: darkPalette.field },
+  trackerLabel: { color: darkPalette.muted },
+  trackerLabelActive: { color: darkPalette.text },
+  rejectedTrackerText: { color: darkPalette.danger },
+  reportDetailsInfoCard: { backgroundColor: darkPalette.surface },
+  reportDetailIcon: { backgroundColor: darkPalette.tint },
+  reportDetailLabel: { color: darkPalette.muted },
+  reportDetailValue: { color: darkPalette.text },
+  reportDescriptionCard: { backgroundColor: darkPalette.surface },
+  reportDescriptionDetail: { color: darkPalette.text },
+  reportChatCard: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  reportChatEmpty: { color: darkPalette.muted },
+  reportChatMessageResident: { backgroundColor: darkPalette.tint },
+  reportChatMessageAdmin: { backgroundColor: darkPalette.field },
+  reportChatSender: { color: darkPalette.muted },
+  reportChatBody: { color: darkPalette.text },
+  reportChatTime: { color: darkPalette.muted },
+  reportChatInput: { backgroundColor: darkPalette.field, borderColor: darkPalette.border, color: darkPalette.text },
+  bottomNav: { backgroundColor: darkPalette.surface, borderTopColor: darkPalette.border },
+  navText: { color: darkPalette.muted },
+  navTextActive: { color: darkPalette.accent },
+  photoEmptyPicker: { backgroundColor: darkPalette.field, borderColor: darkPalette.border },
+  photoEmptyPickerIcon: { backgroundColor: darkPalette.tint },
+  photoEmptyPickerTitle: { color: darkPalette.text },
+  photoEmptyPickerSubtitle: { color: darkPalette.muted },
+  photoPreviewCard: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  aiScanningBanner: { backgroundColor: darkPalette.field, borderColor: darkPalette.border },
+  aiScanningTitle: { color: darkPalette.accent },
+  aiScanningSubtext: { color: darkPalette.muted },
+  aiVerifiedBanner: { backgroundColor: darkPalette.tint, borderColor: darkPalette.border },
+  aiBadgeIconSuccess: { backgroundColor: darkPalette.tint },
+  aiVerifiedTitle: { color: darkPalette.accent },
+  aiVerifiedSubtext: { color: darkPalette.muted },
+  aiUnverifiedBanner: { backgroundColor: darkPalette.tint, borderColor: darkPalette.border },
+  aiBadgeIconWarning: { backgroundColor: darkPalette.warningTint },
+  aiUnverifiedTitle: { color: darkPalette.warning },
+  aiUnverifiedSubtext: { color: darkPalette.muted },
+  aiPendingBanner: { backgroundColor: darkPalette.field, borderColor: darkPalette.border },
+  aiPendingText: { color: darkPalette.muted },
+  metadataSection: { borderTopColor: darkPalette.border },
+  metadataSectionTitle: { color: darkPalette.muted },
+  metadataItem: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  metadataIconWrap: { backgroundColor: darkPalette.tint },
+  metadataLabel: { color: darkPalette.muted },
+  metadataValue: { color: darkPalette.text },
+  metadataCaption: { color: darkPalette.muted },
+};
+function useStyles() {
+  return useThemedStyles(styles, darkStyles);
+}

@@ -1,3 +1,5 @@
+import { darkPalette } from '@/constants/mobile-palette';
+import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { wasteCategoryLabel } from '@/lib/waste-categories';
 import { ResidentAvatar } from './resident-avatar';
 import { useEffect, useRef, useState } from 'react';
@@ -16,6 +18,8 @@ const stages = ['Submitted', 'Acknowledged\nScheduled', 'Resolved'];
 const date = (value: string, time = false) => { const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? 'Date unavailable' : parsed.toLocaleString('en-PH', time ? {hour:'numeric',minute:'2-digit'} : {month:'short',day:'numeric',year:'numeric'}); };
 
 export function ResidentComplaintConversation({residentName = 'Resident',residentPhoto,report,subject,body,bags,metadata,messages,loading,sending,error,draft,setDraft,send,onClose,bottomInset}: Props) {
+  const themeColor = useThemeColor();
+  const s = useS();
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [photoOpen, setPhotoOpen] = useState(false);
@@ -51,7 +55,7 @@ export function ResidentComplaintConversation({residentName = 'Resident',residen
   const scrollToLatest = () => {if (scrollNeeded.current) {thread.current?.scrollToEnd({animated:false});scrollNeeded.current=false;}};
   return <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={s.sheet}>
     <View style={s.header}>
-      <Pressable accessibilityRole="button" accessibilityLabel="Back to complaints" onPress={onClose} style={s.back}><Feather name="chevron-left" size={24} color="#086B42" /></Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel="Back to complaints" onPress={onClose} style={s.back}><Feather name="chevron-left" size={24} color={themeColor("#086B42", darkPalette.accent)} /></Pressable>
       <View style={s.heading}><Text style={s.eyebrow}>SWMO SUPPORT</Text>{loading ? <SkeletonBlock height={26} width="90%" /> : <Text numberOfLines={1} ellipsizeMode="tail" style={s.subject}>{subject}</Text>}
       {!keyboardOpen ? <View style={[s.status,resolved && s.statusResolved,rejected && s.statusRejected]}><View style={[s.statusDot,resolved && s.green,rejected && s.red]} /><Text style={[s.statusText,resolved && s.greenText,rejected && s.redText]}>{statusLabel}</Text></View> : null}
       </View>
@@ -71,16 +75,16 @@ export function ResidentComplaintConversation({residentName = 'Resident',residen
     <ScrollView ref={thread} style={s.thread} contentContainerStyle={s.threadContent} keyboardShouldPersistTaps="handled" onContentSizeChange={scrollToLatest} onLayout={scrollToLatest} onScroll={event => setScrolled(event.nativeEvent.contentOffset.y > 1)} scrollEventThrottle={32}>
       <View style={s.detailsGroup}>
       <Pressable accessibilityRole="button" accessibilityLabel="Complaint details" accessibilityState={{expanded:detailsExpanded}} onPress={() => setDetailsExpanded(value => !value)} style={s.disclosure}>
-        <Text style={s.disclosureTitle}>Complaint details</Text><MotionChevron expanded={detailsExpanded}><Feather name="chevron-down" size={20} color="#0A7F4F"/></MotionChevron>
+        <Text style={s.disclosureTitle}>Complaint details</Text><MotionChevron expanded={detailsExpanded}><Feather name="chevron-down" size={20} color={themeColor("#0A7F4F", darkPalette.accent)}/></MotionChevron>
       </Pressable>
       <AccordionBody expanded={detailsExpanded}>
       <View style={s.details}>
-        <Feather name="map-pin" color="#0A7F4F" size={18}/><View style={s.detailCopy}><Text style={s.detailLabel}>Location</Text><Text style={s.detailValue}>{report.barangay || 'Not recorded'}</Text></View>
+        <Feather name="map-pin" color={themeColor("#0A7F4F", darkPalette.accent)} size={18}/><View style={s.detailCopy}><Text style={s.detailLabel}>Location</Text><Text style={s.detailValue}>{report.barangay || 'Not recorded'}</Text></View>
       </View>
       <View style={s.details}>
-        <MaterialCommunityIcons name="sack-outline" color="#0A7F4F" size={18}/><View style={s.detailCopy}><Text style={s.detailLabel}>Detected bag count</Text><Text style={s.detailValue}>{bags}</Text></View>
+        <MaterialCommunityIcons name="sack-outline" color={themeColor("#0A7F4F", darkPalette.accent)} size={18}/><View style={s.detailCopy}><Text style={s.detailLabel}>Detected bag count</Text><Text style={s.detailValue}>{bags}</Text></View>
       </View>
-      <View style={s.details}><Feather name="tag" color="#0A7F4F" size={18}/><View style={s.detailCopy}><Text style={s.detailLabel}>Waste category</Text><Text style={s.detailValue}>{wasteCategoryLabel(report.wasteCategory)}</Text></View></View>
+      <View style={s.details}><Feather name="tag" color={themeColor("#0A7F4F", darkPalette.accent)} size={18}/><View style={s.detailCopy}><Text style={s.detailLabel}>Waste category</Text><Text style={s.detailValue}>{wasteCategoryLabel(report.wasteCategory)}</Text></View></View>
       </AccordionBody>
       </View>
       <Text style={s.date}>{date(report.createdAt)}</Text>
@@ -89,7 +93,7 @@ export function ResidentComplaintConversation({residentName = 'Resident',residen
         {report.photoUrl ? <View style={s.photoWrap}><Image accessibilityLabel="Submitted waste photo" source={{uri:report.photoUrl}} contentFit="cover" style={s.photo}/>
           {report.aiVerified ? <View accessibilityLabel={typeof report.aiConfidence === 'number' ? `AI verified, ${Math.round(report.aiConfidence * 100)} percent match` : 'AI verified'} style={s.verified}><Feather name="check" size={14} color="white"/></View> : null}
           <Pressable accessibilityRole="button" accessibilityLabel="Expand complaint photo" onPress={() => setPhotoOpen(true)} style={s.expand}><Feather name="maximize" size={18} color="white"/></Pressable></View> : <Text style={s.meta}>Submitted photo unavailable</Text>}
-        {metadata ? <View><Pressable accessibilityRole="button" accessibilityLabel="Photo metadata" accessibilityState={{expanded:metadataExpanded}} onPress={() => setMetadataExpanded(value => !value)} style={s.disclosure}><Text style={s.disclosureTitle}>Photo metadata</Text><MotionChevron expanded={metadataExpanded}><Feather name="chevron-down" size={18} color="#0A7F4F"/></MotionChevron></Pressable><AccordionBody expanded={metadataExpanded}><Text style={s.meta}>{metadata}</Text></AccordionBody></View> : null}<Text style={s.time}>{date(report.createdAt,true)}</Text>
+        {metadata ? <View><Pressable accessibilityRole="button" accessibilityLabel="Photo metadata" accessibilityState={{expanded:metadataExpanded}} onPress={() => setMetadataExpanded(value => !value)} style={s.disclosure}><Text style={s.disclosureTitle}>Photo metadata</Text><MotionChevron expanded={metadataExpanded}><Feather name="chevron-down" size={18} color={themeColor("#0A7F4F", darkPalette.accent)}/></MotionChevron></Pressable><AccordionBody expanded={metadataExpanded}><Text style={s.meta}>{metadata}</Text></AccordionBody></View> : null}<Text style={s.time}>{date(report.createdAt,true)}</Text>
       </View>
       {loading ? <SkeletonRows kind="chat" count={3}/> : <>
         {!messages.some(message => message.senderRole !== 'resident') ? <Text style={s.empty}>No messages yet. Send a message to the collection team.</Text> : null}
@@ -102,8 +106,8 @@ export function ResidentComplaintConversation({residentName = 'Resident',residen
       {error ? <Text accessibilityRole="alert" style={s.redText}>{error}</Text> : null}
     </ScrollView>
     <View style={[s.composer,{paddingBottom:keyboardOpen ? 12 : Math.max(28,bottomInset + 12)}]}>
-      <Pressable accessibilityRole="button" accessibilityLabel="Attachments unavailable. Messages currently support text only." accessibilityState={{disabled:true}} disabled style={s.attach}><Feather name="paperclip" size={22} color="#5A6761"/></Pressable>
-      <TextInput accessibilityLabel="Message collection team" multiline maxLength={1000} value={draft} onChangeText={setDraft} placeholder="Write a message..." selectionColor="#0A7F4F" placeholderTextColor="#5A6761" style={s.input}/>
+      <Pressable accessibilityRole="button" accessibilityLabel="Attachments unavailable. Messages currently support text only." accessibilityState={{disabled:true}} disabled style={s.attach}><Feather name="paperclip" size={22} color={themeColor("#5A6761", darkPalette.muted)}/></Pressable>
+      <TextInput accessibilityLabel="Message collection team" multiline maxLength={1000} value={draft} onChangeText={setDraft} placeholder="Write a message..." selectionColor="#0A7F4F" placeholderTextColor={themeColor("#5A6761", darkPalette.muted)} style={s.input}/>
       <Pressable accessibilityRole="button" accessibilityLabel={sending ? 'Sending message' : 'Send message'} disabled={sending || !draft.trim()} onPress={submit} style={[s.send,(sending || !draft.trim()) && s.disabled]}><Feather name="send" size={22} color="white"/></Pressable>
     </View>
     <MotionModal transparent visible={photoOpen} onRequestClose={() => setPhotoOpen(false)} animationType="fade"><View style={s.lightbox}><Pressable accessibilityRole="button" accessibilityLabel="Close photo" onPress={() => setPhotoOpen(false)} style={s.photoClose}><Feather name="x" color="white" size={24}/></Pressable>{report.photoUrl ? <Image source={{uri:report.photoUrl}} contentFit="contain" accessibilityLabel="Full complaint photo" style={s.fullPhoto}/> : null}</View></MotionModal>
@@ -119,3 +123,45 @@ const s=StyleSheet.create({
  bubble:{maxWidth:300,paddingVertical:12,paddingHorizontal:14,borderRadius:18,minWidth:0,flexShrink:1},own:{alignSelf:'flex-end',backgroundColor:'#E3F4EB',borderBottomRightRadius:6},reply:{backgroundColor:'#F1F5F3',borderBottomLeftRadius:6},sender:{fontSize:12,fontWeight:'700',color:'#086B42',marginBottom:4},messageSubject:{fontSize:15,fontWeight:'700',color:'#121A16'},messageBody:{fontSize:15,color:'#121A16',lineHeight:22},time:{fontSize:12,color:'#5A6761',textAlign:'right',marginTop:8},photoWrap:{marginTop:12},photo:{width:'100%',height:150,borderRadius:12},expand:{position:'absolute',right:8,bottom:8,width:36,height:36,borderRadius:18,backgroundColor:'#18352CDD',alignItems:'center',justifyContent:'center'},verified:{position:'absolute',top:8,left:8,width:24,height:24,borderRadius:12,backgroundColor:'#0A7F4F',alignItems:'center',justifyContent:'center'},meta:{fontSize:11,color:'#4B5A53',lineHeight:16,marginTop:8},empty:{fontSize:13,color:'#5A6761',textAlign:'center',paddingVertical:8},messageRow:{flexDirection:'row',alignItems:'flex-end',gap:8},ownRow:{justifyContent:'flex-end'},avatar:{width:36,height:36,borderRadius:18,backgroundColor:'#0A7F4F',alignItems:'center',justifyContent:'center'},avatarText:{color:'white',fontWeight:'700',fontSize:14},
  composer:{flexDirection:'row',alignItems:'flex-end',gap:8,paddingTop:12,paddingHorizontal:16,borderTopWidth:1,borderTopColor:'#E3EAE6',flexShrink:0},attach:{width:44,height:48,alignItems:'center',justifyContent:'center',opacity:0.45},input:{flex:1,minWidth:0,minHeight:48,maxHeight:112,borderRadius:24,backgroundColor:'#F1F5F3',fontSize:15,paddingHorizontal:16,paddingVertical:12,color:'#121A16'},send:{width:48,height:48,borderRadius:24,backgroundColor:'#0A7F4F',alignItems:'center',justifyContent:'center'},disabled:{opacity:0.45},lightbox:{flex:1,backgroundColor:'#0D1E18F2',padding:20},photoClose:{height:44,width:44,alignItems:'center',justifyContent:'center',alignSelf:'flex-end',marginTop:40},fullPhoto:{flex:1,width:'100%'},
 });
+
+// Explicit dark surface and foreground pairs; the light layout stays unchanged.
+const darkStyles = {
+  sheet: { backgroundColor: darkPalette.surface },
+  eyebrow: { color: darkPalette.accent },
+  subject: { color: darkPalette.text },
+  status: { backgroundColor: darkPalette.blueTint },
+  statusText: { color: darkPalette.blue },
+  statusResolved: { backgroundColor: darkPalette.tint },
+  statusRejected: { backgroundColor: darkPalette.dangerTint },
+  greenText: { color: darkPalette.accent },
+  redText: { color: darkPalette.danger },
+  trackerBorder: { borderBottomColor: darkPalette.border },
+  tracker: { backgroundColor: darkPalette.field },
+  trackerTitle: { color: darkPalette.muted },
+  circle: { backgroundColor: darkPalette.field },
+  connector: { backgroundColor: darkPalette.field },
+  stepLabel: { color: darkPalette.muted },
+  completedLabel: { color: darkPalette.text },
+  segment: { backgroundColor: darkPalette.field },
+  compactLabel: { color: darkPalette.text },
+  detailsGroup: { backgroundColor: darkPalette.field },
+  disclosureTitle: { color: darkPalette.text },
+  details: { backgroundColor: darkPalette.field },
+  detailLabel: { color: darkPalette.muted },
+  detailValue: { color: darkPalette.text },
+  detailDivider: { backgroundColor: darkPalette.field },
+  date: { color: darkPalette.muted },
+  own: { backgroundColor: darkPalette.tint },
+  reply: { backgroundColor: darkPalette.field },
+  sender: { color: darkPalette.accent },
+  messageSubject: { color: darkPalette.text },
+  messageBody: { color: darkPalette.text },
+  time: { color: darkPalette.muted },
+  meta: { color: darkPalette.muted },
+  empty: { color: darkPalette.muted },
+  composer: { borderTopColor: darkPalette.border },
+  input: { backgroundColor: darkPalette.field, color: darkPalette.text },
+};
+function useS() {
+  return useThemedStyles(s, darkStyles);
+}

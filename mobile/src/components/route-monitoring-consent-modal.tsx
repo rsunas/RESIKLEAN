@@ -1,3 +1,5 @@
+import { darkPalette } from '@/constants/mobile-palette';
+import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
@@ -52,23 +54,25 @@ export function RouteMonitoringConsentModal({ visible, onCancel, onEnable }: {
   onCancel: () => void;
   onEnable: () => void;
 }) {
+  const themeColor = useThemeColor();
+  const styles = useStyles();
   return (
     <Modal animationType="fade" transparent visible={visible} onRequestClose={onCancel}>
       <SafeAreaView style={styles.backdrop}>
         <ScrollView bounces={false} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
           <View accessibilityViewIsModal style={styles.card}>
             <View style={styles.heading}>
-              <View accessible={false} style={styles.iconBadge}><Feather name="map-pin" size={24} color="#0A7F4F" /></View>
+              <View accessible={false} style={styles.iconBadge}><Feather name="map-pin" size={24} color={themeColor("#0A7F4F", darkPalette.accent)} /></View>
               <Text accessibilityRole="header" style={styles.title}>Start trip?</Text>
             </View>
             <Text style={styles.message}>Allow ResiKlean to use your location for your assigned route, even while minimized or offline.</Text>
             <View style={styles.details}>
               <View style={styles.detailRow}>
-                <Feather accessible={false} name="check-circle" size={18} color="#0A7F4F" />
+                <Feather accessible={false} name="check-circle" size={18} color={themeColor("#0A7F4F", darkPalette.accent)} />
                 <Text style={styles.detailText}>Recording begins with your first accurate GPS reading, even before you reach the assigned route.</Text>
               </View>
               <View style={styles.detailRow}>
-                <Feather accessible={false} name="bell" size={18} color="#0A7F4F" />
+                <Feather accessible={false} name="bell" size={18} color={themeColor("#0A7F4F", darkPalette.accent)} />
                 <Text style={styles.detailText}>Location notification stays on. Tap End trip when you finish. Offline records sync when you reconnect.</Text>
               </View>
             </View>
@@ -106,3 +110,19 @@ const styles = StyleSheet.create({
   cancelText: { color: '#35463F', fontSize: 15, fontWeight: '600', textAlign: 'center' },
   enableText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700', textAlign: 'center' },
 });
+
+// Explicit dark surface and foreground pairs; the light layout stays unchanged.
+const darkStyles = {
+  card: { backgroundColor: darkPalette.surface },
+  iconBadge: { backgroundColor: darkPalette.tint },
+  title: { color: darkPalette.text },
+  message: { color: darkPalette.muted },
+  details: { backgroundColor: darkPalette.field },
+  detailText: { color: darkPalette.text },
+  permissionHint: { color: darkPalette.muted },
+  cancelButton: { backgroundColor: darkPalette.field },
+  cancelText: { color: darkPalette.text },
+};
+function useStyles() {
+  return useThemedStyles(styles, darkStyles);
+}

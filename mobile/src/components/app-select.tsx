@@ -1,3 +1,5 @@
+import { darkPalette } from '@/constants/mobile-palette';
+import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
 import { useState, type ComponentProps } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, TextInput, Text as NativeText, View, useWindowDimensions } from 'react-native';
@@ -25,6 +27,8 @@ type AppSelectProps = {
 };
 
 export function AppSelect({ searchable = false, appearance = 'default', invalid = false, disabled = false, leadingIcon, label, onChange, options, placeholder = 'Select one', value }: AppSelectProps) {
+  const themeColor = useThemeColor(appearance === 'auth');
+  const styles = useStyles(appearance === 'auth');
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
   const matches = options.filter(option => !searchable || `${option.label} ${option.description || ''}`.toLowerCase().includes(search.trim().toLowerCase()));
@@ -53,14 +57,14 @@ export function AppSelect({ searchable = false, appearance = 'default', invalid 
         style={({ pressed }) => [styles.trigger, appearance === 'staff' && styles.staffTrigger, pressed && styles.triggerPressed, appearance === 'auth' && styles.authTrigger, appearance === 'auth' && { minHeight: Math.max(56, 16 * fontScale * 1.4 + 20) }, appearance === 'auth' && (focused || isOpen) && styles.authFocus, appearance === 'auth' && invalid && styles.authInvalid, appearance === 'staff-filter' && styles.filterTrigger, appearance === 'staff-filter' && { minHeight: Math.max(52, 15 * fontScale * 1.4 + 24) }, disabled && styles.disabled]}>
         {leadingIcon ? (
           <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none" style={[styles.leadingIcon, appearance === 'auth' && styles.authLeadingIcon, appearance === 'staff-filter' && styles.filterLeadingIcon]}>
-            <Feather name={leadingIcon} size={20} color={appearance === 'staff-filter' ? '#5A6761' : appearance === 'auth' ? C.muted : '#0A7F4F'} />
+            <Feather name={leadingIcon} size={20} color={appearance === 'staff-filter' ? themeColor('#5A6761', darkPalette.muted) : appearance === 'auth' ? C.muted : themeColor('#0A7F4F', darkPalette.accent)} />
           </View>
         ) : null}
         <TriggerText ellipsizeMode="tail" numberOfLines={appearance !== 'default' ? 1 : undefined} style={[styles.triggerText, !selectedOption && styles.placeholder, appearance === 'staff' && styles.staffText, appearance === 'auth' && styles.authText, appearance === 'auth' && !selectedOption && styles.authPlaceholder, appearance === 'staff-filter' && styles.filterText]}>
           {selectedOption?.label ?? placeholder}
         </TriggerText>
         <View accessible={false} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" pointerEvents="none" style={[styles.chevron, isOpen && styles.chevronOpen]}>
-          <Feather name="chevron-down" size={appearance === 'auth' ? 22 : 20} color="#35463F" />
+          <Feather name="chevron-down" size={appearance === 'auth' ? 22 : 20} color={themeColor("#35463F", darkPalette.text)} />
         </View>
       </Pressable>
 
@@ -79,7 +83,7 @@ export function AppSelect({ searchable = false, appearance = 'default', invalid 
                 <Text style={styles.closeText}>×</Text>
               </Pressable>
             </View>
-            {searchable ? <TextInput accessibilityLabel={`Search ${label ?? 'options'}`} placeholder="Search options..." placeholderTextColor="#5A6761" value={search} onChangeText={setSearch} autoCorrect={false} style={styles.optionSearch}/> : null}
+            {searchable ? <TextInput accessibilityLabel={`Search ${label ?? 'options'}`} placeholder="Search options..." placeholderTextColor={themeColor("#5A6761", darkPalette.muted)} value={search} onChangeText={setSearch} autoCorrect={false} style={styles.optionSearch}/> : null}
             <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.options} showsVerticalScrollIndicator={false}>
               {!matches.length ? <Text style={styles.optionEmpty}>No matching options</Text> : null}
               {matches.map((option) => {
@@ -161,3 +165,37 @@ const styles = StyleSheet.create({
   optionDescription: { color: '#718b7f', fontSize: 12, marginTop: 3 },
   checkmark: { color: '#087f5b', fontSize: 20, fontWeight: '700', marginLeft: 12 },
 });
+
+// Explicit dark surface and foreground pairs; the light layout stays unchanged.
+const darkStyles = {
+  filterLabel: { color: darkPalette.text },
+  filterTrigger: { backgroundColor: darkPalette.field },
+  filterText: { color: darkPalette.text },
+  optionSearch: { backgroundColor: darkPalette.field, color: darkPalette.text },
+  optionEmpty: { color: darkPalette.muted },
+  authTrigger: { backgroundColor: darkPalette.field },
+  authText: { color: darkPalette.text },
+  authPlaceholder: { color: darkPalette.muted },
+  authFocus: { backgroundColor: darkPalette.surface },
+  staffLabel: { color: darkPalette.text },
+  staffTrigger: { backgroundColor: darkPalette.field },
+  staffText: { color: darkPalette.text },
+  label: { color: darkPalette.muted },
+  trigger: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  triggerPressed: { backgroundColor: darkPalette.field },
+  triggerText: { color: darkPalette.text },
+  placeholder: { color: darkPalette.muted },
+  modalCard: { backgroundColor: darkPalette.surface, borderColor: darkPalette.border },
+  modalHeader: { borderBottomColor: darkPalette.border },
+  modalTitle: { color: darkPalette.text },
+  closeText: { color: darkPalette.muted },
+  selectedOption: { backgroundColor: darkPalette.tint },
+  optionPressed: { backgroundColor: darkPalette.field },
+  optionLabel: { color: darkPalette.text },
+  selectedOptionLabel: { color: darkPalette.accent },
+  optionDescription: { color: darkPalette.muted },
+  checkmark: { color: darkPalette.accent },
+};
+function useStyles(forceLight = false) {
+  return useThemedStyles(styles, darkStyles, forceLight);
+}

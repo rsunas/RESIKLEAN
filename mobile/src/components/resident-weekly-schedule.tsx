@@ -1,3 +1,5 @@
+import { darkCategoryColors, darkPalette } from '@/constants/mobile-palette';
+import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-icons';
@@ -11,6 +13,8 @@ const ROW_HEIGHT = 84;
 const GAP = 8;
 
 export function ResidentWeeklySchedule({ collections, today }: { collections: UpcomingCollection[]; today: string }) {
+  const styles = useStyles();
+  const themeColor = useThemeColor();
   const [heights, setHeights] = useState<Record<number, number>>({});
   const visibleCount = Math.min(3, collections.length);
   const height = Array.from({ length: visibleCount }, (_, index) => heights[index] ?? ROW_HEIGHT)
@@ -28,7 +32,7 @@ export function ResidentWeeklySchedule({ collections, today }: { collections: Up
         const spokenDay = date.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'Asia/Manila' });
         const dayNumber = day.slice(-2).replace(/^0/, '');
         const windows = collection.timeWindows.map(window => formatCollectionWindow(window, true)).join(' · ') || 'Time unavailable';
-        const color = past ? UI.past : category.dark;
+        const color = past ? themeColor(UI.past, darkPalette.muted) : themeColor(category.dark, darkCategoryColors[category.id].text);
         return <View
           key={day + '-' + collection.wasteType + '-' + index}
           accessible accessibilityLabel={`${spokenDay} ${dayNumber}, ${category.title}, ${windows}${isToday ? ', today' : ''}`}
@@ -36,7 +40,7 @@ export function ResidentWeeklySchedule({ collections, today }: { collections: Up
             const measured = Math.ceil(event.nativeEvent.layout.height);
             setHeights(previous => previous[index] === measured ? previous : { ...previous, [index]: measured });
           } : undefined}
-          style={[styles.row, { backgroundColor: isToday ? category.tint : 'transparent' }]}
+          style={[styles.row, { backgroundColor: isToday ? themeColor(category.tint, darkCategoryColors[category.id].tint) : 'transparent' }]}
         >
           <View style={styles.date}>
             <Text style={[styles.day, { color }]}>{weekday.toUpperCase()}</Text>
@@ -47,7 +51,7 @@ export function ResidentWeeklySchedule({ collections, today }: { collections: Up
               <Text style={[styles.title, { color }]}>{category.title}</Text>
               {isToday ? <View style={[styles.badge, { backgroundColor: category.dark }]}><Text style={styles.badgeText}>TODAY</Text></View> : null}
             </View>
-            <Text style={[styles.times, { color: past ? UI.past : UI.muted }]}>{windows}</Text>
+            <Text style={[styles.times, { color: themeColor(past ? UI.past : UI.muted, darkPalette.muted) }]}>{windows}</Text>
           </View>
           <View style={[styles.icon, { backgroundColor: past ? UI.pastCircle : category.fill }]}>
             <MaterialCommunityIcons name={category.icon} size={19} color={past ? UI.mutedIcon : UI.white} />
@@ -74,3 +78,11 @@ const styles = StyleSheet.create({
   icon: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   hint: { color: UI.muted, fontSize: 11, textAlign: 'center', marginTop: 8 },
 });
+
+// Explicit dark surface and foreground pairs; the light layout stays unchanged.
+const darkStyles = {
+  hint: { color: darkPalette.muted },
+};
+function useStyles() {
+  return useThemedStyles(styles, darkStyles);
+}
