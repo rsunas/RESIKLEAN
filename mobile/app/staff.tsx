@@ -1,3 +1,5 @@
+import { KeyboardScrollView as ScrollView } from '@/components/keyboard-viewport';
+import { KeyboardAvoidingView } from '@/components/keyboard-viewport';
 import { darkPalette } from '@/constants/mobile-palette';
 import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { useNetworkRecovery } from '@/hooks/use-network-recovery';
@@ -23,9 +25,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useKeyboardVisible } from '@/hooks/use-keyboard-visible';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Platform,
-  ScrollView,
   StyleSheet,
   Text as NativeText,
   TextInput,

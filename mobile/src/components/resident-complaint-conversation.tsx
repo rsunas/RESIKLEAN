@@ -3,12 +3,12 @@ import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { wasteCategoryLabel } from '@/lib/waste-categories';
 import { ResidentAvatar } from './resident-avatar';
 import { useEffect, useRef, useState } from 'react';
-import { Keyboard, KeyboardAvoidingView, LayoutAnimation, Platform, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Keyboard, Platform, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Feather, MaterialCommunityIcons } from 'expo/node_modules/@expo/vector-icons';
 import { Image } from 'expo-image';
 import { AccordionBody, MotionChevron, MotionModal, MotionPressable as Pressable } from '@/components/app-motion';
 import { SkeletonBlock, SkeletonRows } from '@/components/loading-skeleton';
-import { useAppReducedMotion } from '@/hooks/use-app-reduced-motion';
+import { useKeyboardViewportState } from '@/components/keyboard-viewport';
 
 type Report = { wasteCategory?: string; _id: string; status: string; createdAt: string; barangay: string; photoUrl?: string | null; aiVerified?: boolean; aiConfidence?: number };
 type Message = { _id: string; body: string; createdAt: string; senderRole: string; senderId?: string | {name?: string} };
@@ -20,49 +20,51 @@ const date = (value: string, time = false) => { const parsed = new Date(value); 
 export function ResidentComplaintConversation({residentName = 'Resident',residentPhoto,report,subject,body,bags,metadata,messages,loading,sending,error,draft,setDraft,send,onClose,bottomInset}: Props) {
   const themeColor = useThemeColor();
   const s = useS();
-  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  const { keyboardOpen } = useKeyboardViewportState();
+  const compact = keyboardOpen;
   const [scrolled, setScrolled] = useState(false);
   const [photoOpen, setPhotoOpen] = useState(false);
   const [pending, setPending] = useState<{body: string; state: 'sending' | 'failed'} | null>(null);
   const [detailsExpanded, setDetailsExpanded] = useState(true);
   const [metadataExpanded, setMetadataExpanded] = useState(false);
   useEffect(() => { setDetailsExpanded(true); setMetadataExpanded(false); }, [report._id]);
-  const reduced = useAppReducedMotion();
   const thread = useRef<ScrollView>(null);
-  const scrollNeeded = useRef(true);
+  const input = useRef<TextInput>(null);
+  // Keep the latest messages anchored through keyboard layout changes.
+  const followLatest = useRef(true);
+  const scrollLayout = useRef({contentHeight:0, viewportHeight:0});
   const current = reportStep(report.status);
   const rejected = report.status === 'rejected';
   const resolved = report.status === 'resolved';
   const statusLabel = resolved ? 'Resolved' : rejected ? 'Rejected' : current === 1 ? 'Acknowledged / Scheduled' : 'Pending';
+  const scrollToLatest = () => { if (followLatest.current) thread.current?.scrollToEnd({animated:false}); };
   useEffect(() => {
-    const update = (open: boolean) => {
-      if (!reduced) LayoutAnimation.configureNext({duration:150,update:{type:LayoutAnimation.Types.easeInEaseOut}});
-      setKeyboardOpen(open);
-      scrollNeeded.current = true;
-    };
-    const show = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => update(true));
-    const hide = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => update(false));
-    return () => {show.remove();hide.remove();};
-  }, [reduced]);
-  useEffect(() => { scrollNeeded.current = true; thread.current?.scrollToEnd({animated:false}); }, [messages.length, messages.at(-1)?._id, loading, pending]);
+    if (keyboardOpen) {
+      followLatest.current = true;
+      thread.current?.scrollToEnd({animated:false});
+    }
+  }, [keyboardOpen]);
+  useEffect(() => {
+    if (followLatest.current) thread.current?.scrollToEnd({animated:false});
+  }, [keyboardOpen, messages.length, messages.at(-1)?._id, loading, pending]);
   useEffect(() => {
     if (!sending && pending?.state === 'sending') {
       if (error) setPending(value => value ? {...value,state:'failed'} : null);
       else if (!draft) setPending(null);
     }
   }, [sending,error,draft,pending?.state]);
-  const submit = () => { if (!draft.trim() || sending) return; setPending({body:draft.trim(),state:'sending'}); void send(); };
-  const scrollToLatest = () => {if (scrollNeeded.current) {thread.current?.scrollToEnd({animated:false});scrollNeeded.current=false;}};
-  return <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={s.sheet}>
-    <View style={s.header}>
-      <Pressable accessibilityRole="button" accessibilityLabel="Back to complaints" onPress={onClose} style={s.back}><Feather name="chevron-left" size={24} color={themeColor("#086B42", darkPalette.accent)} /></Pressable>
+  const submit = () => { if (!draft.trim() || sending) return; followLatest.current = true; setPending({body:draft.trim(),state:'sending'}); void send(); };
+  const close = () => { input.current?.blur(); Keyboard.dismiss(); onClose(); };
+  return <View testID="complaint-conversation" style={s.sheet}>
+    <View testID="complaint-header" style={s.header}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Back to complaints" onPress={close} style={s.back}><Feather name="chevron-left" size={24} color={themeColor("#086B42", darkPalette.accent)} /></Pressable>
       <View style={s.heading}><Text style={s.eyebrow}>SWMO SUPPORT</Text>{loading ? <SkeletonBlock height={26} width="90%" /> : <Text numberOfLines={1} ellipsizeMode="tail" style={s.subject}>{subject}</Text>}
-      {!keyboardOpen ? <View style={[s.status,resolved && s.statusResolved,rejected && s.statusRejected]}><View style={[s.statusDot,resolved && s.green,rejected && s.red]} /><Text style={[s.statusText,resolved && s.greenText,rejected && s.redText]}>{statusLabel}</Text></View> : null}
+      {!compact ? <View style={[s.status,resolved && s.statusResolved,rejected && s.statusRejected]}><View style={[s.statusDot,resolved && s.green,rejected && s.red]} /><Text style={[s.statusText,resolved && s.greenText,rejected && s.redText]}>{statusLabel}</Text></View> : null}
       </View>
     </View>
-    <View style={[s.trackerWrap, scrolled && s.trackerBorder]}>
-      <View style={[s.tracker,keyboardOpen && s.compactTracker]}>
-        {keyboardOpen ? <><View style={s.segments}>{stages.map((stage,index) => <View key={stage} style={[s.segment,index <= current && !rejected && s.green]} />)}</View><Text style={s.compactLabel}>{rejected ? 'Rejected' : stages[current]}</Text></> : <>
+    <View testID="complaint-tracker" style={[s.trackerWrap, scrolled && s.trackerBorder]}>
+      <View style={[s.tracker,compact && s.compactTracker]}>
+        {compact ? <><View style={s.segments}>{stages.map((stage,index) => <View key={stage} style={[s.segment,index <= current && !rejected && s.green]} />)}</View><Text style={s.compactLabel}>{rejected ? 'Rejected' : stages[current]}</Text></> : <>
           <Text style={s.trackerTitle}>STATUS TRACKER</Text>
           {rejected ? <Text style={s.redText}>This report was rejected.</Text> : <View style={s.steps}>{stages.map((stage,index) => <View key={stage} style={[s.step,index === 1 && s.middleStep]}>
             {index < 2 ? <View style={[s.connector,{width:index === 0 ? '125%' : '83.333%'},index < current && s.green]} /> : null}
@@ -72,8 +74,18 @@ export function ResidentComplaintConversation({residentName = 'Resident',residen
         </>}
       </View>
     </View>
-    <ScrollView ref={thread} style={s.thread} contentContainerStyle={s.threadContent} keyboardShouldPersistTaps="handled" onContentSizeChange={scrollToLatest} onLayout={scrollToLatest} onScroll={event => setScrolled(event.nativeEvent.contentOffset.y > 1)} scrollEventThrottle={32}>
-      <View style={s.detailsGroup}>
+    <ScrollView testID="complaint-thread" ref={thread} style={s.thread} contentContainerStyle={s.threadContent} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} automaticallyAdjustContentInsets={false} onContentSizeChange={scrollToLatest} onLayout={scrollToLatest} onScroll={event => {
+      const {contentOffset, contentSize, layoutMeasurement} = event.nativeEvent;
+      setScrolled(contentOffset.y > 1);
+      // Resizing the keyboard or adding messages also emits scroll events.
+      // Only a scroll within the same layout changes the user's follow choice.
+      const previous = scrollLayout.current;
+      if (previous.contentHeight === contentSize.height && previous.viewportHeight === layoutMeasurement.height) {
+        followLatest.current = contentSize.height - layoutMeasurement.height - contentOffset.y < 80;
+      }
+      scrollLayout.current = {contentHeight:contentSize.height, viewportHeight:layoutMeasurement.height};
+    }} scrollEventThrottle={32}>
+      <View testID="complaint-details" style={s.detailsGroup}>
       <Pressable accessibilityRole="button" accessibilityLabel="Complaint details" accessibilityState={{expanded:detailsExpanded}} onPress={() => setDetailsExpanded(value => !value)} style={s.disclosure}>
         <Text style={s.disclosureTitle}>Complaint details</Text><MotionChevron expanded={detailsExpanded}><Feather name="chevron-down" size={20} color={themeColor("#0A7F4F", darkPalette.accent)}/></MotionChevron>
       </Pressable>
@@ -105,23 +117,23 @@ export function ResidentComplaintConversation({residentName = 'Resident',residen
       {pending ? <View style={[s.bubble,s.own]}><Text style={s.sender}>You</Text><Text style={s.messageBody}>{pending.body}</Text><Text accessibilityLiveRegion="polite" style={[s.time,pending.state==='failed' && s.redText]}>{pending.state==='failed' ? 'Failed to send. Your message is kept below.' : 'Sending...'}</Text></View> : null}
       {error ? <Text accessibilityRole="alert" style={s.redText}>{error}</Text> : null}
     </ScrollView>
-    <View style={[s.composer,{paddingBottom:keyboardOpen ? 12 : Math.max(28,bottomInset + 12)}]}>
+    <View testID="complaint-composer" style={[s.composer,{paddingBottom:keyboardOpen ? 12 : Math.max(28,bottomInset + 12)}]}>
 
-      <TextInput accessibilityLabel="Message collection team" multiline maxLength={1000} value={draft} onChangeText={setDraft} placeholder="Write a message..." selectionColor="#0A7F4F" placeholderTextColor={themeColor("#5A6761", darkPalette.muted)} style={s.input}/>
+      <TextInput ref={input} accessibilityLabel="Message collection team" multiline maxLength={1000} value={draft} onChangeText={setDraft} onFocus={() => { followLatest.current = true; scrollToLatest(); }} placeholder="Write a message..." selectionColor="#0A7F4F" placeholderTextColor={themeColor("#5A6761", darkPalette.muted)} style={s.input}/>
       <Pressable accessibilityRole="button" accessibilityLabel={sending ? 'Sending message' : 'Send message'} disabled={sending || !draft.trim()} onPress={submit} style={[s.send,(sending || !draft.trim()) && s.disabled]}><Feather name="send" size={22} color="white"/></Pressable>
     </View>
     <MotionModal transparent visible={photoOpen} onRequestClose={() => setPhotoOpen(false)} animationType="fade"><View style={s.lightbox}><Pressable accessibilityRole="button" accessibilityLabel="Close photo" onPress={() => setPhotoOpen(false)} style={s.photoClose}><Feather name="x" color="white" size={24}/></Pressable>{report.photoUrl ? <Image source={{uri:report.photoUrl}} contentFit="contain" accessibilityLabel="Full complaint photo" style={s.fullPhoto}/> : null}</View></MotionModal>
-  </KeyboardAvoidingView>;
+  </View>;
 }
 const s=StyleSheet.create({
- sheet:{flex:1,maxHeight:'90%',backgroundColor:'white',borderTopLeftRadius:24,borderTopRightRadius:24,overflow:'hidden'},
+ sheet:{flex:1,minHeight:0,maxHeight:'90%',backgroundColor:'white',borderTopLeftRadius:24,borderTopRightRadius:24,overflow:'hidden'},
  header:{flexDirection:'row',alignItems:'center',gap:8,paddingTop:16,paddingBottom:12,paddingLeft:8,paddingRight:16,flexShrink:0},back:{width:44,height:44,alignItems:'center',justifyContent:'center'},heading:{flex:1,minWidth:0,gap:4},eyebrow:{color:'#0A7F4F',fontSize:11,fontWeight:'700',letterSpacing:1.32},subject:{color:'#121A16',fontSize:24,fontWeight:'700'},
  status:{backgroundColor:'#E8F0FE',borderRadius:10,paddingVertical:6,paddingHorizontal:12,flexDirection:'row',alignItems:'center',gap:6,alignSelf:'flex-start',maxWidth:'100%',marginTop:4},statusText:{fontSize:13,lineHeight:19,fontWeight:'600',color:'#1A56C4',flexShrink:1},statusDot:{width:7,height:7,borderRadius:4,backgroundColor:'#1A56C4',flexShrink:0},statusResolved:{backgroundColor:'#E3F4EB'},statusRejected:{backgroundColor:'#FCEAE8'},green:{backgroundColor:'#0A7F4F'},red:{backgroundColor:'#B3261E'},greenText:{color:'#086B42'},redText:{color:'#B3261E',fontSize:13},
  trackerWrap:{paddingHorizontal:20,paddingBottom:12,borderBottomWidth:1,borderBottomColor:'transparent',flexShrink:0},trackerBorder:{borderBottomColor:'#E3EAE6'},tracker:{paddingTop:14,paddingHorizontal:12,paddingBottom:12,borderRadius:20,backgroundColor:'#F4F6F5'},trackerTitle:{color:'#5A6761',fontSize:11,fontWeight:'700',letterSpacing:1.1,marginBottom:12},steps:{flexDirection:'row'},step:{flex:1,alignItems:'center'},middleStep:{flex:1.5},circle:{width:25,height:25,borderRadius:13,backgroundColor:'#E8EDEA',alignItems:'center',justifyContent:'center'},connector:{height:3,position:'absolute',left:'50%',width:'100%',top:11,backgroundColor:'#DCE4DF'},stepLabel:{color:'#5A6761',fontSize:12,lineHeight:18,fontWeight:'500',textAlign:'center',marginTop:8,paddingHorizontal:2},completedLabel:{fontWeight:'700',color:'#121A16'},compactTracker:{minHeight:44,paddingVertical:10,flexDirection:'row',alignItems:'center',gap:12},segments:{flexDirection:'row',gap:4,flex:1},segment:{height:6,flex:1,borderRadius:3,backgroundColor:'#DCE4DF'},compactLabel:{color:'#35463F',fontSize:13,fontWeight:'600',flexShrink:1,maxWidth:'65%'},
  detailsGroup:{borderRadius:18,backgroundColor:'#F4F6F5',overflow:'hidden'},disclosure:{minHeight:44,paddingHorizontal:14,paddingVertical:10,flexDirection:'row',alignItems:'center',gap:8},disclosureTitle:{flex:1,fontSize:13,fontWeight:'600',color:'#35463F'},
  thread:{flex:1,minHeight:0},threadContent:{paddingHorizontal:20,paddingTop:12,paddingBottom:16,gap:12},details:{paddingVertical:12,paddingHorizontal:14,borderRadius:18,backgroundColor:'#F4F6F5',flexDirection:'row',alignItems:'center',gap:10},detailCell:{flex:1,minWidth:0,flexDirection:'row',alignItems:'center',gap:8},detailCopy:{flex:1,minWidth:0},detailLabel:{fontSize:11,color:'#5A6761'},detailValue:{fontSize:14,fontWeight:'700',color:'#121A16',marginTop:3},detailDivider:{width:1,alignSelf:'stretch',backgroundColor:'#DCE4DF'},date:{fontSize:12,color:'#5A6761',textAlign:'center'},
  bubble:{maxWidth:300,paddingVertical:12,paddingHorizontal:14,borderRadius:18,minWidth:0,flexShrink:1},own:{alignSelf:'flex-end',backgroundColor:'#E3F4EB',borderBottomRightRadius:6},reply:{backgroundColor:'#F1F5F3',borderBottomLeftRadius:6},sender:{fontSize:12,fontWeight:'700',color:'#086B42',marginBottom:4},messageSubject:{fontSize:15,fontWeight:'700',color:'#121A16'},messageBody:{fontSize:15,color:'#121A16',lineHeight:22},time:{fontSize:12,color:'#5A6761',textAlign:'right',marginTop:8},photoWrap:{marginTop:12},photo:{width:'100%',height:150,borderRadius:12},expand:{position:'absolute',right:8,bottom:8,width:36,height:36,borderRadius:18,backgroundColor:'#18352CDD',alignItems:'center',justifyContent:'center'},verified:{position:'absolute',top:8,left:8,width:24,height:24,borderRadius:12,backgroundColor:'#0A7F4F',alignItems:'center',justifyContent:'center'},meta:{fontSize:11,color:'#4B5A53',lineHeight:16,marginTop:8},empty:{fontSize:13,color:'#5A6761',textAlign:'center',paddingVertical:8},messageRow:{flexDirection:'row',alignItems:'flex-end',gap:8},ownRow:{justifyContent:'flex-end'},avatar:{width:36,height:36,borderRadius:18,backgroundColor:'#0A7F4F',alignItems:'center',justifyContent:'center'},avatarText:{color:'white',fontWeight:'700',fontSize:14},
- composer:{flexDirection:'row',alignItems:'flex-end',gap:8,paddingTop:12,paddingHorizontal:16,borderTopWidth:1,borderTopColor:'#E3EAE6',flexShrink:0},input:{flex:1,minWidth:0,minHeight:48,maxHeight:112,borderRadius:24,backgroundColor:'#F1F5F3',fontSize:15,paddingHorizontal:16,paddingVertical:12,color:'#121A16'},send:{width:48,height:48,borderRadius:24,backgroundColor:'#0A7F4F',alignItems:'center',justifyContent:'center'},disabled:{opacity:0.45},lightbox:{flex:1,backgroundColor:'#0D1E18F2',padding:20},photoClose:{height:44,width:44,alignItems:'center',justifyContent:'center',alignSelf:'flex-end',marginTop:40},fullPhoto:{flex:1,width:'100%'},
+ composer:{flexDirection:'row',alignItems:'flex-end',gap:8,paddingTop:12,paddingHorizontal:16,borderTopWidth:1,borderTopColor:'#E3EAE6',flexShrink:0},input:{flex:1,minWidth:0,minHeight:48,maxHeight:112,borderRadius:24,backgroundColor:'#F1F5F3',fontSize:16,paddingHorizontal:16,paddingVertical:12,color:'#121A16'},send:{width:48,height:48,borderRadius:24,backgroundColor:'#0A7F4F',alignItems:'center',justifyContent:'center'},disabled:{opacity:0.45},lightbox:{flex:1,backgroundColor:'#0D1E18F2',padding:20},photoClose:{height:44,width:44,alignItems:'center',justifyContent:'center',alignSelf:'flex-end',marginTop:40},fullPhoto:{flex:1,width:'100%'},
 });
 
 // Explicit dark surface and foreground pairs; the light layout stays unchanged.

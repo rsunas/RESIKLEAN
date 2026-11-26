@@ -1,3 +1,4 @@
+import { KeyboardScrollView as ScrollView } from '@/components/keyboard-viewport';
 import { darkPalette } from '@/constants/mobile-palette';
 import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { ResidentAvatar } from './resident-avatar';
@@ -26,7 +27,6 @@ import {
   ActivityIndicator,
   Alert,
   Linking,
-  ScrollView,
   StyleSheet,
   Switch,
   TextInput,
@@ -369,7 +369,7 @@ export function ChangePasswordModal({
             </Pressable>
           </View>
 
-          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <ScrollView style={{ minHeight: 0, flexShrink: 1 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
             {isPasswordSet ? (
               <>
                 <Text style={ss.cpLabel}>CURRENT PASSWORD</Text>
@@ -987,7 +987,7 @@ const ss = StyleSheet.create({
 
   // Change password modal
   cpBackdrop: { backgroundColor: 'rgba(10, 28, 19, 0.45)', flex: 1, justifyContent: 'flex-end' },
-  cpSheet: { backgroundColor: '#ffffff', borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 20, paddingTop: 14 },
+  cpSheet: { maxHeight: '95%', flexShrink: 1, backgroundColor: '#ffffff', borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 20, paddingTop: 14 },
   cpHandle: { alignSelf: 'center', backgroundColor: '#d1dbd5', borderRadius: 3, height: 4, marginBottom: 16, width: 40 },
   cpHeader: { alignItems: 'center', flexDirection: 'row', marginBottom: 20 },
   cpHeaderIcon: { alignItems: 'center', backgroundColor: '#e8faf0', borderRadius: 12, height: 40, justifyContent: 'center', width: 40 },

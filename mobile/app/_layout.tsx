@@ -1,3 +1,4 @@
+import { KeyboardViewport } from '@/components/keyboard-viewport';
 import '@/global.css';
 import { addNotificationResponseReceivedListener, getLastNotificationResponseAsync } from 'expo-notifications/build/NotificationsEmitter';
 import type { NotificationResponse } from 'expo-notifications/build/Notifications.types';
@@ -105,7 +106,7 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <AppPreferencesProvider><AppMotionProvider><HeroUINativeProvider><NotificationObserver /><ThemeAwareStack /></HeroUINativeProvider></AppMotionProvider></AppPreferencesProvider>
+        <AppPreferencesProvider><AppMotionProvider><HeroUINativeProvider><NotificationObserver /><KeyboardViewport><ThemeAwareStack /></KeyboardViewport></HeroUINativeProvider></AppMotionProvider></AppPreferencesProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );
