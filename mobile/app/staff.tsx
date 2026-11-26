@@ -25,6 +25,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useKeyboardVisible } from '@/hooks/use-keyboard-visible';
 import {
   ActivityIndicator,
+  type ScrollView as NativeScrollView,
   Platform,
   StyleSheet,
   Text as NativeText,
@@ -454,7 +455,7 @@ export default function StaffScreen() {
   const { fontScale } = useWindowDimensions();
   const keyboardVisible = useKeyboardVisible();
   const [headerHeight, setHeaderHeight] = useState(0);
-  const inputScroll = useRef<ScrollView>(null);
+  const inputScroll = useRef<NativeScrollView>(null);
   const pileFields = useRef<View>(null);
   const inputScrollY = useRef(0);
   const cameraBusyRef = useRef(false);
