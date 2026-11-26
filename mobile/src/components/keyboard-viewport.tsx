@@ -20,8 +20,12 @@ export function KeyboardViewport({ active = true, children }: PropsWithChildren<
     });
     return () => cancelAnimationFrame(task);
   }, [active, frame]);
+  // Android hide events can report the visible display height without system bars.
+  // Stop applying height avoidance when closed so that inset difference cannot
+  // leave the entire app (and its bottom navigation) permanently shortened.
+  const behavior = Platform.OS === 'ios' ? 'padding' : active && keyboardOpen ? 'height' : undefined;
   return <KeyboardViewportContext.Provider value={{ managed: true, keyboardOpen }}>
-    <NativeKeyboardAvoidingView enabled={active && Platform.OS !== 'web'} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={[{ flex: 1, minHeight: 0 }, frame]}>
+    <NativeKeyboardAvoidingView enabled={active && Platform.OS !== 'web'} behavior={behavior} style={[{ flex: 1, minHeight: 0 }, frame]}>
       <View ref={root} style={{ flex: 1, minHeight: 0 }}>{children}</View>
     </NativeKeyboardAvoidingView>
   </KeyboardViewportContext.Provider>;
