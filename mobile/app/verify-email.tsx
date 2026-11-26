@@ -1,5 +1,7 @@
+import { KeyboardScrollView as ScrollView } from '@/components/keyboard-viewport';
+import { KeyboardAvoidingView } from '@/components/keyboard-viewport';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { type Href, useLocalSearchParams, useRouter } from 'expo-router';
 import { AuthField, AuthFooterLink, AuthHeader, authStyles } from '@/components/auth-ui';

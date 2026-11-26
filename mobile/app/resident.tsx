@@ -1,3 +1,4 @@
+import { KeyboardScrollView as ScrollView } from '@/components/keyboard-viewport';
 import { darkPalette } from '@/constants/mobile-palette';
 import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { AppSelect } from '@/components/app-select';
@@ -23,7 +24,6 @@ import {
   Image,
   Platform,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   TextInput,
   View,

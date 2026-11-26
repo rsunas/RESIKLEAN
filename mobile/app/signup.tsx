@@ -1,3 +1,5 @@
+import { KeyboardScrollView as ScrollView } from '@/components/keyboard-viewport';
+import { KeyboardAvoidingView } from '@/components/keyboard-viewport';
 import { SignupPrivacy, PRIVACY_REQUIRED_MESSAGE } from '@/components/signup-privacy';
 import { requestJson } from '@/lib/network-request';
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
@@ -5,9 +7,7 @@ import { GoogleSignin, isSuccessResponse } from '@react-native-google-signin/goo
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  KeyboardAvoidingView,
   Platform,
-  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -51,7 +51,7 @@ function GoogleLogo() {
 }
 
 export default function SignupScreen() {
-  const formScroll = useRef<ScrollView>(null);
+  const formScroll = useRef<import('react-native').ScrollView>(null);
   const formBodyY = useRef(0);
   const locationY = useRef(0);
   const stepY = useRef(0);

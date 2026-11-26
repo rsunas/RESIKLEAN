@@ -1,8 +1,10 @@
+import { KeyboardScrollView as ScrollView } from '@/components/keyboard-viewport';
+import { KeyboardAvoidingView } from '@/components/keyboard-viewport';
 import { darkPalette } from '@/constants/mobile-palette';
 import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
 import { useState, type ComponentProps } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, TextInput, Text as NativeText, View, useWindowDimensions } from 'react-native';
+import { Platform, StyleSheet, TextInput, Text as NativeText, View, useWindowDimensions } from 'react-native';
 import { MotionModal as Modal, MotionPressable as Pressable } from '@/components/app-motion';
 import { AppText as Text } from '@/components/app-text';
 import { AuthColors as C } from '@/constants/theme';

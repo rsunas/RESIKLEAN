@@ -1,8 +1,10 @@
+import { KeyboardScrollView as ScrollView } from '@/components/keyboard-viewport';
+import { KeyboardAvoidingView } from '@/components/keyboard-viewport';
 import { darkPalette } from '@/constants/mobile-palette';
 import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { useAppTheme } from '@/hooks/app-preferences';
 import { useEffect, useRef, useState } from 'react';
-import { Alert, BackHandler, KeyboardAvoidingView, Linking, Platform, ScrollView, StyleSheet, TextInput, View, ActivityIndicator } from 'react-native';
+import { Alert, BackHandler, Linking, Platform, StyleSheet, TextInput, View, ActivityIndicator } from 'react-native';
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
@@ -21,7 +23,7 @@ export function ResidentProfileEditor(p: Props) {
   const insets = useSafeAreaInsets();
   const appTheme = useAppTheme();
   const isDark = appTheme === 'dark';
-  const scroll = useRef<ScrollView>(null);
+  const scroll = useRef<import('react-native').ScrollView>(null);
   const locationY = useRef(0);
   const searchingLocation = useRef(false);
   const revealLocation = () => {

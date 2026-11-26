@@ -1,3 +1,4 @@
+import { KeyboardViewport } from '@/components/keyboard-viewport';
 import { darkPalette } from '@/constants/mobile-palette';
 import { useThemedStyles } from '@/hooks/use-themed-styles';
 import { forwardRef, useEffect, useRef, useState, type PropsWithChildren } from 'react';
@@ -99,7 +100,7 @@ export function MotionModal({ animationType = 'slide', children, ...props }: Mod
   const theme = useAppTheme();
   return <Modal {...props} animationType={reduced && animationType !== 'none' ? 'fade' : animationType}>
     {props.visible ? <StatusBar style={theme === 'dark' ? 'light' : 'dark'} /> : null}
-    {children}
+    <KeyboardViewport active={props.visible !== false}>{children}</KeyboardViewport>
   </Modal>;
 }
 

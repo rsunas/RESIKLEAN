@@ -1,13 +1,10 @@
+import { KeyboardScrollView as ScrollView } from '@/components/keyboard-viewport';
 import { Feather } from 'expo/node_modules/@expo/vector-icons';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import {
   ActivityIndicator,
-  Animated,
-  Easing,
-  Keyboard,
-  ScrollView,
   StatusBar,
   StyleSheet,
   Text,
@@ -41,32 +38,6 @@ export default function LoginScreen() {
   const [isPasswordVisible, setIsPasswordVisible] = useState(false);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const formOffset = useRef(new Animated.Value(0)).current;
-
-  // Keep the current field in view on compact Android screens without making
-  // the screen manually scrollable. It returns to the original layout on hide.
-  useEffect(() => {
-    const show = Keyboard.addListener('keyboardDidShow', (event) => {
-      const keyboardHeight = event.endCoordinates.height || 250;
-      const lift = Math.min(190, Math.max(128, keyboardHeight * 0.6));
-      Animated.timing(formOffset, {
-        toValue: -lift,
-        duration: 180,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start();
-    });
-    const hide = Keyboard.addListener('keyboardDidHide', () => {
-      Animated.timing(formOffset, {
-        toValue: 0,
-        duration: 160,
-        easing: Easing.in(Easing.cubic),
-        useNativeDriver: true,
-      }).start();
-    });
-    return () => { show.remove(); hide.remove(); };
-  }, [formOffset]);
-
   const handleLogin = async () => {
     if (!API_URL) {
       setError('EXPO_PUBLIC_API_URL is not configured.');
@@ -110,10 +81,10 @@ export default function LoginScreen() {
   return (
     <SafeAreaView edges={['left', 'right']} style={authStyles.page}>
       <StatusBar backgroundColor="transparent" barStyle="dark-content" />
-      <ScrollView testID="login-scroll" style={authStyles.scroll} scrollEnabled={false}
+      <ScrollView testID="login-scroll" style={authStyles.scroll}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" automaticallyAdjustContentInsets={false}>
-        <Animated.View style={[styles.keyboardLift, { transform: [{ translateY: formOffset }] }]}>
+        <View style={styles.keyboardLift}>
           <View testID="login-illustration" style={styles.banner}>
             <Image source={require('@/assets/images/swmo-login-800.webp')} contentFit="cover"
               contentPosition={{ left: '14%', top: '50%' }} accessible={false}
@@ -155,7 +126,7 @@ export default function LoginScreen() {
               <AuthFooterLink text="Don't have an account?" label="Sign Up" onPress={() => router.push('/signup')} />
             </View>
           </View>
-        </Animated.View>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
