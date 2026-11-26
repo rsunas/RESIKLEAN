@@ -6,6 +6,7 @@ import { requestJson } from '@/lib/network-request';
 import { WorkProfileEditor } from '@/components/work-profile-editor';
 import { ResidentAvatar } from '@/components/resident-avatar';
 import { StaffSearchSelect, StaffHistoryFilters, filterStaffHistory, historyText, validSlope } from '@/components/staff-controls';
+import { PileHeightInput } from '@/components/pile-height-input';
 import { ProfileSettingsRow } from '@/components/profile-settings-row';
 import { MotionPressable as Pressable, TabTransition, useSlidingTabPill, useClosingValue, RevealRow, useFirstLoadReveal, ToastMotion } from '@/components/app-motion';
 import { SkeletonBlock, SkeletonRegion, SkeletonRows, useSkeletonVisible } from '@/components/loading-skeleton';
@@ -471,6 +472,7 @@ export default function StaffScreen() {
   const [measurementMode, setMeasurementMode] = useState<'three-point' | 'single-pile'>('three-point');
   const [pileHeights, setPileHeights] = useState({ front: '', middle: '', back: '' });
   const [pileHeightM, setPileHeightM] = useState('0');
+  const [heightSuggestions, setHeightSuggestions] = useState<string | null>(null);
   const [length, setLength] = useState('');
   const [width, setWidth] = useState('');
   const [height, setHeight] = useState('');
@@ -1341,7 +1343,7 @@ export default function StaffScreen() {
         <Text style={[styles.formSectionTitle, styles.sectionSpacing, isDarkTheme && { color: '#F1F6F3' }]}>Height of pile</Text>
         <View style={[styles.modeSelector, isDarkTheme && { backgroundColor: '#192A22' }]}>
           {([['three-point', '3-Point Height (cm)'], ['single-pile', 'Single Pile Height (m)']] as const).map(([mode, label]) => (
-            <Pressable key={mode} onPress={() => { setMeasurementMode(mode); setTonnagePreview(null); }} style={[styles.modeOption, measurementMode === mode && styles.modeOptionSelected]}>
+            <Pressable key={mode} onPress={() => { setMeasurementMode(mode); setHeightSuggestions(null); setTonnagePreview(null); }} style={[styles.modeOption, measurementMode === mode && styles.modeOptionSelected]}>
               <Text style={[styles.modeOptionText, isDarkTheme && { color: '#B4C4BB' }, measurementMode === mode && styles.modeOptionTextSelected]}>{label}</Text>
             </Pressable>
           ))}
@@ -1351,12 +1353,18 @@ export default function StaffScreen() {
           {(['front', 'middle', 'back'] as const).map(position => (
             <View key={position} style={styles.measurementField}>
               <Text style={[styles.measurementLabel, isDarkTheme && { color: '#B4C4BB' }]}>{position[0].toUpperCase() + position.slice(1)} (cm)</Text>
-              <TextInput accessibilityLabel={`${position} pile height in centimetres`} keyboardType="decimal-pad"
-                value={pileHeights[position]} placeholder="0" placeholderTextColor={isDarkTheme ? themeColor('#5A6761', darkPalette.muted) : undefined} style={[styles.notesInput, { minHeight: 48 }, isDarkTheme && { backgroundColor: '#21372C', color: '#F1F6F3' }]}
-                onChangeText={value => { setPileHeights(current => ({ ...current, [position]: value })); setTonnagePreview(null); }} />
+              <PileHeightInput label={`${position} pile height in centimetres`} unit="cm"
+                value={pileHeights[position]} open={heightSuggestions === position}
+                onOpenChange={open => setHeightSuggestions(open ? position : null)}
+                onChange={value => { setPileHeights(current => ({ ...current, [position]: value })); setTonnagePreview(null); }} />
             </View>
           ))}
-        </View> : <View style={styles.fieldGroup}><Text style={[styles.measurementLabel, isDarkTheme && { color: '#B4C4BB' }]}>Pile Height (m)</Text><TextInput accessibilityLabel="pile height in metres" keyboardType="decimal-pad" value={pileHeightM} onChangeText={value => { setPileHeightM(value); setTonnagePreview(null); }} placeholder="0" placeholderTextColor={isDarkTheme ? themeColor('#5A6761', darkPalette.muted) : undefined} style={[styles.notesInput, isDarkTheme && { backgroundColor: '#21372C', color: '#F1F6F3' }]} /></View>}
+        </View> : <View style={styles.fieldGroup}>
+          <Text style={[styles.measurementLabel, isDarkTheme && { color: '#B4C4BB' }]}>Pile Height (m)</Text>
+          <PileHeightInput label="pile height in metres" unit="m" value={pileHeightM}
+            open={heightSuggestions === 'single'} onOpenChange={open => setHeightSuggestions(open ? 'single' : null)}
+            onChange={value => { setPileHeightM(value); setTonnagePreview(null); }} />
+        </View>}
         <Text style={[styles.formSectionTitle, styles.sectionSpacing, isDarkTheme && { color: '#F1F6F3' }]}>Measurements</Text>
         <View style={styles.measurementRow}>
           <MeasurementField label="Length (m)" value={length} />

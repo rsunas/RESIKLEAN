@@ -111,7 +111,7 @@ describe('password recovery routes', () => {
     expect(update.$set.isPasswordSet).toBe(true);
     expect(update.$inc).toEqual({ authVersion: 1 });
     expect(await bcrypt.compare(password, update.$set.password)).toBe(true);
-    expect(update.$unset).toEqual({ passwordResetHash: 1, passwordResetExpires: 1 });
+    expect(update.$unset).toEqual({ passwordResetHash: 1, passwordResetExpires: 1, passwordResetFormat: 1, passwordResetAttempts: 1 });
     expect(options).toEqual({ new: false, projection: { _id: 1 } });
     expect(disconnectUserSessions).toHaveBeenCalledWith('resident-id');
     expect(User.create).not.toHaveBeenCalled();

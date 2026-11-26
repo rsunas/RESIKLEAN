@@ -40,6 +40,8 @@ const userSchema = new mongoose.Schema(
     passwordResetHash: { type: String, select: false },
     passwordResetExpires: { type: Date, select: false },
     passwordResetRequestedAt: { type: Date, select: false },
+    passwordResetFormat: { type: String, enum: ['legacy', 'six-digit'], select: false },
+    passwordResetAttempts: { type: Number, select: false },
     // Only accounts provisioned from the administrator dashboard opt into this
     // gate. Keeping the default false preserves access for legacy and resident
     // accounts created through the public registration flow.

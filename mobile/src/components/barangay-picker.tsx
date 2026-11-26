@@ -21,6 +21,34 @@ type LocationsResponse = {
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL?.replace(/\/$/, '');
 
+// Hide route instructions only in registration/profile choices. Keep the
+// shared location records and any existing profile value intact.
+const routeInstructionNames = new Set([
+  'back to bagumbayan norte',
+  'back to bagumbayan sur',
+  'concepcion pequena to del rosario',
+  'left to bagumbayan',
+  'left to bagumbayan norte',
+  'left to bagumbayan sur',
+  'left to liboton route 1',
+  'left to liboton route 2',
+  'left to liboton route 1 and 2',
+  'panganiban to rotonda left to magsaysay ave left to dayangdang',
+  'right to colgante',
+  'right to penafrancia',
+  'rit to penafrancia',
+  'u turn back to bagumbayan',
+  'u turn back to bagumbayan norte',
+  'u turn back to bagumbayan sur',
+]);
+
+function isProfileLocation(location: CollectionLocationOption) {
+  const name = location.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[().]/g, '').replace(/[-\u2010-\u2015]/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+  return !routeInstructionNames.has(name);
+}
+
 export function BarangayPicker({ value, onChange, appearance = 'default', invalid = false, onSearchFocus, onSearchBlur }: BarangayPickerProps) {
   const [locations, setLocations] = useState<CollectionLocationOption[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -42,7 +70,7 @@ export function BarangayPicker({ value, onChange, appearance = 'default', invali
         const response = await fetch(`${API_URL}/collection-locations`);
         const result = (await response.json()) as LocationsResponse;
         if (!response.ok || !result.success) throw new Error(result.error || 'Unable to load collection locations.');
-        if (!cancelled) setLocations(result.data || []);
+        if (!cancelled) setLocations((result.data || []).filter(isProfileLocation));
       } catch (caughtError) {
         if (!cancelled) setError(caughtError instanceof Error ? caughtError.message : 'Unable to load collection locations.');
       } finally {

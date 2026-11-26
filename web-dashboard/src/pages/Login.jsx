@@ -145,13 +145,14 @@ export default function Login() {
       const response = await fetch(`${API_URL.replace(/\/$/, '')}/auth/forgot-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: recoveryEmail.trim() }),
+        body: JSON.stringify({ email: recoveryEmail.trim(), codeFormat: 'six-digit' }),
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.success) {
         throw new Error(result.error || 'Unable to send reset instructions.');
       }
       setRecoveryMessage(result.data?.message || 'Check your inbox and spam folder for password reset instructions.');
+      setResetCode('');
       setRecoveryStep('reset');
     } catch (caughtError) {
       setRecoveryError(caughtError instanceof Error ? caughtError.message : 'Unable to send reset instructions.');
@@ -166,8 +167,12 @@ export default function Login() {
       setRecoveryError('VITE_API_URL is not configured.');
       return;
     }
-    if (!/^[a-f0-9]{64}$/.test(resetCode.trim())) {
-      setRecoveryError('Paste the full reset code from your email.');
+    if (!/^(?:\d{6}|[a-f0-9]{64})$/.test(resetCode.trim())) {
+      setRecoveryError('Enter the six-digit reset code from your email.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recoveryEmail.trim())) {
+      setRecoveryError('Enter the email address that received the code.');
       return;
     }
     if (newPassword.trim().length < 6) {
@@ -185,7 +190,7 @@ export default function Login() {
       const response = await fetch(`${API_URL.replace(/\/$/, '')}/auth/reset-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token: resetCode.trim(), password: newPassword }),
+        body: JSON.stringify({ email: recoveryEmail.trim(), token: resetCode.trim(), password: newPassword }),
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.success) {
@@ -258,10 +263,10 @@ export default function Login() {
           <div className="login-heading">
             <p className="login-eyebrow">ACCOUNT RECOVERY</p>
             <h1 id="login-title">{recoveryStep === 'complete' ? 'Password updated' : 'Reset password'}</h1>
-            <p>{recoveryStep === 'request' ? 'Enter your registered email to receive password reset instructions.' : recoveryStep === 'reset' ? 'Paste the reset code from your email and choose a new password.' : 'Sign in with your new password.'}</p>
+            <p>{recoveryStep === 'request' ? 'Enter your registered email to receive a six-digit reset code.' : recoveryStep === 'reset' ? 'Enter the reset code from your email and choose a new password.' : 'Sign in with your new password.'}</p>
           </div>
 
-          {recoveryStep === 'request' ? <div className="login-fields">
+          {recoveryStep === 'request' || recoveryStep === 'reset' ? <div className="login-fields">
             <div className="login-field">
               <label htmlFor="recovery-email">Email address</label>
               <div className={`login-input-wrap${recoveryError ? ' has-error' : ''}`}><FieldIcon type="mail" /><input id="recovery-email" name="email" type="email" value={recoveryEmail} onChange={(event) => setRecoveryEmail(event.target.value)} autoComplete="email" aria-describedby={recoveryError ? 'recovery-error' : undefined} placeholder="you@example.com" required /></div>
@@ -271,7 +276,7 @@ export default function Login() {
           {recoveryStep === 'reset' ? <div className="login-fields">
             <div className="login-field">
               <label htmlFor="reset-code">Reset code</label>
-              <div className={`login-input-wrap${recoveryError ? ' has-error' : ''}`}><FieldIcon type="lock" /><input id="reset-code" name="reset-code" type="text" value={resetCode} onChange={(event) => setResetCode(event.target.value)} autoComplete="one-time-code" autoCapitalize="none" aria-describedby={recoveryError ? 'recovery-error' : undefined} placeholder="Paste the code from your email" required /></div>
+              <div className={`login-input-wrap${recoveryError ? ' has-error' : ''}`}><FieldIcon type="lock" /><input id="reset-code" name="reset-code" type="text" inputMode="numeric" maxLength={64} value={resetCode} onChange={(event) => setResetCode(event.target.value)} autoComplete="one-time-code" autoCapitalize="none" aria-describedby={recoveryError ? 'recovery-error' : undefined} placeholder="Six-digit code" required /></div>
             </div>
             <div className="login-field">
               <label htmlFor="new-password">New password</label>
@@ -285,7 +290,7 @@ export default function Login() {
 
           {recoveryError ? <p className="login-error" id="recovery-error" role="alert">{recoveryError}</p> : null}
           {recoveryMessage ? <p className="login-recovery-message" role="status">{recoveryMessage}</p> : null}
-          {recoveryStep !== 'complete' ? <Button variant="tertiary" className="login-submit" type="submit" isDisabled={isRecovering}>{isRecovering ? recoveryStep === 'request' ? 'Sending...' : 'Updating...' : recoveryStep === 'request' ? 'Send reset instructions' : 'Reset password'}</Button> : null}
+          {recoveryStep !== 'complete' ? <Button variant="tertiary" className="login-submit" type="submit" isDisabled={isRecovering}>{isRecovering ? recoveryStep === 'request' ? 'Sending...' : 'Updating...' : recoveryStep === 'request' ? 'Send reset code' : 'Reset password'}</Button> : null}
           {recoveryStep === 'reset' ? <Button variant="tertiary" className="login-recovery-link" type="button" isDisabled={isRecovering} onPress={() => { setRecoveryStep('request'); setRecoveryError(''); }}>Request a new code</Button> : null}
           <Button variant="tertiary" className="login-recovery-back" type="button" onPress={closeRecovery}>Back to sign in</Button>
         </form> : <form className="login-form" onSubmit={handleSubmit} aria-busy={isSubmitting}>
