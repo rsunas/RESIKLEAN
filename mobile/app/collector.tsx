@@ -1,3 +1,6 @@
+import { StaffHistoryFilters, filterStaffHistory } from '@/components/staff-controls';
+import { useKeyboardVisible } from '@/hooks/use-keyboard-visible';
+import { historyTrailEndpoint, historyTrailStartpoint, historyTrailMarkers } from '@/lib/driver-route-history-cache';
 import { darkPalette } from '@/constants/mobile-palette';
 import { useThemedStyles, useThemeColor } from '@/hooks/use-themed-styles';
 import { DriverRouteLayers, DriverStopLayers } from '@/components/driver-map-layers';
@@ -151,7 +154,10 @@ type RouteHistoryGroup = {
   sessionId?: string;
   routePath?: RoutePath;
   trailPath?: RoutePath;
-  lastLocation?: [number, number];
+  firstLocation?: [number, number] | null;
+  firstRecordedAt?: string | null;
+  lastLocation?: [number, number] | null;
+  lastRecordedAt?: string;
   pendingSync?: boolean;
   syncFailed?: boolean;
   stopLogs: RouteHistoryStopLog[];
@@ -379,6 +385,9 @@ function HistoryMapCamera({ center, zoom, group }: { center: [number, number] | 
     if (!feature) return [];
     return feature.geometry.type === 'LineString' ? feature.geometry.coordinates : feature.geometry.coordinates.flat();
   });
+  if (center) points.push(center);
+  const start = historyTrailStartpoint(group || {});
+  if (start) points.push(start);
   const bounds = points.length ? {
     ne: [Math.max(...points.map(p => p[0])) + .0001, Math.max(...points.map(p => p[1])) + .0001],
     sw: [Math.min(...points.map(p => p[0])) - .0001, Math.min(...points.map(p => p[1])) - .0001],
@@ -438,6 +447,8 @@ export default function CollectorScreen() {
   const [activeTab, setActiveTab] = useState<CollectorTab>('history');
   const [expandedStopsRouteId, setExpandedStopsRouteId] = useState<string | null>(null);
   const [showAllPastCollections, setShowAllPastCollections] = useState(false);
+  const [collectionFilters, setCollectionFilters] = useState(['', '', '', '', '']);
+  const keyboardVisible = useKeyboardVisible();
   const [editingProfile, setEditingProfile] = useState(false);
   const [session, setSession] = useState<AuthSession | null>(null);
   const [driver, setDriver] = useState<AccountUser | null>(null);
@@ -956,7 +967,13 @@ export default function CollectorScreen() {
   // Presentation only: progress, tracking and completion still use the full route.
   const showAllStops = Boolean(assignedRoute && expandedStopsRouteId === assignedRoute._id);
   const visibleTodayStreets = showAllStops ? todayStreets : todayStreets.slice(0, 5);
-  const visibleHistoryGroups = showAllPastCollections ? historyGroups : historyGroups.slice(0, 3);
+  const collectionRows = useMemo(() => historyGroups.map(group => ({
+    ...group, driver: group.routeName, barangay: displayBarangay(group.barangay),
+    truckPlate: group.date, submittedAt: group.date,
+    status: group.syncFailed ? 'Failed' : group.pendingSync ? 'Pending' : 'Synced',
+  })), [historyGroups]);
+  const filteredHistoryGroups = filterStaffHistory(collectionRows, collectionFilters[0], collectionFilters[1], collectionFilters[2], collectionFilters[3], collectionFilters[4]);
+  const visibleHistoryGroups = showAllPastCollections ? filteredHistoryGroups : filteredHistoryGroups.slice(0, 3);
   const completed = progress?.completed ?? completedStopIds.size;
   const totalStops = progress?.totalStops ?? routeStops.length;
   const pending = Math.max(0, progress?.remaining ?? totalStops - completedStopIds.size);
@@ -995,9 +1012,8 @@ export default function CollectorScreen() {
   const cameraCenter: [number, number] = driverLocation ? [driverLocation.longitude, driverLocation.latitude] : mapCenter;
   const barangay = displayBarangay(assignedRoute?.barangay) || profile?.barangay || profile?.location || 'No route assigned';
   const historyGroupLastLocation = useCallback((group: RouteHistoryGroup): [number, number] | null => {
-    const trailLastLocation = lastRouteCoordinate(routeLineFeature(group.trailPath));
+    const trailLastLocation = historyTrailEndpoint(group);
     if (trailLastLocation) return trailLastLocation;
-    if (group.lastLocation) return group.lastLocation;
     const routeLastLocation = lastRouteCoordinate(routeLineFeature(group.routePath));
     if (routeLastLocation) return routeLastLocation;
     if (group.stopLogs?.length) {
@@ -1409,7 +1425,7 @@ export default function CollectorScreen() {
     monitoringRequestRef.current += 1;
     isTogglingMonitoringRef.current = true;
     respondToMonitoringConsent(false);
-    const stopRoute = stopRouteProximityTracking({ forgetConfiguration: true });
+    const stopRoute = stopRouteProximityTracking({ forgetConfiguration: true, captureFinalLocation: true });
     setIsUpdatingGeofence(true);
     try {
       await withTimeout(Promise.all([stopRoute, collectorId ? pauseRouteMonitoringToday(collectorId) : Promise.resolve(), stopDriverGeofencing({ forgetConfiguration: true })]));
@@ -1842,7 +1858,7 @@ export default function CollectorScreen() {
 
   const historyScreen = (
     <View style={styles.historyScreen}>
-      <ScrollView contentContainerStyle={styles.historyScrollContent} showsVerticalScrollIndicator={false}>
+      <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.historyScrollContent} showsVerticalScrollIndicator={false}>
         {(assignedRoute || routeSkeleton.pending) && (
           <View style={styles.todayStopsSection}>
             <View style={styles.todayStopsHeading}>
@@ -1880,9 +1896,12 @@ export default function CollectorScreen() {
             <Text style={styles.sectionHeading}>PAST COLLECTIONS</Text>
             {historyGroups.some(group => group.pendingSync) ? <Pressable accessibilityRole="button" disabled={isSyncingTrails} onPress={() => void syncSavedTrails()} style={styles.syncButton}><Text style={styles.syncButtonText}>{isSyncingTrails ? 'Syncing...' : 'Sync GPS'}</Text></Pressable> : null}
           </View>
+          <Text style={styles.historyRecordCount}>{filteredHistoryGroups.length < historyGroups.length ? `${filteredHistoryGroups.length} of ` : ''}{historyGroups.length} {historyGroups.length === 1 ? 'record' : 'records'}</Text>
+          <StaffHistoryFilters variant="collections" rows={collectionRows} value={collectionFilters}
+            onChange={(...values) => { setCollectionFilters(values); setShowAllPastCollections(false); }} />
           {historyLoading && historyGroups.length > 0 ? <ActivityIndicator accessibilityLabel="Loading" color={themeColor("#0A7F4F", darkPalette.accent)} /> : null}
           <SkeletonRegion state={historySkeleton} placeholder={<SkeletonRows kind="history" count={3} />}>
-          {historyGroups.length ? visibleHistoryGroups.map((group, index) => (
+          {filteredHistoryGroups.length ? visibleHistoryGroups.map((group, index) => (
             <RevealRow key={group.id} animate={revealHistory} index={index}>
             <Pressable accessibilityRole="button" key={group.id} onPress={() => openHistoryDetail(group)} style={styles.historyCardWrap}>
               <View style={[styles.historyCard, isDarkTheme && { backgroundColor: '#192A22' }]}>
@@ -1900,17 +1919,17 @@ export default function CollectorScreen() {
                           <Mapbox.LineLayer id={`h-trail-line-${group.id}`} style={{ lineCap: 'round', lineColor: '#c53030', lineJoin: 'round', lineOpacity: 0.95, lineWidth: 5 }} />
                         </Mapbox.ShapeSource>
                       ) : null}
-                      {firstRouteCoordinate(routeLineFeature(group.trailPath)) ? (
+                      {historyTrailStartpoint(group) ? (
                         <Mapbox.PointAnnotation
-                          coordinate={firstRouteCoordinate(routeLineFeature(group.trailPath)) as [number, number]}
+                          coordinate={historyTrailStartpoint(group) as [number, number]}
                           id={`h-trail-start-${group.id}`}
                         >
                           <View style={styles.historyTrailStartMarker} />
                         </Mapbox.PointAnnotation>
                       ) : null}
-                      {lastRouteCoordinate(routeLineFeature(group.trailPath)) ? (
+                      {historyTrailEndpoint(group) ? (
                         <Mapbox.PointAnnotation
-                          coordinate={lastRouteCoordinate(routeLineFeature(group.trailPath)) as [number, number]}
+                          coordinate={historyTrailEndpoint(group) as [number, number]}
                           id={`h-trail-end-${group.id}`}
                         >
                           <View style={styles.historyTrailEndMarker} />
@@ -1940,18 +1959,18 @@ export default function CollectorScreen() {
               </View>
             </Pressable>
             </RevealRow>
-          )) : <View style={styles.emptyCard}><Feather color={themeColor("#7d8c84", darkPalette.muted)} name="archive" size={18} /><Text style={styles.emptyStateText}>{historyLoadError || 'No past collections yet. After finishing your first collection, it will appear here.'}</Text></View>}
+          )) : <View style={styles.emptyCard}><Feather color={themeColor("#7d8c84", darkPalette.muted)} name="archive" size={18} /><Text style={styles.emptyStateText}>{historyGroups.length ? 'No collections match your search or filters.' : historyLoadError || 'No past collections yet. After finishing your first collection, it will appear here.'}</Text></View>}
           </SkeletonRegion>
-          {historyGroups.length > 3 && (
+          {filteredHistoryGroups.length > 3 && (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={showAllPastCollections ? 'Show fewer past collections' : `View all ${historyGroups.length} past collections`}
+              accessibilityLabel={showAllPastCollections ? 'Show fewer past collections' : `View all ${filteredHistoryGroups.length} past collections`}
               accessibilityState={{ expanded: showAllPastCollections }}
               testID="collector-history-toggle"
               onPress={() => setShowAllPastCollections((current) => !current)}
               style={styles.stopsToggle}
             >
-              <Text style={styles.stopsToggleText}>{showAllPastCollections ? 'Show fewer' : `View all ${historyGroups.length} collections`}</Text>
+              <Text style={styles.stopsToggleText}>{showAllPastCollections ? 'Show fewer' : `View all ${filteredHistoryGroups.length} collections`}</Text>
               <MotionChevron expanded={showAllPastCollections}><Feather name="chevron-down" color={themeColor("#086B42", darkPalette.accent)} size={20} /></MotionChevron>
             </Pressable>
           )}
@@ -2034,16 +2053,11 @@ export default function CollectorScreen() {
                             <Mapbox.LineLayer id={`d-covered-line-${selectedHistoryGroup.id}`} style={{ lineCap: 'round', lineColor: '#c53030', lineJoin: 'round', lineOpacity: 0.9, lineWidth: 5 }} />
                           </Mapbox.ShapeSource>
                         ) : null}
-                        {selectedHistoryGroup.firstEntry ? (
-                          <Mapbox.PointAnnotation coordinate={firstRouteCoordinate(routeLineFeature(selectedHistoryGroup.trailPath)) || historyGroupLastLocation(selectedHistoryGroup) || MAP_CENTER} id={`d-entry-${selectedHistoryGroup.id}`}>
-                            <View style={styles.trailEntryMarker}><Text style={styles.trailMarkerText}>Entry</Text></View>
+                        {historyTrailMarkers(selectedHistoryGroup).map((marker, index) => (
+                          <Mapbox.PointAnnotation key={marker.label} coordinate={marker.point} id={'d-gps-' + selectedHistoryGroup.id + '-' + index}>
+                            <View style={index === 0 ? styles.trailEntryMarker : styles.trailExitMarker}><Text style={index === 0 ? styles.trailMarkerText : styles.trailExitMarkerText}>{marker.label}</Text></View>
                           </Mapbox.PointAnnotation>
-                        ) : null}
-                        {selectedHistoryGroup.lastExit && lastRouteCoordinate(routeLineFeature(selectedHistoryGroup.trailPath)) ? (
-                          <Mapbox.PointAnnotation coordinate={lastRouteCoordinate(routeLineFeature(selectedHistoryGroup.trailPath)) as [number, number]} id={`d-exit-${selectedHistoryGroup.id}`}>
-                            <View style={styles.trailExitMarker}><Text style={styles.trailExitMarkerText}>Exit</Text></View>
-                          </Mapbox.PointAnnotation>
-                        ) : null}
+                        ))}
                         {selectedHistoryGroup.stopLogs.filter((stopLog) => Number.isFinite(Number(stopLog.latitude)) && Number.isFinite(Number(stopLog.longitude))).map((stopLog, index) => (
                           <Mapbox.PointAnnotation
                             coordinate={[Number(stopLog.longitude), Number(stopLog.latitude)]}
@@ -2068,7 +2082,7 @@ export default function CollectorScreen() {
       <StatusBar backgroundColor={isDarkTheme ? '#101815' : '#ffffff'} style={isDarkTheme ? 'light' : 'dark'} translucent={false} />
       <View style={[styles.header, isDarkTheme && { backgroundColor: '#101815' }, { paddingTop: insets.top }]}><View style={styles.brandHeader}><BrandMark height={48} width={150} /><View style={styles.headerCopy}><Text numberOfLines={1} adjustsFontSizeToFit style={[styles.headerTitle, isDarkTheme && { color: '#F1F6F3' }]}>{collectorName || 'Driver'}</Text><Text numberOfLines={1} adjustsFontSizeToFit style={[styles.headerSubtitle, isDarkTheme && { color: '#B4C4BB' }]}>Route Driver</Text></View></View></View>
       <View style={[styles.content, isDarkTheme && { backgroundColor: '#101815' }]}><TabTransition activeKey={activeTab}>{activeTab === 'map' ? mapScreen : activeTab === 'history' ? historyScreen : profileScreen}</TabTransition></View>
-      <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
+      {!keyboardVisible && <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />}
       <Modal animationType="slide" onRequestClose={() => isHistoryMapExpanded ? setIsHistoryMapExpanded(false) : setIsHistoryDetailVisible(false)} presentationStyle="fullScreen" visible={isHistoryDetailVisible}>
         <SafeAreaView style={styles.historyDetailBackdrop}>
           <View style={styles.historyDetailSheet}>
@@ -2076,7 +2090,7 @@ export default function CollectorScreen() {
               <Pressable accessibilityRole="button" accessibilityLabel="Back to route history report" onPress={() => setIsHistoryMapExpanded(false)} style={styles.offlineMapButton}><Feather name="arrow-left" size={20} color={themeColor("#0A7F4F", darkPalette.accent)} /><Text>Back to report</Text></Pressable>
               <Text style={styles.historySectionLabel}>{selectedHistoryGroup?.routeName || 'Recorded trip'}</Text>
               <View style={{ flex: 1, borderRadius: 20, overflow: 'hidden' }}>{renderHistoryTrailMap()}</View>
-              <Text style={styles.segmentTrailCaption}>{selectedHistoryGroup?.pendingSync ? 'Saved on this phone; waiting to sync. ' : ''}{selectedHistoryGroup?.trailPath ? 'Red: recorded travel. ' : 'No GPS line was recorded for this trip. '}{selectedHistoryGroup?.routePath ? 'Dashed: assigned route. ' : 'No assigned route line is available. '}Pinch to zoom and drag to explore.</Text>
+              <Text style={styles.segmentTrailCaption}>{selectedHistoryGroup?.pendingSync ? 'Saved on this phone; waiting to sync. ' : ''}{selectedHistoryGroup?.trailPath ? 'Red: recorded travel. ' : 'No GPS line was recorded for this trip. '}{selectedHistoryGroup?.routePath ? 'Dashed: assigned route. ' : 'No assigned route line is available. '}Start/End mark the first/last recorded GPS positions, not geofence crossings. Pinch to zoom and drag to explore.</Text>
             </View> : null}
             <ScrollView style={isHistoryMapExpanded ? { display: 'none' } : undefined} scrollEnabled={!isHistoryMapExpanded} contentContainerStyle={[styles.historyDetailScroll, isHistoryMapExpanded && { flexGrow: 1 }]} showsVerticalScrollIndicator={false}>
             <View style={styles.historyDetailHeader}>
@@ -2108,13 +2122,12 @@ export default function CollectorScreen() {
                       <Text style={styles.legendText}>Assigned route (reference)</Text>
                     </View>
                     <View style={styles.legendRow}>
-                      <View style={styles.trailEntryDot} />
-                      <Text style={styles.legendText}>Stop entry: {selectedHistoryGroup?.firstEntry ? formatTime(selectedHistoryGroup.firstEntry) : 'Not recorded'}</Text>
+                      <Text style={styles.legendText}>Geofence entry: {selectedHistoryGroup?.firstEntry ? formatTime(selectedHistoryGroup.firstEntry) : 'Not recorded'}</Text>
                     </View>
                     <View style={styles.legendRow}>
-                      <View style={styles.trailExitDot} />
-                      <Text style={[styles.legendText, !selectedHistoryGroup?.lastExit && styles.detailValueRed]}>Stop exit: {selectedHistoryGroup?.lastExit ? formatTime(selectedHistoryGroup.lastExit) : 'Not recorded'}</Text>
+                      <Text style={[styles.legendText, !selectedHistoryGroup?.lastExit && styles.detailValueRed]}>Geofence exit: {selectedHistoryGroup?.lastExit ? formatTime(selectedHistoryGroup.lastExit) : 'Not recorded'}</Text>
                     </View>
+                    <Text style={styles.legendText}>Entry/Exit locations unavailable. Numbered stop markers are not boundary-crossing positions.</Text>
                     {selectedHistoryGroup?.stopLogs.some((stopLog) => Number.isFinite(Number(stopLog.latitude)) && Number.isFinite(Number(stopLog.longitude))) ? (
                       <View style={styles.legendRow}>
                         <View style={styles.trailStopDot} />
@@ -2153,20 +2166,34 @@ export default function CollectorScreen() {
                     <View style={styles.detailRowTwoCol}>
                       <View style={styles.detailCell}>
                         <Text style={styles.detailLabel}>Shift Start</Text>
-                        <Text style={styles.detailValue}>{selectedHistoryGroup?.sessionStartedAt ? formatTime(selectedHistoryGroup.sessionStartedAt) : selectedHistoryGroup?.firstEntry ? formatTime(selectedHistoryGroup.firstEntry) : '—'}</Text>
+                        <Text style={styles.detailValue}>{selectedHistoryGroup?.sessionStartedAt ? formatTime(selectedHistoryGroup.sessionStartedAt) : '—'}</Text>
                       </View>
                       <View style={styles.detailCell}>
                         <Text style={styles.detailLabel}>Shift End</Text>
-                        <Text style={styles.detailValue}>{selectedHistoryGroup?.sessionEndedAt ? formatTime(selectedHistoryGroup.sessionEndedAt) : selectedHistoryGroup?.lastExit ? formatTime(selectedHistoryGroup.lastExit) : '—'}</Text>
+                        <Text style={styles.detailValue}>{selectedHistoryGroup?.sessionEndedAt ? formatTime(selectedHistoryGroup.sessionEndedAt) : '—'}</Text>
+                      </View>
+                    </View>
+                    <View style={styles.detailRowTwoCol}>
+                      <View style={styles.detailCell}>
+                        <Text style={styles.detailLabel}>Start (first GPS)</Text>
+                        <Text style={styles.detailValue}>{selectedHistoryGroup?.firstRecordedAt ? formatTime(selectedHistoryGroup.firstRecordedAt) : 'Time unavailable'}</Text>
+                        {selectedHistoryGroup && !historyTrailStartpoint(selectedHistoryGroup) ? <Text style={styles.segmentTrailCaption}>Location unavailable</Text> : null}
+                      </View>
+                      <View style={styles.detailCell}>
+                        <Text style={styles.detailLabel}>{selectedHistoryGroup?.sessionEndedAt ? 'End (last GPS)' : 'Last GPS'}</Text>
+                        <Text style={styles.detailValue}>{selectedHistoryGroup?.lastRecordedAt ? formatTime(selectedHistoryGroup.lastRecordedAt) : 'Time unavailable'}</Text>
+                        {selectedHistoryGroup && !historyTrailEndpoint(selectedHistoryGroup) ? <Text style={styles.segmentTrailCaption}>Location unavailable</Text> : null}
                       </View>
                     </View>
                     <View style={styles.detailRowTwoCol}>
                       <View style={styles.detailCell}>
                         <Text style={styles.detailLabel}>Geofence Entry</Text>
+                        <Text style={styles.segmentTrailCaption}>Location unavailable</Text>
                         <Text style={styles.detailValue}>{selectedHistoryGroup?.firstEntry ? formatTime(selectedHistoryGroup.firstEntry) : 'Not recorded'}</Text>
                       </View>
                       <View style={styles.detailCell}>
                         <Text style={styles.detailLabel}>Geofence Exit</Text>
+                        <Text style={styles.segmentTrailCaption}>Location unavailable</Text>
                         <Text style={[styles.detailValue, !selectedHistoryGroup?.lastExit && styles.detailValueRed]}>{selectedHistoryGroup?.lastExit ? formatTime(selectedHistoryGroup.lastExit) : 'Not logged — no exit event'}</Text>
                       </View>
                     </View>
@@ -2409,6 +2436,7 @@ const styles = StyleSheet.create({
   areaName: { color: '#ffffff', fontSize: 19, fontWeight: '800' },
   streetSubtitle: { color: '#a3c9b3', fontSize: 9, marginTop: 3, maxWidth: 215 },
   historyScrollContent: { padding: 20, paddingBottom: 24 },
+  historyRecordCount: { color: '#5A6761', fontSize: 16, marginBottom: 16 },
   historyGroup: { marginTop: 24 },
   todayStopsSection: { marginTop: 0 },
   todayStopsHeading: { alignItems: 'center', flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'space-between', marginBottom: 16 },
@@ -2564,6 +2592,7 @@ const styles = StyleSheet.create({
 
 // Explicit dark surface and foreground pairs; the light layout stays unchanged.
 const darkStyles = {
+  historyRecordCount: { color: darkPalette.muted },
   detailIconBadge: { backgroundColor: darkPalette.tint },
   placeholderValue: { color: darkPalette.muted },
   syncCount: { color: darkPalette.muted },

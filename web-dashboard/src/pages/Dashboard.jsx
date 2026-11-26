@@ -1211,8 +1211,9 @@ export default function Dashboard() {
                       <h4 className="rh-legend-title">LEGEND</h4>
                       <div className="rh-legend-row"><span className="rh-legend-line-solid" /><span>Recorded driver travel</span></div>
                       <div className="rh-legend-row"><span className="rh-legend-line-dashed" /><span>Assigned route (planned)</span></div>
-                      <div className="rh-legend-row"><span className="rh-legend-dot rh-legend-entry" /><span>Entry time: {typeof entryTime === 'string' && !entryTime.includes('T') ? entryTime : formatRHShiftTime(entryTime)}</span></div>
-                      <div className="rh-legend-row"><span className="rh-legend-dot rh-legend-exit" /><span className={!exitTime ? 'dt-value-red' : ''}>Exit: {typeof exitTime === 'string' && !exitTime.includes('T') ? exitTime : exitTime ? formatRHShiftTime(exitTime) : 'Not recorded'}</span></div>
+                      <div className="rh-legend-row"><span>Geofence entry: {typeof entryTime === 'string' && !entryTime.includes('T') ? entryTime : formatRHShiftTime(entryTime)}</span></div>
+                      <div className="rh-legend-row"><span className={!exitTime ? 'dt-value-red' : ''}>Geofence exit: {typeof exitTime === 'string' && !exitTime.includes('T') ? exitTime : exitTime ? formatRHShiftTime(exitTime) : 'Not recorded'}</span></div>
+                      <div className="rh-legend-row"><span>Entry/Exit locations unavailable. Stop coordinates are not boundary-crossing positions.</span></div>
                       {flaggedCount > 0 ? (<div className="rh-legend-row"><svg height="12" viewBox="0 0 24 24" width="12"><path d="M4 15V4m0 11 0 6M6 4h11l-2 4 2 4H6" fill="none" stroke="#c53030" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" /></svg><span>Dwell: No exit event — segment flagged ({flaggedCount})</span></div>) : null}
                     </div>
                   </div>

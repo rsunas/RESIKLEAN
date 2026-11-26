@@ -5,12 +5,16 @@ const Report = require('../models/MissedReport');
 const Message = require('../models/ReportMessage');
 const Load = require('../models/TruckLoad');
 const { attachTruckNumbers } = require('../utils/registeredTruckNumbers');
+const { textSearch, dateRange } = require('../utils/adminListFilters');
 const validId = value => /^(complaint|reply|truckload|route):[a-f0-9]{24}$/i.test(value);
 const list = async (req, res) => {
   const { type = 'all', unread = 'false', page = '1', limit = '10' } = req.query;
   if (!['all', ...TYPES].includes(type) || !['true', 'false'].includes(unread) || !/^\d+$/.test(page) || !/^\d+$/.test(limit) || Number(page) < 1 || Number(page) > 100000 || Number(limit) < 1 || Number(limit) > 50) return sendError(res, 'Invalid notification filters', 400);
-  try { sendSuccess(res, await listNotifications(req.user._id, { type, unread: unread === 'true', page: Number(page), limit: Number(limit) })); }
-  catch { sendError(res, 'Notifications could not be loaded. Please retry.', 500); }
+  try {
+    const q = textSearch(req.query.q);
+    dateRange(req.query.from, req.query.to);
+    sendSuccess(res, await listNotifications(req.user._id, { type, unread: unread === 'true', page: Number(page), limit: Number(limit), q, from: req.query.from, to: req.query.to }));
+  } catch (error) { sendError(res, error.status === 400 ? error.message : 'Notifications could not be loaded. Please retry.', error.status || 500); }
 };
 const markRead = async (req, res) => {
   const ids = req.body?.ids;

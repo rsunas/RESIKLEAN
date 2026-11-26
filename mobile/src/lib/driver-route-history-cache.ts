@@ -57,7 +57,37 @@ export async function getRouteHistoryCache<T>(collectorId: string): Promise<T[]>
 }
 
 type HistoryPath = {type: 'LineString' | 'MultiLineString'; coordinates: unknown};
-type HistoryMapRecord = {id: string; date: string; routeId: string; routePath?: HistoryPath | null; trailPath?: HistoryPath | null; pendingSync?: boolean; syncFailed?: boolean; sessionStartedAt?: string; sessionEndedAt?: string; routeSnapshot?: { name: string; routePath?: HistoryPath | null; barangay?: string[]; stops?: unknown[] } | null};
+type HistoryMapRecord = {firstLocation?: [number, number] | null; firstRecordedAt?: string | null; lastLocation?: [number, number] | null; lastRecordedAt?: string | null; id: string; date: string; routeId: string; routePath?: HistoryPath | null; trailPath?: HistoryPath | null; pendingSync?: boolean; syncFailed?: boolean; sessionStartedAt?: string; sessionEndedAt?: string; routeSnapshot?: { name: string; routePath?: HistoryPath | null; barangay?: string[]; stops?: unknown[] } | null};
+const validPoint = (point: unknown): point is [number, number] => Array.isArray(point)
+  && typeof point[0] === 'number' && typeof point[1] === 'number'
+  && Number.isFinite(point[0]) && Number.isFinite(point[1]) && Math.abs(point[0]) <= 180 && Math.abs(point[1]) <= 90;
+
+/** The saved final fix can be a lone point after a gap, outside drawable lines. */
+export function historyTrailEndpoint(record: Pick<HistoryMapRecord, 'lastLocation' | 'trailPath'>): [number, number] | null {
+  if (validPoint(record.lastLocation)) return record.lastLocation;
+  if (record.lastLocation === null) return null;
+  const path = record.trailPath;
+  if (!Array.isArray(path?.coordinates)) return null;
+  const points = path.type === 'MultiLineString' ? path.coordinates.flat() : path.coordinates;
+  return [...points].reverse().find(validPoint) || null;
+}
+
+export function historyTrailStartpoint(record: Pick<HistoryMapRecord, 'firstLocation' | 'trailPath'>): [number, number] | null {
+  if (validPoint(record.firstLocation)) return record.firstLocation;
+  if (record.firstLocation === null) return null;
+  const path = record.trailPath;
+  if (!Array.isArray(path?.coordinates)) return null;
+  const points = path.type === 'MultiLineString' ? path.coordinates.flat() : path.coordinates;
+  return points.find(validPoint) || null;
+}
+
+export function historyTrailMarkers(record: Pick<HistoryMapRecord, 'firstLocation' | 'lastLocation' | 'trailPath' | 'sessionEndedAt'>) {
+  const start = historyTrailStartpoint(record), end = historyTrailEndpoint(record);
+  const endLabel = record.sessionEndedAt ? 'End' : 'Last GPS';
+  if (start && end && start.every((value, index) => value === end[index])) return [{ point: start, label: 'Start / ' + endLabel }];
+  return [...(start ? [{ point: start, label: 'Start' }] : []), ...(end ? [{ point: end, label: endLabel }] : [])];
+}
+
 /** Merge by route/day, keeping separate trips separate and never erasing local paths. */
 export function mergeRouteHistory<T extends HistoryMapRecord>(primary: T[], fallback: T[]): T[] {
   const groups = new Map<string, T>();
@@ -66,7 +96,24 @@ export function mergeRouteHistory<T extends HistoryMapRecord>(primary: T[], fall
     const key = `${record.date}|${record.routeId}`;
     const previous = groups.get(key);
     if (!previous) { groups.set(key, record); continue; }
-    const candidates = [...new Map([...lines(previous.trailPath), ...lines(record.trailPath)].map(line => [JSON.stringify(line), line])).values()];
+    const pointTime = (item: T) => Date.parse(item.lastRecordedAt || item.sessionEndedAt || item.sessionStartedAt || '') || 0;
+    const pointCount = (item: T) => lines(item.trailPath).reduce<number>((count, line) => count + (Array.isArray(line) ? line.length : 0), 0);
+    // Legacy responses have only session timestamps. On a tie prefer the fuller
+    // trail, so a partial upload cannot move the endpoint back to its old prefix.
+    const hasEndTime = (item: T) => validPoint(item.lastLocation) && Number.isFinite(Date.parse(item.lastRecordedAt || ''));
+    const latest = historyTrailEndpoint(record) && (!historyTrailEndpoint(previous)
+      || (hasEndTime(record) && !hasEndTime(previous))
+      || (hasEndTime(record) === hasEndTime(previous) && (pointTime(record) > pointTime(previous)
+        || (pointTime(record) === pointTime(previous) && pointCount(record) > pointCount(previous))))) ? record : previous;
+    const startTime = (item: T) => Date.parse(item.firstRecordedAt || item.sessionStartedAt || '') || Infinity;
+    const hasStartTime = (item: T) => validPoint(item.firstLocation) && Number.isFinite(Date.parse(item.firstRecordedAt || ''));
+    const earliest = historyTrailStartpoint(record) && (!historyTrailStartpoint(previous)
+      || (hasStartTime(record) && !hasStartTime(previous))
+      || (hasStartTime(record) === hasStartTime(previous) && (startTime(record) < startTime(previous)
+        || (startTime(record) === startTime(previous) && validPoint(record.firstLocation) && !validPoint(previous.firstLocation))))) ? record : previous;
+    const chronological = (Date.parse(previous.sessionStartedAt || '') || 0) <= (Date.parse(record.sessionStartedAt || '') || 0)
+      ? [previous, record] : [record, previous];
+    const candidates = [...new Map(chronological.flatMap(item => lines(item.trailPath)).map(line => [JSON.stringify(line), line])).values()];
     // A previously uploaded prefix must not accumulate as another drawn trip.
     const unique = candidates.filter(line => !candidates.some(other => other !== line && Array.isArray(other) && Array.isArray(line)
       && other.length > line.length && JSON.stringify(other).startsWith(JSON.stringify(line).slice(0, -1) + ',')));
@@ -79,6 +126,8 @@ export function mergeRouteHistory<T extends HistoryMapRecord>(primary: T[], fall
     const pendingSync = !!(previous.pendingSync || record.pendingSync);
     groups.set(key, {...previous, ...record, routePath: routeSnapshot ? routeSnapshot.routePath || null : record.routePath || previous.routePath, trailPath,
       ...(routeSnapshot ? { routeSnapshot, routeName: routeSnapshot.name, barangay: routeSnapshot.barangay || [], ...(routeSnapshot.stops ? { totalStops: routeSnapshot.stops.length } : {}) } : {}),
+      firstLocation: historyTrailStartpoint(earliest), firstRecordedAt: earliest.firstRecordedAt,
+      lastLocation: historyTrailEndpoint(latest), lastRecordedAt: latest.lastRecordedAt,
       sessionStartedAt: starts[0], sessionEndedAt: ends.at(-1), pendingSync, syncFailed: pendingSync && !!(previous.syncFailed || record.syncFailed)});
   }
   return [...groups.values()].sort((a, b) => b.date.localeCompare(a.date));

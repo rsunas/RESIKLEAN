@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@heroui/react';
+import AdminListFilters from '../components/AdminListFilters.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import AppSelect from '../components/AppSelect.jsx';
 import TablePagination from '../components/TablePagination.jsx';
@@ -13,7 +14,9 @@ export default function NotificationsPage({ feed, onOpen, Icon }) {
   const { data, loading, error, filter, changeFilter, refresh, markRead, getTarget } = feed;
   const [busy, setBusy] = useState('');
   const [actionError, setActionError] = useState('');
-  const items = data?.items || [];
+  const invalidRange = Boolean(filter.from && filter.to && filter.from > filter.to);
+  const hasFilters = Boolean(filter.q?.trim() || filter.from || filter.to || filter.type !== 'all');
+  const items = invalidRange ? [] : data?.items || [];
   const act = async (key, action) => {
     if (busy) return;
     setBusy(key); setActionError('');
@@ -33,6 +36,8 @@ export default function NotificationsPage({ feed, onOpen, Icon }) {
         <AppSelect aria-label="Notification category" className="notifications-category-select" popoverClassName="notifications-category-popover" popoverPlacement="bottom start" options={categories} value={filter.type} disabled={!!busy} onChange={type => changeFilter({ type })}/>
         <Button variant="secondary" className="notifications-mark-page" isDisabled={loading || !!busy || !items.some(item => !item.read)} onPress={() => act('page', () => markRead(items.filter(item => !item.read).map(item => item.id)))}>Mark page as read</Button>
       </div>
+      <AdminListFilters label="Search notifications" placeholder="Search people, area, activity or truck..." value={filter} disabled={!!busy} onChange={changeFilter}
+        onClear={() => changeFilter({ q: '', from: '', to: '', type: 'all', unread: false })}/>
       {actionError ? <p className="notifications-error" role="alert">{actionError}</p> : null}
       {error && data ? <div className="notifications-error" role="alert">{error} <Button variant="ghost" onPress={refresh}>Retry</Button></div> : null}
       <LoadingRegion loading={loading} hasData={data !== null} error={data ? '' : error} onRetry={refresh} placeholder={<SkeletonDetails rows={7}/> }>
@@ -43,9 +48,9 @@ export default function NotificationsPage({ feed, onOpen, Icon }) {
             <time dateTime={item.date}>{formatTime(item.date)}</time>
           </div>
           <div className="notifications-actions"><Button variant="secondary" className="outline-button" isDisabled={loading || !!busy} onPress={() => open(item)}>{busy === item.id ? 'Opening...' : item.type === 'complaint' || item.type === 'reply' ? 'View conversation' : 'View details'}</Button>{!item.read ? <Button variant="secondary" className="notifications-mark-item" isDisabled={loading || !!busy} onPress={() => act(`read:${item.id}`, () => markRead([item.id]))} aria-label={`Mark ${item.title.toLowerCase()} as read`}>Mark as read</Button> : <span className="notifications-read-label">Read</span>}</div>
-        </li>)}</ul> : <div className="notifications-empty"><Icon name="bell" size={32}/><h3>{filter.unread ? "You're all caught up" : 'No notifications here yet'}</h3><p>{filter.type !== 'all' ? 'Try another activity category.' : 'New activity will appear here automatically.'}</p></div>}
+        </li>)}</ul> : <div className="notifications-empty"><Icon name="bell" size={32}/><h3>{invalidRange ? 'Check your date range' : hasFilters ? 'No matching notifications' : filter.unread ? "You're all caught up" : 'No notifications here yet'}</h3><p>{hasFilters ? 'Adjust your search or clear filters to see more activity.' : 'New activity will appear here automatically.'}</p></div>}
       </LoadingRegion>
-      <TablePagination label="Notifications" page={filter.page} pageSize={filter.limit} pageSizeOptions={[4]} total={data?.total || 0} disabled={loading || !!busy} onPageChange={page => changeFilter({ page })} onPageSizeChange={limit => changeFilter({ limit })}/>
+      <TablePagination label="Notifications" page={filter.page} pageSize={filter.limit} pageSizeOptions={[4]} total={invalidRange ? 0 : data?.total || 0} disabled={invalidRange || loading || !!busy} onPageChange={page => changeFilter({ page })} onPageSizeChange={limit => changeFilter({ limit })}/>
     </section>
     <p className="notifications-note">Reading a notification does not resolve a complaint. Collection totals update as offline stop records sync. Finished-collection notices start with this update; earlier ended trips are not treated as finished collections.</p>
   </>;

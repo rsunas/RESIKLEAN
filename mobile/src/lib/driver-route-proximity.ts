@@ -4,6 +4,7 @@ import * as SQLite from 'expo-sqlite';
 import * as TaskManager from 'expo-task-manager';
 import { AppState, Platform } from 'react-native';
 import { finishDriverTrailSession, recordDriverTrailLocation, startDriverTrailSession, type TripRouteSnapshot } from '@/lib/driver-trail-queue';
+import { withTimeout } from './async-timeout';
 import { getSession } from '@/lib/session';
 import { ensureNotificationPermissionsAsync } from '@/lib/notifications';
 
@@ -609,12 +610,22 @@ export async function updateRouteProximityTracking(config: RouteTrackingConfig) 
   return result.enabled;
 }
 
-export function stopRouteProximityTracking({ forgetConfiguration = false }: { forgetConfiguration?: boolean } = {}) {
+export function stopRouteProximityTracking({ forgetConfiguration = false, captureFinalLocation = false }: { forgetConfiguration?: boolean; captureFinalLocation?: boolean } = {}) {
   // Invalidate pending permission/setup work and already-delivered location batches.
   trackingGeneration += 1;
   trackingSuppressed = true;
   return serializeTracking(async () => {
     const database = await getDatabase();
+    // Only explicit Finish requests a final fix, without starting another session.
+    const config = captureFinalLocation ? await getConfig() : null;
+    if (config?.collectorId && Platform.OS !== 'web') {
+      const detection = await readDetection();
+      const fix = await withTimeout(Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }), 4000).catch(() => null);
+      if (fix && fix.timestamp >= detection.armedAt && Date.now() - fix.timestamp <= 10_000
+        && evaluateRoutePresence(detection.filter, fix, null, Date.now()).accepted) {
+        await recordDriverTrailLocation(fix, config.collectorId);
+      }
+    }
     // Delete the live configuration even if native teardown fails: no more points
     // can be recorded, and a status poll cannot silently restart the service.
     await database.execAsync('DELETE FROM driver_route_tracking_config; DELETE FROM driver_route_detection;');

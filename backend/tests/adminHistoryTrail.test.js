@@ -1,3 +1,4 @@
+jest.mock('../src/services/notification.service', () => ({ sendUserPush: jest.fn(), sendPushNotifications: jest.fn() }));
 jest.mock('../src/services/mapStaticImage', () => ({ getSegmentTrailImage: jest.fn().mockResolvedValue(null) }));
 jest.mock('../src/services/cloudinary.service', () => ({ uploadPhoto: jest.fn() }));
 const Session = require('../src/models/RouteTrailSession');
@@ -84,4 +85,20 @@ test('history search and status filters run before pagination and return matchin
  const second=await request({q:'target driver',limit:'2',page:'2'});expect(second.rows).toHaveLength(1);expect(first.rows.map(row=>row.id)).not.toContain(second.rows[0].id);
  const flagged=await request({q:'Target',status:'flagged',limit:'7'});expect(flagged.count).toBe(1);expect(flagged.rows[0].flaggedCount).toBe(1);
  const empty=await request({q:'no matching record',limit:'7'});expect(empty.count).toBe(0);expect(empty.rows).toEqual([]);
+});
+
+test('GPS endpoint coordinates never use stop-geofence positions or grouped line order', () => {
+ const input = {eventDate:day, route:{stops:[]}, sessions:[{endedAt:'2026-10-07T03:00:00Z'}],
+  logs:[{collectedAt:'2026-10-07T01:20:00Z',exitedAt:'2026-10-07T01:21:00Z',latitude:1,longitude:2}],
+  trailPoints:[
+   {clientSessionId:'a',longitude:123,latitude:13,recordedAt:'2026-10-07T01:00:00Z'},
+   {clientSessionId:'a',longitude:124,latitude:14,recordedAt:'2026-10-07T02:00:00Z'},
+   {clientSessionId:'b',longitude:123.5,latitude:13.5,recordedAt:'2026-10-07T01:30:00Z'}]};
+ const result=buildRouteHistoryPayload(input,{});
+ expect(result.trail.startCoord).toEqual([123,13]); expect(result.trail.endCoord).toEqual([124,14]);
+ expect(result.trail.tripEnded).toBe(true);
+ expect(result.trail.entryTime).toBe(input.logs[0].collectedAt);
+ expect(result.trail.exitTime).toBe(input.logs[0].exitedAt);
+ const empty=buildRouteHistoryPayload({...input,trailPoints:[]},{});
+ expect(empty.trail.startCoord).toBeNull();expect(empty.trail.endCoord).toBeNull();
 });

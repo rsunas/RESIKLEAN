@@ -9,14 +9,14 @@ function calendarDate(value) {
 }
 
 // Keep API-facing values as YYYY-MM-DD strings while HeroUI owns the calendar and keyboard editing.
-export default function AppDatePicker({ value, onChange, label, ariaLabel = label, id, min, max, isRequired = false, isInvalid, className = '', hideLabel = false }) {
+export default function AppDatePicker({ value, onChange, label, ariaLabel = label, id, min, max, isRequired = false, isDisabled = false, isInvalid, className = '', hideLabel = false }) {
   const [yearPickerOpen, setYearPickerOpen] = useState(false);
-  return <DatePicker id={id} aria-label={ariaLabel} className={`app-date-picker ${className}`} value={calendarDate(value)} onChange={date => onChange(date?.toString() || '')} minValue={calendarDate(min) || undefined} maxValue={calendarDate(max) || undefined} isRequired={isRequired} isInvalid={isInvalid} validationBehavior="native" onOpenChange={() => setYearPickerOpen(false)}>
+  return <DatePicker isDisabled={isDisabled} id={id} aria-label={ariaLabel} className={`app-date-picker ${className}`} value={calendarDate(value)} onChange={date => onChange(date?.toString() || '')} minValue={calendarDate(min) || undefined} maxValue={calendarDate(max) || undefined} isRequired={isRequired} isInvalid={isInvalid} validationBehavior="native" onOpenChange={() => setYearPickerOpen(false)}>
     <Label className={hideLabel ? 'app-date-label-hidden' : undefined}>{label}</Label>
     <DateField.Group>
       <DateField.Input>{segment => <DateField.Segment segment={segment} />}</DateField.Input>
       <DateField.Suffix>
-        {!isRequired && value ? <Button isIconOnly variant="ghost" className="app-date-clear" aria-label={`Clear ${ariaLabel}`} onPress={() => onChange('')}>{'\u00d7'}</Button> : null}
+        {!isRequired && value ? <Button isDisabled={isDisabled} isIconOnly variant="ghost" className="app-date-clear" aria-label={`Clear ${ariaLabel}`} onPress={() => onChange('')}>{'\u00d7'}</Button> : null}
         <DatePicker.Trigger aria-label={`Choose ${ariaLabel}`}><DatePicker.TriggerIndicator /></DatePicker.Trigger>
       </DateField.Suffix>
     </DateField.Group>

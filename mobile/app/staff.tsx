@@ -20,6 +20,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { StatusBar } from 'expo-status-bar';
 import { Button, Card } from 'heroui-native';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useKeyboardVisible } from '@/hooks/use-keyboard-visible';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -451,6 +452,11 @@ export default function StaffScreen() {
   const networkRevision = useNetworkRecovery();
   const router = useRouter();
   const { fontScale } = useWindowDimensions();
+  const keyboardVisible = useKeyboardVisible();
+  const [headerHeight, setHeaderHeight] = useState(0);
+  const inputScroll = useRef<ScrollView>(null);
+  const pileFields = useRef<View>(null);
+  const inputScrollY = useRef(0);
   const cameraBusyRef = useRef(false);
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<Tab>('input');
@@ -473,6 +479,17 @@ export default function StaffScreen() {
   const [pileHeights, setPileHeights] = useState({ front: '', middle: '', back: '' });
   const [pileHeightM, setPileHeightM] = useState('0');
   const [heightSuggestions, setHeightSuggestions] = useState<string | null>(null);
+  const revealPileFields = () => {
+    if (!heightSuggestions) return;
+    requestAnimationFrame(() => {
+      pileFields.current?.measureInWindow((_x, fieldY) => {
+        inputScroll.current?.getNativeScrollRef()?.measureInWindow((_sx, scrollY) => {
+          inputScroll.current?.scrollTo({ y: Math.max(0, inputScrollY.current + fieldY - scrollY - 8), animated: false });
+        });
+      });
+    });
+  };
+  useEffect(revealPileFields, [heightSuggestions, keyboardVisible]);
   const [length, setLength] = useState('');
   const [width, setWidth] = useState('');
   const [height, setHeight] = useState('');
@@ -1260,7 +1277,9 @@ export default function StaffScreen() {
   };
 
   const renderInput = () => (
-    <ScrollView contentContainerStyle={styles.inputScrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+    <ScrollView ref={inputScroll} onLayout={revealPileFields} onContentSizeChange={revealPileFields}
+      onScroll={event => { inputScrollY.current = event.nativeEvent.contentOffset.y; }} scrollEventThrottle={16}
+      contentContainerStyle={styles.inputScrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
       <Text style={[styles.inputEyebrow, isDarkTheme && { color: '#85DCB0' }]}>NEW MEASUREMENT</Text>
       <Text style={[styles.inputTitle, isDarkTheme && { color: '#F1F6F3' }]}>Volumetric Input</Text>
       {isOffline && (
@@ -1349,6 +1368,7 @@ export default function StaffScreen() {
           ))}
         </View>
         <Text style={[styles.helperText, isDarkTheme && { color: '#B4C4BB' }]}>{measurementMode === 'three-point' ? 'Measure total pile height from the truck bed floor in centimetres.' : 'Enter the extra mound height above the truck wall height in metres.'}</Text>
+        <View ref={pileFields} collapsable={false}>
         {measurementMode === 'three-point' ? <View style={styles.measurementRow}>
           {(['front', 'middle', 'back'] as const).map(position => (
             <View key={position} style={styles.measurementField}>
@@ -1365,6 +1385,7 @@ export default function StaffScreen() {
             open={heightSuggestions === 'single'} onOpenChange={open => setHeightSuggestions(open ? 'single' : null)}
             onChange={value => { setPileHeightM(value); setTonnagePreview(null); }} />
         </View>}
+        </View>
         <Text style={[styles.formSectionTitle, styles.sectionSpacing, isDarkTheme && { color: '#F1F6F3' }]}>Measurements</Text>
         <View style={styles.measurementRow}>
           <MeasurementField label="Length (m)" value={length} />
@@ -1426,6 +1447,7 @@ export default function StaffScreen() {
           <Text style={[styles.formSectionTitle, isDarkTheme && { color: '#F1F6F3' }, { marginBottom: 12 }]}>Notes</Text>
           <TextInput
             accessibilityLabel="Notes"
+            onFocus={() => setHeightSuggestions(null)}
             multiline
             onChangeText={setNotes}
             placeholder="Add an observation about this load"
@@ -1611,7 +1633,7 @@ export default function StaffScreen() {
   return (
     <SafeAreaView edges={['left', 'right']} style={[styles.safeArea, isDarkTheme && { backgroundColor: '#101815' }]}>
       <StatusBar backgroundColor={isDarkTheme ? '#101815' : '#ffffff'} style={isDarkTheme ? 'light' : 'dark'} translucent={false} />
-        <View style={[styles.header, isDarkTheme && { backgroundColor: '#101815' }, { paddingTop: insets.top }]}>
+        <View onLayout={event => setHeaderHeight(event.nativeEvent.layout.height)} style={[styles.header, isDarkTheme && { backgroundColor: '#101815' }, { paddingTop: insets.top }]}>
           <View style={styles.brandHeader}>
             <BrandMark height={48} width={150} />
             <View style={styles.headerCopy}>
@@ -1621,12 +1643,12 @@ export default function StaffScreen() {
           </View>
         </View>
 
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={[styles.content, isDarkTheme && { backgroundColor: '#101815' }]}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={headerHeight} style={[styles.content, isDarkTheme && { backgroundColor: '#101815' }]}>
         <TabTransition activeKey={activeTab}>
           {activeTab === 'input' ? renderInput() : activeTab === 'history' ? renderHistory() : renderProfile()}
         </TabTransition>
       </KeyboardAvoidingView>
-      <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
+      {!keyboardVisible && <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />}
 
       {renderSubmissionDetails()}
       <SignOutConfirmModal visible={isSignOutConfirmVisible} onCancel={() => setIsSignOutConfirmVisible(false)} onConfirm={completeSignOut} />

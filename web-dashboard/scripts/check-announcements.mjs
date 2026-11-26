@@ -33,7 +33,18 @@ const server = await createServer({ root, server: { host: '127.0.0.1', port: 0 }
         if (file) data.imageUrl = '/src/assets/announcement-bg-blurred.jpg';
         delete data.image; items = [data, ...items.filter(item => item._id !== data._id)];
       } else if (req.method === 'DELETE') { items = items.filter(item => !url.pathname.endsWith(item._id)); data = { deleted: true }; }
-      else data = { items, total: items.length, page: 1, limit: 10 };
+      else {
+        const p=url.searchParams, q=(p.get('q')||'').trim().toLowerCase();
+        const rows=items.filter(item=>
+          [item.reason,item.message,item.areaLabel,item.affectedTruckId?.truckNumber,item.affectedTruckId?.plateNumber].join(' ').toLowerCase().includes(q)
+          && (!p.get('status')||p.get('status')==='all'||item.status===p.get('status'))
+          && (!p.get('area')||p.get('area')==='any'||(p.get('area')==='global'?!item.areaId:item.areaId?._id===p.get('area')))
+          && (!p.get('truck')||p.get('truck')==='any'||(p.get('truck')==='global'?!item.affectedTruckId:item.affectedTruckId?._id===p.get('truck')))
+          && (!p.get('from')||Date.parse(item.scheduledFor)>=Date.parse(p.get('from')+'T00:00:00+08:00'))
+          && (!p.get('to')||Date.parse(item.scheduledFor)<Date.parse(p.get('to')+'T00:00:00+08:00')+86400000));
+        const page=Number(p.get('page')||1),limit=Number(p.get('limit')||10);
+        data={items:rows.slice((page-1)*limit,page*limit),total:rows.length,page,limit};
+      }
       res.end(JSON.stringify({ success: true, data }));
     } else if (req.url === '/__announcements') {
       res.setHeader('Content-Type', 'text/html');
@@ -125,6 +136,31 @@ try {
   await wait("document.querySelector('.ann-recent').textContent.includes('Could not load announcements')");
   apiError = false; await button('Retry', "document.querySelector('.ann-recent')");
   await wait("document.querySelector('.ann-recent').textContent.includes('No announcements yet')");
+  items=Array.from({length:14},(_,i)=>({_id:String(i).padStart(24,'0'),__v:0,type:'Service delay',impact:'Delays may occur',reason:'Fixture '+i,message:'Road maintenance',status:i%2?'published':'draft',areaId:i%2?{_id:AREA,name:'Area 4 Collection Route'}:null,areaLabel:i%2?'Area 4 Collection Route':'All areas',affectedTruckId:i%2?{_id:TRUCK,truckNumber:'57',plateNumber:'SNA-1478'}:null,scheduledFor:'2026-11-26T02:00:00Z'}));
+  await button('Refresh');
+  await wait("document.querySelectorAll('.ann-recent .ann-status').length===10");
+  await browser.evaluate("document.querySelector('button[aria-label=\"Next page\"]').click()");
+  await wait("document.querySelectorAll('.ann-recent .ann-status').length===4");
+  const search=async value=>browser.evaluate(`(()=>{const input=document.querySelector('input[aria-label="Search announcements"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  await search('Fixture 13');await wait("document.querySelectorAll('.ann-recent .ann-status').length===1");
+  assert.ok(await browser.evaluate("document.querySelector('.ann-recent tbody').textContent.includes('Fixture 13')"));
+  const filterSelect=async(label,text)=>{
+    await browser.evaluate(`document.querySelector('[aria-label="${label}"]').closest('.app-select').querySelector('[data-slot="select-trigger"]').click()`);
+    await wait("!!document.querySelector('[role=option]')");
+    await browser.evaluate(`[...document.querySelectorAll('[role=option]')].find(option=>option.textContent.trim()===${JSON.stringify(text)}).click()`);
+  };
+  await filterSelect('Announcement status','Draft');
+  await wait("document.querySelector('.ann-empty')?.textContent.includes('No announcements match')");
+  await browser.evaluate("document.querySelector('button[aria-label=\"Clear search announcements filters\"]').click()");
+  await wait("document.querySelectorAll('.ann-recent .ann-status').length===10");
+  await filterSelect('Announcement status','Published');
+  await filterSelect('Announcement area','Area 4 Collection Route');
+  await filterSelect('Announcement truck','Truck 57 - SNA-1478');
+  await wait("document.querySelectorAll('.ann-recent .ann-status').length===7");
+  assert.ok(await browser.evaluate("[...document.querySelectorAll('.ann-recent .ann-status')].every(status=>status.textContent==='Published')"));
+  await search('missing');await search('Fixture 13');
+  await wait("document.querySelectorAll('.ann-recent .ann-status').length===1");
+  await screenshot('announcement-filters');
   assert.deepEqual(errors, []);
   console.log(`Announcements browser checks passed; JPEG ${metadata.width}×${metadata.height}, ${Math.round(image.size / 1024)} KB. Screenshots: dist/qa.`);
 } finally { await browser?.close(); await server.close(); }

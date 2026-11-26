@@ -356,7 +356,8 @@ export async function getLocalDriverTrailHistory(collectorId: string) {
       elevationGainFt: 0, elevationLossFt: 0, sessionId: session.client_session_id,
       sessionStartedAt: session.started_at, sessionEndedAt: session.ended_at || undefined,
       routeSnapshot, routePath, trailPath: buildTrailPath(points),
-      lastLocation: coordinates.at(-1), pendingSync: !session.synced_at, syncFailed: !!session.last_error, stopLogs: [],
+      firstLocation: coordinates[0], firstRecordedAt: points[0]?.recorded_at,
+      lastLocation: coordinates.at(-1), lastRecordedAt: points.at(-1)?.recorded_at, pendingSync: !session.synced_at, syncFailed: !!session.last_error, stopLogs: [],
     };
   }));
 }

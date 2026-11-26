@@ -6,6 +6,7 @@ const { uploadPhoto, deletePhoto } = require('../services/cloudinary.service');
 const { sendPushNotifications } = require('../services/notification.service');
 const { emitToResidents } = require('../services/socket.service');
 const { sendSuccess, sendError } = require('../utils/response');
+const { textSearch, dateRange, escapeSearch } = require('../utils/adminListFilters');
 const shared = () => import('../shared/announcements.mjs');
 const fail = message => { const error = new Error(message); error.status = 400; throw error; };
 const validId = id => typeof id === 'string' && /^[a-f\d]{24}$/i.test(id);
@@ -117,6 +118,23 @@ exports.list = async (req, res) => {
       filter = req.query.scope === 'all' ? { status: 'published' } : { status: 'published', $or: [{ areaId: null }, ...(req.user.home_segment_id ? [{ areaId: req.user.home_segment_id }] : []), { audienceBarangays: { $in: names } }] };
     }
     if (!resident) {
+      const q = textSearch(req.query.q), dates = dateRange(req.query.from, req.query.to);
+      const { status = 'all', area = 'any', truck = 'any' } = req.query;
+      if (!['all', 'draft', 'published'].includes(status)) fail('Choose a valid announcement status.');
+      if (status !== 'all') filter.status = status;
+      for (const [key, value, global] of [['areaId', area, 'global'], ['affectedTruckId', truck, 'global']]) {
+        if (value !== 'any') {
+          if (value !== global && !validId(value)) fail('Choose a valid area or truck.');
+          filter[key] = value === global ? null : value;
+        }
+      }
+      if (Object.keys(dates).length) filter.scheduledFor = dates;
+      if (q) {
+        const pattern = new RegExp(escapeSearch(q), 'i');
+        const trucks = await Truck.find({ $or: [{ truckNumber: pattern }, { plateNumber: pattern }] }).select('_id').lean();
+        filter.$or = ['type', 'reason', 'impact', 'message', 'areaLabel'].map(key => ({ [key]: pattern }));
+        if (trucks.length) filter.$or.push({ affectedTruckId: { $in: trucks.map(truck => truck._id) } });
+      }
       const requestedPage = Number.parseInt(req.query.page, 10);
       const total = await Announcement.countDocuments(filter);
       const page = Math.min(Math.max(1, Math.ceil(total / limit)), Number.isFinite(requestedPage) ? Math.max(1, requestedPage) : 1);
@@ -134,7 +152,7 @@ exports.list = async (req, res) => {
     const nextCursor = hasMore && last ? Buffer.from(`${new Date(last.publishedAt).toISOString()}|${last._id}`).toString('base64url') : null;
     const areaIds = resident ? new Set([req.user.home_segment_id].filter(Boolean).map(String)) : new Set();
     return sendSuccess(res, { items: resident ? pageItems.map(item => publicItem(item, !item.areaId || areaIds.has(String(item.areaId)) || (item.audienceBarangays || []).some(name => [req.user.barangay, req.user.location].filter(Boolean).some(value => String(value).toLowerCase() === String(name).toLowerCase())))) : pageItems, nextCursor, hasMore, limit });
-  } catch { return sendError(res, 'Unable to load announcements.', 500); }
+  } catch (error) { return sendError(res, error.status === 400 ? error.message : 'Unable to load announcements.', error.status || 500); }
 };
 exports.detail = async (req, res) => {
   if (!validId(req.params.id)) return sendError(res, 'Invalid announcement.');

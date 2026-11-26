@@ -26,7 +26,10 @@ const server = await createServer({ root, server: { host: '127.0.0.1', port: 0 }
       } else if (route.endsWith('/notifications')) {
         if (failLoad) { success = false; error = 'Notifications are unavailable. Please retry.'; res.statusCode = 503; }
         const type = url.searchParams.get('type'), unread = url.searchParams.get('unread') === 'true', page = Number(url.searchParams.get('page')), limit = Number(url.searchParams.get('limit'));
-        const rows = items.map(item => ({ ...item, read: read.has(item.id) })).filter(item => (type === 'all' || item.type === type) && (!unread || !item.read));
+        const rows = items.map(item => ({ ...item, read: read.has(item.id) })).filter(item => (type === 'all' || item.type === type) && (!unread || !item.read)
+          && [item.title,item.description].join(' ').toLowerCase().includes((url.searchParams.get('q')||'').trim().toLowerCase())
+          && (!url.searchParams.get('from') || Date.parse(item.date) >= Date.parse(url.searchParams.get('from')+'T00:00:00+08:00'))
+          && (!url.searchParams.get('to') || Date.parse(item.date) < Date.parse(url.searchParams.get('to')+'T00:00:00+08:00')+86400000));
         data = { items: rows.slice((page - 1) * limit, page * limit), total: rows.length, unread: items.length - read.size, page, limit };
       } else if (route.endsWith('/target')) data = { record: route.includes('truckload') ? load : report };
       else if (route.endsWith('/messages')) data = [];
@@ -181,6 +184,20 @@ try {
   await browser.evaluate("[...document.querySelectorAll('.notifications-category-popover [role=option]')].find(option=>option.textContent.trim()==='All activity').click()");
   await wait("document.querySelector('.notifications-category-select [data-slot=select-value]')?.textContent.trim()==='All activity' && document.querySelectorAll('.notifications-row').length===4 && !document.querySelector('.notifications-card [aria-busy=true]')");
   console.log('PASS: HeroUI category selector geometry, menu alignment, all five filters, unread tabs/count, and 100/125/150% zoom layout.');
+  const search = async value => {
+    await browser.evaluate(`(()=>{const input=document.querySelector('input[aria-label="Search notifications"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(value)});input.dispatchEvent(new Event('input',{bubbles:true}));})()`);
+  };
+  await click('button[aria-label="Next page"]');
+  await search('SEA-2342');
+  await wait("document.querySelectorAll('.notifications-row').length===3 && !document.querySelector('.notifications-card [aria-busy=true]')");
+  assert.ok(await browser.evaluate("[...document.querySelectorAll('.notifications-row')].every(row=>row.textContent.includes('SEA-2342'))"));
+  await search('no matching record');
+  await wait("!!document.querySelector('.notifications-empty') && document.querySelector('.notifications-empty').textContent.includes('No matching')");
+  await search('Peter'); await search('Maria');
+  await wait("document.querySelectorAll('.notifications-row').length===4 && !document.querySelector('.notifications-card [aria-busy=true]')");
+  assert.ok(await browser.evaluate("[...document.querySelectorAll('.notifications-row')].every(row=>row.textContent.includes('Maria'))"));
+  await click('button[aria-label="Clear search notifications filters"]');
+  await wait("document.querySelectorAll('.notifications-row').length===4 && !document.querySelector('.notifications-card [aria-busy=true]')");
   const directory = 'D:/RESIKLEAN-QA-TEMP/notifications'; await mkdir(directory, { recursive: true });
   for (const width of [1280, 1920, 390]) {
     await browser.send('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 640 });

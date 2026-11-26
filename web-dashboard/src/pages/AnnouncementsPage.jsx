@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import { Button, Modal } from '@heroui/react';
+import AdminListFilters from '../components/AdminListFilters.jsx';
+import AppSelect from '../components/AppSelect.jsx';
 import AnnouncementCombobox from '../components/announcements/AnnouncementCombobox.jsx';
 import TablePagination from '../components/TablePagination.jsx';
 import { AnnouncementCanvas, AnnouncementPreview } from '../components/announcements/AnnouncementCanvas.jsx';
@@ -25,6 +27,9 @@ export default function AnnouncementsPage({ token }) {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [revision, setRevision] = useState(0);
+  const [filters, setFilters] = useState({ q: '', status: 'all', area: 'any', truck: 'any', from: '', to: '' });
+  const changeFilters = patch => { setListState('loading'); setPage(1); setFilters(current => ({ ...current, ...patch })); };
+  const hasFilters = Boolean(filters.q.trim() || filters.status !== 'all' || filters.area !== 'any' || filters.truck !== 'any' || filters.from || filters.to);
   const [busy, setBusy] = useState('');
   const busyRef = useRef(false);
   const [notice, setNotice] = useState(null);
@@ -52,13 +57,15 @@ export default function AnnouncementsPage({ token }) {
   useEffect(() => {
     const controller = new AbortController();
     setListState('loading');
-    request(`?page=${page}&limit=${pageSize}`, { signal: controller.signal }).then(result => {
+    if (filters.from && filters.to && filters.from > filters.to) { setListState('invalid'); return () => controller.abort(); }
+    const timer = setTimeout(() => request(`?${new URLSearchParams({ page, limit: pageSize, ...filters })}`, { signal: controller.signal }).then(result => {
+      if (controller.signal.aborted) return;
       const lastPage = Math.max(1, Math.ceil(result.data.total / pageSize));
       if (page > lastPage) setPage(lastPage);
       setList(result.data); setListState('ready');
-    }).catch(error => { if (error.name !== 'AbortError') setListState('error'); });
-    return () => controller.abort();
-  }, [request, page, pageSize, revision]);
+    }).catch(error => { if (!controller.signal.aborted && error.name !== 'AbortError') setListState('error'); }), 250);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [request, page, pageSize, revision, filters]);
   useEffect(() => {
     if (!notice || notice.error) return;
     const timer = setTimeout(() => setNotice(null), 7000);
@@ -171,8 +178,14 @@ export default function AnnouncementsPage({ token }) {
     </div>
     <section className="ann-card ann-recent" aria-labelledby="ann-recent-title">
       <header className="ann-card-heading"><div><h2 id="ann-recent-title">Recent announcements</h2><p>Drafts and published updates, newest first.</p></div><Button variant="ghost" isDisabled={Boolean(busy) || listState === 'loading'} onPress={() => setRevision(value => value + 1)}>Refresh</Button></header>
+      <AdminListFilters label="Search announcements" placeholder="Search reason, message, area or truck..." value={filters} onChange={changeFilters} disabled={Boolean(busy)}
+        onClear={() => changeFilters({ q: '', status: 'all', area: 'any', truck: 'any', from: '', to: '' })}>
+        <AppSelect aria-label="Announcement status" value={filters.status} onChange={status => changeFilters({ status })} disabled={Boolean(busy)} options={[{value:'all',label:'All statuses'},{value:'draft',label:'Draft'},{value:'published',label:'Published'}]}/>
+        <AppSelect aria-label="Announcement area" value={filters.area} onChange={area => changeFilters({ area })} disabled={Boolean(busy)} options={[{value:'any',label:'Any area'},{value:'global',label:'All-area announcements'},...options.areas.map(area=>({value:area._id,label:area.name}))]}/>
+        <AppSelect aria-label="Announcement truck" value={filters.truck} onChange={truck => changeFilters({ truck })} disabled={Boolean(busy)} options={[{value:'any',label:'Any truck'},{value:'global',label:'All-truck announcements'},...options.trucks.map(truck=>({value:truck._id,label:`Truck ${truck.truckNumber} - ${truck.plateNumber}`}))]}/>
+      </AdminListFilters>
       <div className="ann-table-scroll" aria-busy={listState === 'loading'}><table><thead><tr>{['Truck #', 'Date', 'Time', 'Area', 'Reason', 'Status', 'Actions'].map(label => <th key={label}>{label}</th>)}</tr></thead><tbody>
-        {listState === 'loading' ? Array.from({ length: 5 }, (_, index) => <tr key={index}><td colSpan={7}><div className="ann-skeleton" aria-label="Loading announcements" /></td></tr>) : listState === 'error' ? <tr><td colSpan={7}><div role="alert" className="ann-empty">Could not load announcements. <Button variant="secondary" onPress={() => setRevision(value => value + 1)}>Retry</Button></div></td></tr> : !list.items.length ? <tr><td colSpan={7} className="ann-empty">No announcements yet</td></tr> : list.items.map(item => {
+        {listState === 'loading' ? Array.from({ length: 5 }, (_, index) => <tr key={index}><td colSpan={7}><div className="ann-skeleton" aria-label="Loading announcements" /></td></tr>) : listState === 'error' ? <tr><td colSpan={7}><div role="alert" className="ann-empty">Could not load announcements. <Button variant="secondary" onPress={() => setRevision(value => value + 1)}>Retry</Button></div></td></tr> : listState === 'invalid' ? <tr><td colSpan={7} className="ann-empty">Choose a valid date range.</td></tr> : !list.items.length ? <tr><td colSpan={7} className="ann-empty">{hasFilters ? 'No announcements match your search or filters.' : 'No announcements yet'}</td></tr> : list.items.map(item => {
           const parts = manilaParts(item.scheduledFor);
           return <tr key={item._id}><td><strong>{item.affectedTruckId ? `Truck ${item.affectedTruckId.truckNumber}` : 'All trucks'}</strong></td><td>{new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Manila', dateStyle: 'medium' }).format(new Date(item.scheduledFor))}</td><td>{formatTime(parts.time)}</td><td>{item.areaLabel}</td><td>{item.reason}</td><td><span className={`ann-status ann-${item.status}`}>{item.status === 'published' ? 'Published' : 'Draft'}</span></td><td><div className="ann-row-actions"><Button variant="ghost" isDisabled={Boolean(busy)} onPress={() => setDialog({ action: 'view', item })}>View</Button><Button variant="ghost" isDisabled={Boolean(busy)} onPress={() => { if (editing || manualMessage !== null) setDialog({ action: 'edit', item }); else edit(item); }}>Edit</Button>{item.status === 'draft' ? <Button variant="ghost" isDisabled={Boolean(busy)} onPress={() => save('published', item)}>Publish</Button> : <Button variant="ghost" isDisabled={Boolean(busy)} onPress={() => setDialog({ action: 'unpublish', item })}>Unpublish</Button>}<Button variant="ghost" className="ann-delete" isDisabled={Boolean(busy)} onPress={() => setDialog({ action: 'delete', item })}>Delete</Button></div></td></tr>;
         })}

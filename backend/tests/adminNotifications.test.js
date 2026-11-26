@@ -1,3 +1,4 @@
+jest.mock('../src/services/notification.service', () => ({ sendUserPush: jest.fn(), sendPushNotifications: jest.fn() }));
 const mongoose = require('mongoose');
 const express = require('express');
 const jwt = require('jsonwebtoken');
@@ -85,7 +86,7 @@ describe('admin notification endpoints', () => {
   });
   test('rejects malformed filters and read identifiers before querying', async () => {
     const headers = auth('admin');
-    for (const query of ['?type=invalid', '?page=0', '?limit=999', '?unread=anything']) expect((await fetch(base + query, { headers })).status).toBe(400);
+    for (const query of ['?type=invalid', '?page=0', '?limit=999', '?unread=anything', '?q%5B%5D=name', '?from=2026-02-30', '?from=2026-11-27&to=2026-11-26']) expect((await fetch(base + query, { headers })).status).toBe(400);
     expect((await fetch(base + '/read', { method: 'POST', headers, body: JSON.stringify({ ids: ['bad'] }) })).status).toBe(400);
   });
   test('stores idempotent receipts under authenticated admin, never changes report status', async () => {

@@ -50,6 +50,7 @@ const database = {
   },
 };
 const dependencies = {
+  './async-timeout': { withTimeout: operation => withTimeout(operation, 25) },
   '@/lib/notifications': { ensureNotificationPermissionsAsync: async () => true },
   'expo-crypto': { randomUUID: () => `uuid-${++uuid}` },
   'expo-sqlite': { openDatabaseAsync: async () => database },
@@ -596,6 +597,38 @@ test('missing or malformed route geometry records valid trails without false rou
 test('missing driver or assignment cannot start recording',async()=>{
  reset();assert.equal((await service.enableRouteProximityTracking({...config,collectorId:undefined})).enabled,false);
  assert.equal((await service.enableRouteProximityTracking({...config,routeId:''})).enabled,false);assert.equal(nativeStarts,0);
+});
+
+test('Finish saves a fresh final fix before closing, without starting a new session', async () => {
+  reset(); await service.enableRouteProximityTracking(config); await sample();
+  const count = points.length, sessionCount = starts.length, finishCount = finishes;
+  now += 5000;
+  const final = fix(now, 5);
+  const original = dependencies['expo-location'].getCurrentPositionAsync;
+  dependencies['expo-location'].getCurrentPositionAsync = async () => final;
+  try {
+    await service.stopRouteProximityTracking({forgetConfiguration:true,captureFinalLocation:true});
+    assert.equal(points.length,count+1);assert.deepEqual(points.at(-1).location,final);
+    assert.equal(starts.length,sessionCount);assert.equal(finishes,finishCount+1);assert.equal(running,false);
+    await service.processDriverRouteLocation(fix(now+5000),config);
+    assert.equal(points.length,count+1);
+  } finally { dependencies['expo-location'].getCurrentPositionAsync = original; }
+});
+test('Finish keeps the last good point on poor, stale, mocked, jumping or timed-out GPS', async () => {
+  const original = dependencies['expo-location'].getCurrentPositionAsync;
+  try {
+    for (const kind of ['poor','stale','mocked','jump','timeout']) {
+      reset(); await service.enableRouteProximityTracking(config); await sample(); const count=points.length, finishCount=finishes;
+      now += 5000;
+      const final=kind==='poor'?fix(now,0,100):kind==='stale'?fix(now-20000):kind==='mocked'?{...fix(now),mocked:true}:kind==='jump'?fix(now,10000):fix(now);
+      let resolveLate;
+      dependencies['expo-location'].getCurrentPositionAsync=()=>kind==='timeout'?new Promise(resolve=>{resolveLate=resolve;}):Promise.resolve(final);
+      await service.stopRouteProximityTracking({forgetConfiguration:true,captureFinalLocation:true});
+      if(resolveLate){resolveLate(final);await new Promise(resolve=>setImmediate(resolve));}
+      assert.equal(points.length,count,kind);assert.equal(running,false,kind);assert.equal(finishes,finishCount+1,kind);
+      dependencies['expo-location'].getCurrentPositionAsync = original;
+    }
+  } finally { dependencies['expo-location'].getCurrentPositionAsync = original; }
 });
 
 (async () => {

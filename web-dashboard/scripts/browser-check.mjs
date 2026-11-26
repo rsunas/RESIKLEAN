@@ -47,7 +47,7 @@ export async function openBrowser() {
   });
   const send = (method, params = {}) => new Promise((resolve, reject) => {
     const number = ++id;
-    const timer = setTimeout(() => { pending.delete(number); reject(new Error(`Timed out: ${method}`)); }, 30000);
+    const timer = setTimeout(() => { pending.delete(number); reject(new Error(`Timed out: ${method}`)); }, method === 'Page.navigate' ? 90000 : 30000);
     pending.set(number, { resolve, reject, timer }); ws.send(JSON.stringify({ id: number, method, params }));
   });
   await send('Page.enable'); await send('Runtime.enable');

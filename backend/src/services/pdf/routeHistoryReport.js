@@ -190,7 +190,7 @@ function drawTrailDiagram(doc, box, trail, stops, hasBasemap = false) {
     if (!validCoordinate(stop.coordinate)) return;
     doc.circle(...project(stop.coordinate), 2.5).fillAndStroke(COLORS.tealDark, '#ffffff');
   });
-  [[trail.entryCoord, 'Start', COLORS.redSoft], [trail.exitCoord, 'Last GPS', COLORS.dark]].forEach(([c, label, color]) => {
+  [[trail.startCoord || trail.entryCoord, 'Start', COLORS.redSoft], [trail.endCoord || trail.exitCoord, trail.tripEnded ? 'End' : 'Last GPS', COLORS.dark]].forEach(([c, label, color]) => {
     if (!validCoordinate(c)) return;
     const [x, y] = project(c);
     doc.circle(x, y, 4).fillAndStroke(color, '#ffffff');
@@ -252,6 +252,7 @@ async function generateRouteHistoryPDF(doc, data) {
   ]));
   else layout.paragraph('No trip session or timestamped GPS events recorded.');
   layout.heading('STOPS AND RECORDED PASSAGE TIMES', 115);
+  layout.paragraph('Entry/Exit locations unavailable: stop coordinates do not establish boundary-crossing positions.');
   layout.paragraph('Entry and exit below are recorded stop-geofence events, in Manila time. "Not recorded" means there is no event confirming passage. Expected schedules are not used as actual times.');
   const logs = data.logs || [];
   const seen = new Set();
@@ -388,7 +389,10 @@ function buildRouteHistoryPayload(input, { adminUser, referenceCounter = 1 }) {
       expectedSegments,
       coveredCoordinates,
       expectedCoordinates,
-      entryCoord,
+      startCoord: entryCoord,
+      endCoord: exitCoord,
+      tripEnded: (input.sessions?.length ? input.sessions.every(item => Boolean(item.endedAt)) : Boolean(session.endedAt)),
+      entryCoord, // Compatibility for existing map viewport consumers; these are GPS endpoints.
       exitCoord,
       firstRecordedAt: trailTimestamps[0] || null,
       lastRecordedAt: trailTimestamps.at(-1) || null,

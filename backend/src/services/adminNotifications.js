@@ -7,10 +7,20 @@ const Read = require('../models/AdminNotificationRead');
 const User = require('../models/User');
 const RouteLog = require('../models/RouteLog');
 
+const { textSearch, dateRange, escapeSearch } = require('../utils/adminListFilters');
 const TYPES = ['complaint', 'reply', 'truckload', 'route'];
 const project = (type, fields) => ({ $project: { _id: 0, id: { $concat: [type + ':', { $toString: '$_id' }] }, sourceId: '$_id', type: { $literal: type }, ...fields } });
-function buildFeedPipeline(adminId, { type = 'all', unread = false, page = 1, limit = 10 } = {}) {
+function buildFeedPipeline(adminId, { type = 'all', unread = false, page = 1, limit = 10, q = '', from = '', to = '' } = {}) {
   const match = { ...(type !== 'all' ? { type } : {}), ...(unread ? { read: false } : {}) };
+  const query = textSearch(q), dates = dateRange(from, to);
+  if (Object.keys(dates).length) match.date = dates;
+  if (query) {
+    const pattern = new RegExp(escapeSearch(query), 'i');
+    const titles = { complaint: 'New complaint', reply: 'Resident replied', truckload: 'New truckload submission', route: 'Route collection finished' };
+    match.$or = ['subject', 'area', 'plate', 'routeName', 'searchActor.name'].map(field => ({ [field]: pattern }));
+    const titleTypes = Object.keys(titles).filter(key => pattern.test(titles[key]));
+    if (titleTypes.length) match.$or.push({ type: { $in: titleTypes } });
+  }
   return [
     project('complaint', { date: '$createdAt', actorId: '$residentId', subject: '$description', area: '$barangay', targetId: '$_id' }),
     { $unionWith: { coll: Message.collection.name, pipeline: [
@@ -29,10 +39,11 @@ function buildFeedPipeline(adminId, { type = 'all', unread = false, page = 1, li
       { $match: { adminId: new mongoose.Types.ObjectId(String(adminId)), $expr: { $eq: ['$eventId', '$$eventId'] } } }, { $limit: 1 }, { $project: { _id: 1 } },
     ], as: 'receipt' } },
     { $set: { read: { $gt: [{ $size: '$receipt' }, 0] } } },
+    ...(query ? [{ $lookup: { from: User.collection.name, localField: 'actorId', foreignField: '_id', pipeline: [{ $project: { name: 1 } }], as: 'searchActor' } }] : []),
     { $facet: {
       unread: [{ $match: { read: false } }, { $count: 'count' }],
       total: [{ $match: match }, { $count: 'count' }],
-      items: [{ $match: match }, { $sort: { date: -1, id: -1 } }, { $skip: (page - 1) * limit }, { $limit: limit }, { $unset: 'receipt' }],
+      items: [{ $match: match }, { $sort: { date: -1, id: -1 } }, { $skip: (page - 1) * limit }, { $limit: limit }, { $unset: ['receipt', 'searchActor'] }],
     } },
   ];
 }

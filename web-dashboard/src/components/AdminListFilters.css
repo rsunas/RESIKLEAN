@@ -1,0 +1,51 @@
+.admin-list-filters { container:admin-filters / inline-size; display:flex; flex-wrap:wrap; align-items:flex-end; gap:12px; margin-bottom:16px; }
+.admin-list-primary { display:grid; grid-template-columns:minmax(0,1fr); flex:1 1 240px; min-width:0; gap:10px; }
+.admin-list-primary.has-selects { flex-basis:560px; grid-template-columns:minmax(200px,1.8fr) repeat(3,minmax(110px,1fr)); }
+.admin-list-search { display:flex; align-items:center; gap:8px; min-width:0; height:40px; box-sizing:border-box; border:1px solid #d5dfd9; border-radius:9px; background:#f7faf8; color:#61756a; padding:0 11px; }
+.admin-list-search:focus-within { outline:2px solid #8fcbb0; outline-offset:2px; }
+.admin-list-search svg { flex-shrink:0; }
+.admin-list-search input { flex:1; min-width:0; width:100%; border:0; outline:0; background:transparent; color:#17332a; font:inherit; font-size:13px; line-height:20px; padding:8px 0; }
+.admin-list-search input::placeholder { color:#61756a; }
+.admin-list-primary > .app-select { min-width:0; width:100%; }
+.admin-list-primary > .app-select [data-slot="select-trigger"] { height:40px; min-height:40px; border-radius:9px; box-shadow:none; font-size:13px; padding:0 10px; }
+.admin-list-dates { display:grid; grid-template-columns:repeat(2,176px) max-content; align-items:end; gap:10px; min-width:0; }
+.admin-list-dates .app-date-picker { width:100%; min-width:0; gap:4px; }
+.admin-list-dates .app-date-picker [data-slot="label"] { font-size:12px; line-height:16px; }
+.admin-list-dates .app-date-picker [data-slot="date-input-group"] { height:40px; min-height:40px; border:1px solid #d5dfd9; border-radius:9px; padding:0 8px; background:#f7faf8; }
+.admin-list-dates .app-date-picker [data-slot="date-input"] { font-size:13px; gap:0; }
+.admin-list-dates .app-date-picker [data-slot="date-segment"] { font-size:13px; }
+.admin-list-filters .admin-list-clear { display:inline-flex; align-items:center; justify-content:center; gap:6px; height:40px; min-height:40px; min-width:0; padding:0 12px; border:1px solid #bdd3c6; border-radius:9px; background:#f1f8f4; color:#286246; font-size:13px; font-weight:600; line-height:20px; box-shadow:none; white-space:nowrap; }
+.admin-list-clear svg { flex-shrink:0; }
+.admin-list-filters .admin-list-clear:hover:not(:disabled) { background:#e2f1e8; border-color:#7eaf94; }
+.admin-list-filters .admin-list-clear:focus-visible { outline:2px solid #0a7f4f; outline-offset:2px; }
+.admin-list-filters .admin-list-clear:disabled { opacity:.5; cursor:not-allowed; }
+.admin-list-filter-error { width:100%; color:#a52b34; margin:0; font-size:12px; }
+.notifications-card > .admin-list-filters { padding:12px 20px; margin:0; border-bottom:1px solid #e3eae6; }
+.ann-recent .ann-card-heading { margin-bottom:16px; }
+html[data-theme="dark"] .admin-list-search,
+html[data-theme="dark"] .admin-list-primary .app-select [data-slot="select-trigger"],
+html[data-theme="dark"] .admin-list-dates .app-date-picker [data-slot="date-input-group"] { background:#25332c; border-color:#415249; color:#e6eee9; }
+html[data-theme="dark"] .admin-list-search input { color:#e6eee9; }
+html[data-theme="dark"] .admin-list-search input::placeholder,
+html[data-theme="dark"] .admin-list-dates .app-date-picker [data-slot="label"] { color:#b4c4bb; }
+html[data-theme="dark"] .admin-list-filters .admin-list-clear { background:#223b2d; border-color:#466d55; color:#c0e8ce; }
+html[data-theme="dark"] .admin-list-filters .admin-list-clear:hover:not(:disabled) { background:#2e4b3a; border-color:#7eaf94; }
+html[data-theme="dark"] .admin-list-filter-error { color:#ffb4ab; }
+html[data-theme="dark"] .notifications-card > .admin-list-filters { border-color:#34443c; }
+@container admin-filters (max-width:700px) {
+  .admin-list-primary.has-selects { grid-template-columns:repeat(3,minmax(0,1fr)); flex-basis:100%; }
+  .admin-list-primary.has-selects .admin-list-search { grid-column:1 / -1; }
+  .admin-list-dates { width:100%; grid-template-columns:repeat(2,minmax(0,1fr)) max-content; }
+}
+@container admin-filters (max-width:540px) {
+  .admin-list-primary { flex-basis:100%; }
+  .admin-list-primary.has-selects { grid-template-columns:minmax(0,1fr); }
+  .admin-list-dates { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .admin-list-filters .admin-list-clear { grid-column:1 / -1; justify-self:start; }
+  .admin-list-search, .admin-list-primary > .app-select [data-slot="select-trigger"],
+  .admin-list-dates .app-date-picker [data-slot="date-input-group"],
+  .admin-list-filters .admin-list-clear { height:44px; min-height:44px; }
+}
+@container admin-filters (max-width:420px) {
+  .admin-list-dates { grid-template-columns:minmax(0,1fr); }
+}

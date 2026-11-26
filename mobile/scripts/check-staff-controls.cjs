@@ -19,5 +19,11 @@ assert.equal(filterStaffHistory(rows,'','Peter Parker','Abella','XYZ-456','Pendi
 assert.equal(filterStaffHistory(rows,'','','Dinaga','','Pending').length,0);
 assert.equal(filterStaffHistory(rows,'missing','','','','').length,0);
 assert.equal(filterStaffHistory(rows,'','','','','').length,2);
+const collections=Array.from({length:8},(_,i)=>({driver:'Area '+i,barangay:i%2?'Dinaga':'Abella',truckPlate:'2026-11-'+(20+i),submittedAt:'2026-11-'+(20+i),status:i%2?'Pending':'Synced'}));
+assert.equal(filterStaffHistory(collections,'area 7','','','','')[0],collections[7]);
+assert.equal(filterStaffHistory(collections,'2026-11-27','','','','')[0],collections[7]);
+assert.equal(filterStaffHistory(collections,'','Area 7','Dinaga','2026-11-27','Pending')[0],collections[7]);
+assert.equal(filterStaffHistory(collections,'','','Abella','','Pending').length,0);
+assert.equal(filterStaffHistory(collections,'','','','','').length,8);
 console.log('PASS: slope decimal/invalid values; case-insensitive history search; combined driver/area/truck/status filters; empty results and clearing.');
 assert.equal(filterStaffHistory([{...rows[0],barangay:['Abella','Dinaga']}],'','','Abella, Dinaga','','').length,1);

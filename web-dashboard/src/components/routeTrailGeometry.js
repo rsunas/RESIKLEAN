@@ -24,6 +24,27 @@ export function historyTrailLines(data = {}) {
   const expected = data.trail?.expectedSegments?.flatMap(split) || geometryLines(data.route?.routePath || data.routePath);
   return { recorded, expected: expected.length ? expected : split(data.trail?.expectedCoordinates) };
 }
+// Marker order is global GPS time, not the order of grouped drawable segments.
+export function historyTrailEndpoints(data = {}) {
+  const uploaded = Array.isArray(data.trailPoints) ? data.trailPoints.filter(p => valid([p.longitude, p.latitude]))
+    .sort((a, b) => new Date(a.recordedAt) - new Date(b.recordedAt)) : null;
+  const fallback = uploaded === null ? historyTrailLines(data).recorded.flat() : [];
+  const first = uploaded?.[0], last = uploaded?.at(-1);
+  const start = uploaded !== null ? (first ? [first.longitude, first.latitude] : null)
+    : data.trail?.startCoord ?? data.trail?.entryCoord ?? fallback[0] ?? null;
+  const end = uploaded !== null ? (last ? [last.longitude, last.latitude] : null)
+    : data.trail?.endCoord ?? data.trail?.exitCoord ?? fallback.at(-1) ?? null;
+  const ended = data.sessions?.length ? data.sessions.every(session => Boolean(session.endedAt))
+    : Boolean(data.session?.endedAt || data.sessionEndedAt);
+  const endLabel = ended ? 'End' : 'Last GPS';
+  const markers = valid(start) && valid(end) && start.every((value, index) => value === end[index])
+    ? [{ point: start, label: 'Start / ' + endLabel }]
+    : [...(valid(start) ? [{ point: start, label: 'Start' }] : []), ...(valid(end) ? [{ point: end, label: endLabel }] : [])];
+  return { start, end, markers, ended,
+    firstRecordedAt: uploaded !== null ? first?.recordedAt : data.trail?.firstRecordedAt,
+    lastRecordedAt: uploaded !== null ? last?.recordedAt : data.trail?.lastRecordedAt };
+}
+
 export function projectTrailPoint(points, width = 620, height = 280) {
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   points.forEach(([x,y]) => { minX = Math.min(minX,x); maxX = Math.max(maxX,x); minY = Math.min(minY,y); maxY = Math.max(maxY,y); });

@@ -34,7 +34,7 @@ export function filterStaffHistory<T extends RecordRow>(rows: T[], query: string
   const search = query.trim().toLowerCase();
   return rows.filter(row => (!driver || historyText(row.driver) === driver) && (!area || historyText(row.barangay) === area) && (!truck || historyText(row.truckPlate) === truck) && (!status || row.status === status) && [row.driver, row.barangay, row.truckPlate, row.submittedAt].join(' ').toLowerCase().includes(search));
 }
-export function StaffHistoryFilters({rows, value, onChange}: {rows: RecordRow[]; value: string[]; onChange: (query: string, driver: string, area: string, truck: string, status: string) => void}) {
+export function StaffHistoryFilters({rows, value, onChange, variant = 'staff'}: {rows: RecordRow[]; value: string[]; variant?: 'staff' | 'collections'; onChange: (query: string, driver: string, area: string, truck: string, status: string) => void}) {
   const themeColor = useThemeColor();
   const styles = useStyles();
   const [query, ...filters] = value;
@@ -47,10 +47,11 @@ export function StaffHistoryFilters({rows, value, onChange}: {rows: RecordRow[];
   const update = (text: string, next = filters) => onChange(text, next[0], next[1], next[2], next[3]);
   const values = (key: keyof RecordRow) => [...new Set(rows.map(row => historyText(row[key])).filter(Boolean))].sort((a,b) => a.localeCompare(b));
   const suggestions = [...new Set(rows.flatMap(row => [row.driver,row.barangay,row.truckPlate].map(historyText)))].filter(value => value && value.toLowerCase().includes(query.trim().toLowerCase())).slice(0,5);
+  const collections = variant === 'collections';
   const fields = [
-    { label: 'Driver', chip: 'Driver', key: 'driver', all: 'All drivers', icon: 'user' },
+    { label: collections ? 'Route' : 'Driver', chip: collections ? 'Route' : 'Driver', key: 'driver', all: collections ? 'All routes' : 'All drivers', icon: collections ? 'map' : 'user' },
     { label: 'Area', chip: 'Area', key: 'barangay', all: 'All areas', icon: 'map-pin' },
-    { label: 'Truck', chip: 'Truck', key: 'truckPlate', all: 'All trucks', icon: 'truck' },
+    { label: collections ? 'Date' : 'Truck', chip: collections ? 'Date' : 'Truck', key: 'truckPlate', all: collections ? 'All dates' : 'All trucks', icon: collections ? 'calendar' : 'truck' },
     { label: 'Sync status', chip: 'Sync', key: 'status', all: 'All statuses', icon: 'refresh-cw' },
   ] as const;
   const activeCount = filters.filter(Boolean).length;
@@ -64,7 +65,7 @@ export function StaffHistoryFilters({rows, value, onChange}: {rows: RecordRow[];
     <View style={styles.searchRow}>
       <View style={styles.historySearch}>
         <Feather name="search" size={20} color={themeColor("#5A6761", darkPalette.muted)} />
-        <TextInput ref={searchInput} accessibilityLabel="Search submission history" placeholder="Search driver, area or truck…" placeholderTextColor={themeColor("#5A6761", darkPalette.muted)} value={query} onChangeText={text => update(text)} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} returnKeyType="search" style={[styles.historySearchInput, { minHeight: Math.max(48, 15 * fontScale * 1.4 + 16) }]} />
+        <TextInput ref={searchInput} accessibilityLabel={collections ? "Search past collections" : "Search submission history"} placeholder={collections ? "Search route, area or date…" : "Search driver, area or truck…"} placeholderTextColor={themeColor("#5A6761", darkPalette.muted)} value={query} onChangeText={text => update(text)} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} returnKeyType="search" style={[styles.historySearchInput, { minHeight: Math.max(48, 15 * fontScale * 1.4 + 16) }]} />
       </View>
       <Pressable accessibilityRole="button" accessibilityLabel={activeCount ? `Filters, ${activeCount} active` : 'Filters'} accessibilityState={{expanded:open}} onPress={() => { searchInput.current?.blur(); Keyboard.dismiss(); setFocused(false); setDraft([...filters]); setOpen(true); }} style={[styles.filterButton, activeCount > 0 && styles.filterButtonActive]}>
         <Feather name="filter" size={22} color={activeCount ? themeColor('#086B42', darkPalette.accent) : themeColor('#35463F', darkPalette.text)}/>

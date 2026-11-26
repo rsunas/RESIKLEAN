@@ -144,7 +144,7 @@ test('resident feed filters to published matching areas and returns only public 
   await call('/admin', { method: 'POST', body: multipart(payload({ status: 'published' })) });
   const result = await call('/resident?page=1&limit=10', { role: 'resident' });
   assert.equal(lastFilter.status, 'published'); assert(lastFilter.$or.some(clause => clause.areaId === null));
-  assert.deepEqual(result.data.items[0], JSON.parse(JSON.stringify(controller.publicItem([...records.values()][0]))));
+  assert.deepEqual(result.data.items[0], JSON.parse(JSON.stringify(controller.publicItem([...records.values()][0], true))));
 });
 test('delete removes image and record; failed image deletion leaves a retryable record', async () => {
   const created = await call('/admin', { method: 'POST', body: multipart(payload({ status: 'published' })) });

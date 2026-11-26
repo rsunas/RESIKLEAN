@@ -591,6 +591,10 @@ const getRouteHistory = async (req, res) => {
         routePath: group.routePath,
         routeSnapshot: group.routeSnapshot || null,
         trailPath,
+        firstLocation: trailPoints.length ? [trailPoints[0].longitude, trailPoints[0].latitude] : null,
+        firstRecordedAt: trailPoints[0]?.recordedAt || null,
+        lastLocation: trailPoints.length ? [trailPoints.at(-1).longitude, trailPoints.at(-1).latitude] : null,
+        lastRecordedAt: trailPoints.at(-1)?.recordedAt || null,
         stopLogs: group.stopLogs.sort((a, b) => new Date(a.collectedAt) - new Date(b.collectedAt)).map(log => {
           const stop = group.routeSnapshot?.stops?.find(stop => String(stop._id) === String(log.stopId));
           return stop ? { ...log, stopName: stop.name, latitude: stop.latitude, longitude: stop.longitude } : log;

@@ -584,7 +584,7 @@ export default function ResidentScreen() {
   const [isLoadingSchedule, setIsLoadingSchedule] = useState(false);
   const [scheduleError, setScheduleError] = useState('');
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
-  const [announcementScope, setAnnouncementScope] = useState<'all' | 'mine'>('all');
+  const [announcementScope, setAnnouncementScope] = useState<'all' | 'mine'>('mine');
   const announcementScopeRef = useRef(announcementScope);
   announcementScopeRef.current = announcementScope;
   const [announcementCursor, setAnnouncementCursor] = useState<string | null>(null);
@@ -1556,7 +1556,7 @@ export default function ResidentScreen() {
   const scheduleScreen = (
     <ScrollView contentContainerStyle={styles.newsScreenContent} showsVerticalScrollIndicator={false} refreshControl={<RefreshControl onRefresh={() => { if (session?.token) void loadAnnouncements(session.token); }} refreshing={announcementLoading} tintColor="#0A7F4F" />} onScroll={({ nativeEvent }) => { if (announcementHasMore && !announcementLoading && nativeEvent.layoutMeasurement.height + nativeEvent.contentOffset.y >= nativeEvent.contentSize.height - 240 && session?.token) void loadAnnouncements(session.token, false); }} scrollEventThrottle={200}>
       <Text style={styles.newsScreenTitle}>Announcements</Text><Text style={styles.newsScreenSubtitle}>Service updates from SWMO</Text>
-      <View style={styles.announcementFilters}><Pressable onPress={() => changeAnnouncementScope('all')} style={[styles.announcementFilter, announcementScope === 'all' && styles.announcementFilterActive]}><Text style={[styles.announcementFilterText, announcementScope === 'all' && styles.announcementFilterTextActive]}>All</Text></Pressable><Pressable onPress={() => changeAnnouncementScope('mine')} style={[styles.announcementFilter, announcementScope === 'mine' && styles.announcementFilterActive]}><Text style={[styles.announcementFilterText, announcementScope === 'mine' && styles.announcementFilterTextActive]}>My area</Text></Pressable></View>
+      <View style={styles.announcementFilters}><Pressable onPress={() => changeAnnouncementScope('mine')} style={[styles.announcementFilter, announcementScope === 'mine' && styles.announcementFilterActive]}><Text style={[styles.announcementFilterText, announcementScope === 'mine' && styles.announcementFilterTextActive]}>My area</Text></Pressable><Pressable onPress={() => changeAnnouncementScope('all')} style={[styles.announcementFilter, announcementScope === 'all' && styles.announcementFilterActive]}><Text style={[styles.announcementFilterText, announcementScope === 'all' && styles.announcementFilterTextActive]}>All</Text></Pressable></View>
       {announcementError ? <Text style={styles.errorMessage}>{announcementError}</Text> : null}
       {announcements.map(item => <AnnouncementCard item={item} key={item.id} />)}
       {announcementLoading && !announcements.length ? <ActivityIndicator color={themeColor("#0A7F4F", darkPalette.accent)} /> : null}
