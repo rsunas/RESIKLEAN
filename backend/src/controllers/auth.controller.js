@@ -62,7 +62,7 @@ const login = async (req, res) => {
     // local residents and legacy staff records have no requirement and continue
     // to sign in exactly as before.
     if (user.emailVerificationRequired && !user.emailVerifiedAt) {
-      return sendError(res, 'Verify your email before signing in.', 403);
+      return res.status(403).json({ success: false, code: 'EMAIL_VERIFICATION_REQUIRED', error: 'Verify your email before signing in.' });
     }
 
     tokenResponse(user, 200, res);

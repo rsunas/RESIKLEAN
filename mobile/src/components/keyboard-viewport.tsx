@@ -38,15 +38,19 @@ export function KeyboardAvoidingView(props: KeyboardAvoidingViewProps) {
 }
 
 /** Reveal focused native fields after the containing window has resized. */
-export const KeyboardScrollView = forwardRef<NativeScrollView, ScrollViewProps>(function KeyboardScrollView({ onFocus, onBlur, onLayout, keyboardShouldPersistTaps = 'handled', ...props }, forwardedRef) {
+export const KeyboardScrollView = forwardRef<NativeScrollView, ScrollViewProps & { automaticallyRevealFocusedInput?: boolean }>(function KeyboardScrollView({ automaticallyRevealFocusedInput = true, onFocus, onBlur, onLayout, keyboardShouldPersistTaps = 'handled', ...props }, forwardedRef) {
   const scroll = useRef<NativeScrollView | null>(null);
   const hasFocus = useRef(false);
+  const autoReveal = useRef(automaticallyRevealFocusedInput);
+  autoReveal.current = automaticallyRevealFocusedInput;
   const pending = useRef<number | null>(null);
   const { keyboardOpen } = useKeyboardViewportState();
   const reveal = () => {
-    if (!hasFocus.current) return;
+    if (!hasFocus.current || !autoReveal.current) return;
     if (pending.current !== null) cancelAnimationFrame(pending.current);
     pending.current = requestAnimationFrame(() => {
+      pending.current = null;
+      if (!autoReveal.current || !hasFocus.current) return;
       if (Platform.OS === 'web') {
         const focused = document.activeElement;
         if (hasFocus.current && focused instanceof HTMLElement) focused.scrollIntoView({ block: 'nearest', inline: 'nearest' });

@@ -29,6 +29,7 @@ afterAll(async () => {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  process.env.JWT_SECRET = 'email-verification-test-secret';
   verificationMailConfiguration.mockReturnValue({});
   sendEmailVerification.mockResolvedValue(undefined);
 });
@@ -53,7 +54,7 @@ test('consumes an admin-created account verification code atomically', async () 
   expect(filter.emailVerificationHash).toBe(crypto.createHash('sha256').update(token).digest('hex'));
   expect(filter.emailVerificationExpires.$gt).toBeInstanceOf(Date);
   expect(update.$set.emailVerifiedAt).toBeInstanceOf(Date);
-  expect(update.$unset).toEqual({ emailVerificationHash: 1, emailVerificationExpires: 1, emailVerificationRequestedAt: 1 });
+  expect(update.$unset).toEqual({ emailVerificationHash: 1, emailVerificationExpires: 1, emailVerificationRequestedAt: 1, emailVerificationFormat: 1, emailVerificationAttempts: 1 });
   expect(options).toEqual({ new: false, projection: { _id: 1 } });
 });
 
@@ -61,7 +62,7 @@ test('rejects an expired or previously used verification code', async () => {
   User.findOneAndUpdate.mockResolvedValue(null);
   const { response, body } = await post('/auth/verify-email', { token: 'b'.repeat(64) });
   expect(response.status).toBe(400);
-  expect(body.error).toMatch(/invalid or expired/i);
+  expect(body.error).toMatch(/invalid, expired/i);
 });
 
 test('resend response does not disclose whether a pending account exists', async () => {
@@ -85,5 +86,5 @@ test('resend rotates a pending account code before sending the new invitation', 
   expect(filter).toEqual(expect.objectContaining({ email: 'person@example.test', emailVerificationRequired: true }));
   expect(update.$set.emailVerificationHash).toEqual(expect.any(String));
   expect(update.$set.emailVerificationExpires).toBeInstanceOf(Date);
-  expect(sendEmailVerification).toHaveBeenCalledWith('person@example.test', expect.stringMatching(/^[a-f0-9]{64}$/));
+  expect(sendEmailVerification).toHaveBeenCalledWith('person@example.test', expect.stringMatching(/^\d{6}$/));
 });

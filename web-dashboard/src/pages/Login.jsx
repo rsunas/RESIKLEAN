@@ -107,15 +107,15 @@ export default function Login() {
       setVerificationError('VITE_API_URL is not configured.');
       return;
     }
-    if (!/^[a-f0-9]{64}$/i.test(verificationCode.trim())) {
-      setVerificationError('Paste the full verification code from your email.');
+    if (!/^(?:\d{6}|[a-f0-9]{64})$/i.test(verificationCode.trim())) {
+      setVerificationError('Enter the six-digit code from your email.');
       return;
     }
     setVerificationError('');
     setIsVerifying(true);
     try {
       const response = await fetch(`${API_URL.replace(/\/$/, '')}/auth/verify-email`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: verificationCode.trim().toLowerCase() }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: verificationCode.trim().toLowerCase(), email: verificationEmail.trim().toLowerCase() }),
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok || !result.success) throw new Error(result.error || 'Unable to verify your email.');
@@ -226,6 +226,10 @@ export default function Login() {
       const result = await response.json();
 
       if (!response.ok || !result.success) {
+        if (result.code === 'EMAIL_VERIFICATION_REQUIRED' || (response.status === 403 && result.error === 'Verify your email before signing in.')) {
+          openVerification();
+          return;
+        }
         throw new Error(result.error || 'Unable to sign in.');
       }
 
@@ -252,7 +256,7 @@ export default function Login() {
           <div className="login-heading"><p className="login-eyebrow">ACCOUNT ACTIVATION</p><h1 id="login-title">Verify your email</h1><p>Admin-created accounts must verify their inbox before signing in or using password recovery.</p></div>
           <div className="login-fields">
             <div className="login-field"><label htmlFor="verification-email">Email address</label><div className={`login-input-wrap${verificationError ? ' has-error' : ''}`}><FieldIcon type="mail" /><input id="verification-email" type="email" value={verificationEmail} onChange={(event) => setVerificationEmail(event.target.value)} autoComplete="email" placeholder="you@example.com" required /></div></div>
-            <div className="login-field"><label htmlFor="verification-code">Verification code</label><div className={`login-input-wrap${verificationError ? ' has-error' : ''}`}><FieldIcon type="lock" /><input id="verification-code" type="text" value={verificationCode} onChange={(event) => setVerificationCode(event.target.value)} autoComplete="one-time-code" autoCapitalize="none" placeholder="Paste the code from your email" required /></div></div>
+            <div className="login-field"><label htmlFor="verification-code">Verification code</label><div className={`login-input-wrap${verificationError ? ' has-error' : ''}`}><FieldIcon type="lock" /><input id="verification-code" type="text" inputMode="numeric" maxLength={64} value={verificationCode} onChange={(event) => setVerificationCode(event.target.value)} autoComplete="one-time-code" autoCapitalize="none" placeholder="6-digit code" required /></div></div>
           </div>
           {verificationError ? <p className="login-error" role="alert">{verificationError}</p> : null}
           {verificationMessage ? <p className="login-recovery-message" role="status">{verificationMessage}</p> : null}

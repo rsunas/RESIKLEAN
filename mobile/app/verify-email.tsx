@@ -12,11 +12,13 @@ type Step = 'verify' | 'resend' | 'complete';
 
 export default function VerifyEmailScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams<{ token?: string | string[] }>();
+  const params = useLocalSearchParams<{ token?: string | string[]; email?: string | string[] }>();
   const linkToken = typeof params.token === 'string' ? params.token : '';
   const [step, setStep] = useState<Step>('verify');
   const [token, setToken] = useState(linkToken);
-  const [email, setEmail] = useState('');
+  const linkEmail = typeof params.email === 'string' ? params.email : '';
+  const [email, setEmail] = useState(linkEmail);
+  const legacyToken = /^[a-f0-9]{64}$/i.test(token.trim());
   const [busy, setBusy] = useState(false);
   const submitting = useRef(false);
   const [error, setError] = useState('');
@@ -30,18 +32,24 @@ export default function VerifyEmailScreen() {
     setMessage('');
   }, [linkToken]);
 
+  useEffect(() => { if (linkEmail) setEmail(linkEmail); }, [linkEmail]);
+
   async function verify() {
     if (submitting.current) return;
     setError('');
-    if (!/^[a-f0-9]{64}$/i.test(token.trim())) {
-      setError('Paste the full verification code from your email.');
+    if (!legacyToken && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError('Enter the email address that received the code.');
+      return;
+    }
+    if (!legacyToken && !/^\d{6}$/.test(token.trim())) {
+      setError('Enter the six-digit code from your email.');
       return;
     }
 
     submitting.current = true;
     setBusy(true);
     try {
-      setMessage(await emailVerificationRequest('verify-email', { token: token.trim().toLowerCase() }));
+      setMessage(await emailVerificationRequest('verify-email', { token: token.trim().toLowerCase(), email: email.trim().toLowerCase() }));
       setToken('');
       router.setParams({ token: '' });
       setStep('complete');
@@ -65,6 +73,9 @@ export default function VerifyEmailScreen() {
     setBusy(true);
     try {
       setMessage(await emailVerificationRequest('resend-verification', { email: email.trim() }));
+      setToken('');
+      router.setParams({ token: '' });
+      setStep('verify');
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Unable to resend the verification email.');
     } finally {
@@ -77,22 +88,25 @@ export default function VerifyEmailScreen() {
   const resendMode = step === 'resend';
   const title = complete ? 'Email verified' : resendMode ? 'Resend verification' : 'Verify your email';
   const subtitle = complete
-    ? 'Your account is ready. Sign in with the temporary password provided by your administrator.'
+    ? 'Your account is ready. Return to sign in with your password.'
     : resendMode
       ? 'Enter the email address used by your administrator. If the account is awaiting verification, a new code will be sent.'
-      : 'Paste the verification code from the activation email to finish setting up your account.';
+      : legacyToken ? 'Confirm the verification code from your activation email.'
+      : 'Enter your email address and the six-digit code from your email. The code expires in 10 minutes.';
 
   return <SafeAreaView edges={['left', 'right', 'bottom']} style={authStyles.page}>
     <KeyboardAvoidingView style={authStyles.keyboard} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <ScrollView contentContainerStyle={authStyles.scrollContent} keyboardShouldPersistTaps="handled">
         <AuthHeader title={title} subtitle={subtitle} />
         <View style={authStyles.body}>
-          {!complete && !resendMode ? <AuthField label="Verification code" icon="key" accessibilityLabel="Verification code"
-            autoCapitalize="none" autoCorrect={false} autoComplete="one-time-code" editable={!busy}
-            placeholder="Paste the code from your email" value={token} onChangeText={setToken} /> : null}
-          {!complete && resendMode ? <AuthField label="Email address" icon="mail" accessibilityLabel="Email address"
+          {!complete ? <AuthField label="Email address" icon="mail" accessibilityLabel="Email address"
             autoCapitalize="none" autoCorrect={false} autoComplete="email" keyboardType="email-address" editable={!busy}
             placeholder="you@example.com" value={email} onChangeText={setEmail} /> : null}
+          {!complete && !resendMode ? <AuthField label="Verification code" icon="key" accessibilityLabel="Verification code"
+            autoCapitalize="none" autoCorrect={false} autoComplete="one-time-code" editable={!busy}
+            keyboardType={legacyToken ? 'default' : 'number-pad'} textContentType="oneTimeCode"
+            maxLength={64} placeholder="6-digit code" value={token}
+            onChangeText={value => setToken(/^[a-f0-9]{64}$/i.test(value.trim()) ? value.trim() : value.replace(/\D/g, '').slice(0, 6))} /> : null}
           {error ? <Text accessibilityRole="alert" style={authStyles.error}>{error}</Text> : null}
           {message ? <Text accessibilityLiveRegion="polite" style={[authStyles.label, { marginTop: 20 }]}>{message}</Text> : null}
           {!complete ? <Pressable accessibilityRole="button" disabled={busy} onPress={resendMode ? resend : verify}

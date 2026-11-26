@@ -27,6 +27,7 @@ type LoginResponse = {
     user?: AccountUser;
   };
   error?: string;
+  code?: string;
 };
 
 const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -57,6 +58,10 @@ export default function LoginScreen() {
       const role = result.data?.user?.role as Role | undefined;
 
       if (!response.ok || !result.success) {
+        if (result.code === 'EMAIL_VERIFICATION_REQUIRED' || (response.status === 403 && result.error === 'Verify your email before signing in.')) {
+          router.push(`/verify-email?email=${encodeURIComponent(email.trim().toLowerCase())}` as Href);
+          return;
+        }
         throw new Error(result.error || 'Unable to sign in.');
       }
 
@@ -123,6 +128,7 @@ export default function LoginScreen() {
                   <Text style={authStyles.buttonText}>Sign In</Text><Feather color="#ffffff" name="arrow-right" size={20} />
                 </View>}
               </Pressable>
+              <AuthFooterLink text="Have an email code?" label="Verify account" onPress={() => router.push(`/verify-email?email=${encodeURIComponent(email.trim().toLowerCase())}` as Href)} />
               <AuthFooterLink text="Don't have an account?" label="Sign Up" onPress={() => router.push('/signup')} />
             </View>
           </View>

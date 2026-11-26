@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const PDFDocument = require('pdfkit');
-const crypto = require('crypto');
+const { CODE_TTL_MS, generateCode, hashCode } = require('../utils/email-verification-code');
 const User = require('../models/User');
 const Route = require('../models/Route');
 const RouteLog = require('../models/RouteLog');
@@ -83,16 +83,18 @@ const createUser = async (req, res) => {
       uploaded.push({ publicId: photo.publicId, type: 'authenticated' });
       identityPhoto = { publicId: photo.publicId, format: photo.format };
     }
-    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const verificationToken = generateCode();
     const verificationRequestedAt = new Date();
     createdUser = await User.create({
       name: name.trim(), email: normalizedEmail, password, role,
       employeeId: employeeId || undefined, contact: contact || undefined,
       shift: shift || undefined, birthday: birthday || undefined, profilePhotoUrl, identityPhoto,
       emailVerificationRequired: true,
-      emailVerificationHash: crypto.createHash('sha256').update(verificationToken).digest('hex'),
-      emailVerificationExpires: new Date(verificationRequestedAt.getTime() + 24 * 60 * 60000),
+      emailVerificationHash: hashCode(normalizedEmail, verificationToken),
+      emailVerificationExpires: new Date(verificationRequestedAt.getTime() + CODE_TTL_MS),
       emailVerificationRequestedAt: verificationRequestedAt,
+      emailVerificationFormat: 'six-digit',
+      emailVerificationAttempts: 0,
     });
 
     try {
@@ -111,6 +113,8 @@ const createUser = async (req, res) => {
     delete userResponse.emailVerificationHash;
     delete userResponse.emailVerificationExpires;
     delete userResponse.emailVerificationRequestedAt;
+    delete userResponse.emailVerificationFormat;
+    delete userResponse.emailVerificationAttempts;
     userResponse.emailVerificationPending = true;
     sendSuccess(res, userResponse, 201);
   } catch (err) {

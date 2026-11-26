@@ -458,6 +458,8 @@ export default function StaffScreen() {
   const inputScroll = useRef<NativeScrollView>(null);
   const pileFields = useRef<View>(null);
   const inputScrollY = useRef(0);
+  const pileRevealFrame = useRef<number | null>(null);
+  const activePileField = useRef<string | null>(null);
   const cameraBusyRef = useRef(false);
   const insets = useSafeAreaInsets();
   const [activeTab, setActiveTab] = useState<Tab>('input');
@@ -480,17 +482,25 @@ export default function StaffScreen() {
   const [pileHeights, setPileHeights] = useState({ front: '', middle: '', back: '' });
   const [pileHeightM, setPileHeightM] = useState('0');
   const [heightSuggestions, setHeightSuggestions] = useState<string | null>(null);
+  activePileField.current = heightSuggestions;
   const revealPileFields = () => {
+    if (pileRevealFrame.current !== null) cancelAnimationFrame(pileRevealFrame.current);
     if (!heightSuggestions) return;
-    requestAnimationFrame(() => {
+    pileRevealFrame.current = requestAnimationFrame(() => {
+      pileRevealFrame.current = null;
       pileFields.current?.measureInWindow((_x, fieldY) => {
         inputScroll.current?.getNativeScrollRef()?.measureInWindow((_sx, scrollY) => {
+          if (activePileField.current !== heightSuggestions) return;
+          // Align the labels, inputs and suggestion lists below the fixed header.
           inputScroll.current?.scrollTo({ y: Math.max(0, inputScrollY.current + fieldY - scrollY - 8), animated: false });
         });
       });
     });
   };
   useEffect(revealPileFields, [heightSuggestions, keyboardVisible]);
+  useEffect(() => () => {
+    if (pileRevealFrame.current !== null) cancelAnimationFrame(pileRevealFrame.current);
+  }, []);
   const [length, setLength] = useState('');
   const [width, setWidth] = useState('');
   const [height, setHeight] = useState('');
@@ -1278,7 +1288,8 @@ export default function StaffScreen() {
   };
 
   const renderInput = () => (
-    <ScrollView ref={inputScroll} onLayout={revealPileFields} onContentSizeChange={revealPileFields}
+    <ScrollView ref={inputScroll} automaticallyRevealFocusedInput={heightSuggestions === null}
+      onFocus={revealPileFields} onLayout={revealPileFields} onContentSizeChange={revealPileFields}
       onScroll={event => { inputScrollY.current = event.nativeEvent.contentOffset.y; }} scrollEventThrottle={16}
       contentContainerStyle={styles.inputScrollContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
       <Text style={[styles.inputEyebrow, isDarkTheme && { color: '#85DCB0' }]}>NEW MEASUREMENT</Text>

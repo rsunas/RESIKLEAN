@@ -55,9 +55,13 @@ test('new Admin receives a verification invitation before it can log in', async 
   expect(payload.data.emailVerificationPending).toBe(true);
   expect(created.emailVerificationRequired).toBe(true);
   expect(created.emailVerificationHash).toEqual(expect.any(String));
-  expect(sendEmailVerification).toHaveBeenCalledWith(valid.email, expect.stringMatching(/^[a-f0-9]{64}$/));
+  expect(sendEmailVerification).toHaveBeenCalledWith(valid.email, expect.stringMatching(/^\d{6}$/));
   const loggedIn = await fetch(base + '/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: valid.email, password: valid.password }) });
   expect(loggedIn.status).toBe(403);
+  expect((await loggedIn.json()).code).toBe('EMAIL_VERIFICATION_REQUIRED');
+  expect(payload.data.emailVerificationAttempts).toBeUndefined();
+  expect(payload.data.emailVerificationFormat).toBeUndefined();
+  expect(created.emailVerificationExpires - created.emailVerificationRequestedAt).toBe(10 * 60000);
   created.emailVerifiedAt = new Date();
   const verifiedLogin = await fetch(base + '/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: valid.email, password: valid.password }) });
   const session = await verifiedLogin.json(); expect(verifiedLogin.status).toBe(200); expect(session.data.user.role).toBe('admin');

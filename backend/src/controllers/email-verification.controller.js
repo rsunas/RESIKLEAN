@@ -1,18 +1,46 @@
 const crypto = require('crypto');
 const User = require('../models/User');
+const { CODE_TTL_MS, generateCode, hashCode } = require('../utils/email-verification-code');
 const { verificationMailConfiguration, sendEmailVerification } = require('../services/email-verification-mail.service');
 const { sendSuccess, sendError } = require('../utils/response');
 
 const RESEND_MESSAGE = 'If a pending account exists for that email, a verification email has been sent. Check the inbox and spam folder.';
 const hashToken = token => crypto.createHash('sha256').update(token).digest('hex');
+const invalidCode = 'This verification link or code is invalid, expired, or has reached its attempt limit. Please request a new one.';
 
 async function verifyEmail(req, res) {
   try {
-    // findOneAndUpdate consumes the code atomically, so two simultaneous taps
-    // cannot both activate the same account.
+    let codeFilter;
+    if (/^\d{6}$/.test(req.body.token)) {
+      const email = req.body.email.trim().toLowerCase();
+      // Reserve every guess atomically across devices and API instances.
+      const pending = await User.findOneAndUpdate({
+        email, emailVerificationRequired: true, emailVerifiedAt: null,
+        emailVerificationFormat: 'six-digit',
+        emailVerificationExpires: { $gt: new Date() },
+        emailVerificationAttempts: { $lt: 5 },
+      }, { $inc: { emailVerificationAttempts: 1 } }, { new: true })
+        .select('+emailVerificationHash +emailVerificationRequestedAt');
+      const hash = hashCode(email, req.body.token);
+      if (!pending || typeof pending.emailVerificationHash !== 'string'
+        || pending.emailVerificationHash.length !== hash.length
+        || !crypto.timingSafeEqual(Buffer.from(pending.emailVerificationHash), Buffer.from(hash))) {
+        return sendError(res, invalidCode, 400);
+      }
+      codeFilter = {
+        _id: pending._id, email,
+        emailVerificationHash: hash,
+        emailVerificationFormat: 'six-digit',
+        emailVerificationRequestedAt: pending.emailVerificationRequestedAt,
+      };
+    } else {
+      // Previously delivered activation links remain usable until they expire.
+      codeFilter = { emailVerificationHash: hashToken(req.body.token), emailVerificationFormat: { $ne: 'six-digit' } };
+    }
+    // Consume only this request, once; a concurrent resend invalidates it.
     const user = await User.findOneAndUpdate({
+      ...codeFilter,
       emailVerificationRequired: true,
-      emailVerificationHash: hashToken(req.body.token),
       emailVerificationExpires: { $gt: new Date() },
       $or: [
         { emailVerifiedAt: { $exists: false } },
@@ -24,11 +52,13 @@ async function verifyEmail(req, res) {
         emailVerificationHash: 1,
         emailVerificationExpires: 1,
         emailVerificationRequestedAt: 1,
+        emailVerificationFormat: 1,
+        emailVerificationAttempts: 1,
       },
     }, { new: false, projection: { _id: 1 } });
 
     if (!user) {
-      return sendError(res, 'This verification link or code is invalid or expired. Please request a new one.', 400);
+      return sendError(res, invalidCode, 400);
     }
 
     return sendSuccess(res, {
@@ -47,8 +77,9 @@ async function resendVerification(req, res) {
   }
 
   try {
-    const token = crypto.randomBytes(32).toString('hex');
-    const hash = hashToken(token);
+    const token = generateCode();
+    const email = req.body.email.trim().toLowerCase();
+    const hash = hashCode(email, token);
     const now = Date.now();
 
     // The database-level cooldown prevents concurrent resend requests from
@@ -69,8 +100,10 @@ async function resendVerification(req, res) {
     }, {
       $set: {
         emailVerificationHash: hash,
-        emailVerificationExpires: new Date(now + 24 * 60 * 60000),
+        emailVerificationExpires: new Date(now + CODE_TTL_MS),
         emailVerificationRequestedAt: new Date(now),
+        emailVerificationFormat: 'six-digit',
+        emailVerificationAttempts: 0,
       },
     }, { new: true }).select('email');
 
@@ -78,7 +111,7 @@ async function resendVerification(req, res) {
       // Do not expose whether the account exists. If delivery fails, remove only
       // this code so the user can safely request another one.
       void sendEmailVerification(user.email, token).catch(async () => {
-        await User.updateOne({ _id: user._id, emailVerificationHash: hash }, {
+        await User.updateOne({ _id: user._id, emailVerificationHash: hash, emailVerificationRequestedAt: new Date(now) }, {
           $unset: {
             emailVerificationHash: 1,
             emailVerificationExpires: 1,

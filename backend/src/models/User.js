@@ -50,6 +50,8 @@ const userSchema = new mongoose.Schema(
     emailVerificationHash: { type: String, select: false },
     emailVerificationExpires: { type: Date, select: false },
     emailVerificationRequestedAt: { type: Date, select: false },
+    emailVerificationFormat: { type: String, select: false },
+    emailVerificationAttempts: { type: Number, select: false },
     // Resident / User Preferences & Settings
     settings: {
       theme: { type: String, enum: ['light', 'dark', 'system'], default: 'system' },
